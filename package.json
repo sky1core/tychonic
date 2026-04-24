@@ -58,6 +58,9 @@
     "yaml": "2.8.3",
     "zod": "4.3.6"
   },
+  "overrides": {
+    "uuid": "14.0.0"
+  },
   "devDependencies": {
     "@tailwindcss/vite": "4.2.2",
     "@types/node": "25.6.0",

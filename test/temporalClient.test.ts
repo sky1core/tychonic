@@ -1,5 +1,5 @@
 import { defaultDataConverter, toPayloads } from "@temporalio/common";
-import type { WorkflowExecutionDescription, WorkflowExecutionInfo } from "@temporalio/client";
+import { Connection, type WorkflowExecutionDescription, type WorkflowExecutionInfo } from "@temporalio/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   signalInteractionApproveState,
@@ -182,6 +182,7 @@ describe("Temporal workflow status summaries", () => {
 
 describe("Interaction signal senders", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.resetModules();
     vi.doUnmock("@temporalio/client");
   });
@@ -227,15 +228,17 @@ describe("Interaction signal senders", () => {
 
   it("accepts an empty patch (no-op overlay is a valid signal)", async () => {
     // The signal itself validates; actual delivery requires a connection.
-    // We only assert that the pre-connection validator does not throw.
-    // The call will fail downstream (no Temporal) but with a different error.
+    // The mocked connection boundary keeps this unit test out of Temporal startup.
+    const connectSpy = vi.spyOn(Connection, "connect").mockRejectedValue(new Error("connection boundary reached"));
+
     await expect(
       signalInteractionModifyState({
         workflowId: "wf",
         state: "work",
         patch: {}
       })
-    ).rejects.not.toThrow(/patch/);
+    ).rejects.toThrow(/connection boundary reached/);
+    expect(connectSpy).toHaveBeenCalledTimes(1);
   });
 });
 

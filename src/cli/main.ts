@@ -725,7 +725,7 @@ program
     ) => {
       const state = await resolveInteractionState({
         workflowId,
-        ...(options.state ? { explicitState: options.state } : {}),
+        ...(options.state !== undefined ? { explicitState: options.state } : {}),
         ...(options.runId ? { runId: options.runId } : {}),
         ...(options.mode ? { mode: options.mode } : {}),
         ...(options.address ? { address: options.address } : {}),
@@ -775,7 +775,7 @@ program
       }
       const state = await resolveInteractionState({
         workflowId,
-        ...(options.state ? { explicitState: options.state } : {}),
+        ...(options.state !== undefined ? { explicitState: options.state } : {}),
         ...(options.runId ? { runId: options.runId } : {}),
         ...(options.mode ? { mode: options.mode } : {}),
         ...(options.address ? { address: options.address } : {}),
@@ -829,7 +829,7 @@ program
     ) => {
       const state = await resolveInteractionState({
         workflowId,
-        ...(options.state ? { explicitState: options.state } : {}),
+        ...(options.state !== undefined ? { explicitState: options.state } : {}),
         ...(options.runId ? { runId: options.runId } : {}),
         ...(options.mode ? { mode: options.mode } : {}),
         ...(options.address ? { address: options.address } : {}),
@@ -1507,7 +1507,10 @@ async function resolveInteractionState(options: {
   namespace?: string;
   taskQueue?: string;
 }): Promise<string> {
-  if (options.explicitState && options.explicitState.length > 0) {
+  if (options.explicitState !== undefined) {
+    if (options.explicitState.length === 0) {
+      throw new Error("--state must be a non-empty string");
+    }
     return options.explicitState;
   }
   const queryResult = await queryInteractionPendingState({
@@ -1599,7 +1602,7 @@ async function loadTemporalWorkflowResult(options: RequiredTemporalResultCommand
 }
 
 function workflowsBundleDirName(directory: string): string {
-  const absolute = resolveAbsolute(directory);
+  const absolute = resolveAbsolute(directory).replace(/[\\/]+$/, "");
   const idx = Math.max(absolute.lastIndexOf("/"), absolute.lastIndexOf("\\"));
   const name = idx < 0 ? absolute : absolute.slice(idx + 1);
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
