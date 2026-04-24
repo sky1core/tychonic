@@ -1,0 +1,32 @@
+version: tychonic.config.v1
+states:
+  lint:
+    type: lint
+    command: npm run lint
+    timeout: 10m
+  unit_test:
+    type: unit_test
+    command: npm test
+    timeout: 30m
+  integration:
+    type: integration
+    command: npm run integration
+    timeout: 45m
+  semantic_review:
+    type: review
+    agent: codex
+    command: codex exec --skip-git-repo-check --json -
+    emits:
+      - tychonic.review.v1
+    timeout: 20m
+  test_review:
+    type: review
+    agent: claude
+    command: claude --print --output-format stream-json --verbose
+    emits:
+      - tychonic.review.v1
+    timeout: 20m
+policies:
+  integration:
+    mode: required
+    position: final_gate

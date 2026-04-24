@@ -1,0 +1,49 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+coverage/
+.turbo/
+.vite/
+.playwright-cli/
+.claude/
+CLAUDE.md
+
+.tychonic/
+.agents/
+.jj/
+_workspace/
+*.tsbuildinfo
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.log
+*.local.md
+screenshots/
+
+# secrets — certificates and private keys (never committed)
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.keystore
+
+# git merge/rebase conflict residue
+*.orig
+*.rej
+
+# OS / editor residue (see also `.DS_Store` at the top)
+._*
+Thumbs.db
+Desktop.ini
+.netrwhist
+
+# coverage
+.nyc_output/

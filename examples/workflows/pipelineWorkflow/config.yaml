@@ -1,0 +1,29 @@
+version: tychonic.config.v1
+states:
+  work:
+    type: work
+    command: scripts/run-claude.sh
+  static:
+    type: lint
+    command: npm run lint
+  unit:
+    type: unit_test
+    command: npm test
+  review_1:
+    type: review
+    agent: claude
+    command: scripts/review-claude.sh
+    emits:
+      - tychonic.review.v1
+  integration:
+    type: integration
+    command: npm run test:integration
+  review_2:
+    type: review
+    agent: codex
+    command: scripts/review-codex.sh
+    emits:
+      - tychonic.review.v1
+  security:
+    type: verify
+    command: ./scripts/security-gate.sh

@@ -1,0 +1,41 @@
+version: tychonic.config.v1
+states:
+  detect_bugs:
+    type: review
+    agent: codex
+    command: codex exec --skip-git-repo-check --json -
+    emits:
+      - tychonic.review.v1
+    timeout: 20m
+  write_regression_tests:
+    type: work
+    agent: codex
+    command: codex exec --skip-git-repo-check --json -
+    timeout: 30m
+  review_regression_tests:
+    type: review
+    agent: codex
+    command: codex exec --skip-git-repo-check --json -
+    emits:
+      - tychonic.review.v1
+    timeout: 20m
+  fix_bugs:
+    type: work
+    agent: claude
+    command: claude --print --output-format stream-json --verbose
+    resume_command: claude --continue --print --output-format stream-json --verbose
+    timeout: 45m
+  verify:
+    type: verify
+    command: npm test
+    timeout: 30m
+  final_review:
+    type: review
+    agent: codex
+    command: codex exec --skip-git-repo-check --json -
+    emits:
+      - tychonic.review.v1
+    timeout: 20m
+policies:
+  self_repair_workflow:
+    max_iterations: 3
