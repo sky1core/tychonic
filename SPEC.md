@@ -193,9 +193,10 @@ package's own `node_modules` to the webpack resolver so the plugin
 file — which lives under
 `~/Library/Application Support/Tychonic/workflows/modules/` where no
 local `node_modules` exists — can resolve that import without
-shipping its own dependencies. Plugin authors write a single ESM
-file and install it with `tychonic workflows install <file>`; they
-do not bundle, symlink, or vendor `@temporalio/workflow`. The
+shipping its own dependencies. Plugin authors write a bundle directory
+containing a single ESM `workflow.mjs` file and install it with
+`tychonic workflows install <directory>`; they do not bundle, symlink,
+or vendor `@temporalio/workflow`. The
 implementation lives in `src/temporal/worker.ts` (`buildWorkflowBundle`
 / `tychonicWebpackResolveDirs`).
 
@@ -463,9 +464,10 @@ the next iteration reads this status.
 **Pass-through omission.**
 Values whose authoritative source lives outside Tychonic (model
 names, reasoning levels, thinking budgets, provider endpoints) follow
-principle 4: omission at the activity layer propagates to flag
-omission in the generated command. The activity never supplies a
-Tychonic-side default for a pass-through field.
+principle 4: they are not activity-layer fields. The activity never
+supplies a Tychonic-side default for a pass-through value; operators
+include those flags only in explicit `command` / `resume_command`
+strings or in the external CLI's own configuration.
 
 **Retry boundary.**
 Every Tychonic activity proxy sets Temporal retry to
@@ -573,12 +575,11 @@ directory.
 2. The directory contains `workflow.mjs` and `config.yaml`, may contain
    `README.md`, and contains nothing else.
 3. `config.yaml` parses under `TychonicConfigSchema`.
-4. `workflow.mjs` is importable in a staging directory whose
-   `node_modules` is symlinked to the Tychonic package's `node_modules`
-   (the same staging pattern currently used by `inspectWorkflowModuleExports`).
-   The import must produce at least one named workflow export (function)
-   and exactly one `requires` export matching the shape in **Required
-   state declaration**.
+4. `workflow.mjs` is parsed as an ES module AST without importing it,
+   creating a staging directory, or symlinking `node_modules`. The static
+   inspection must find at least one named workflow export (function) and
+   exactly one `requires` export matching the shape in **Required state
+   declaration**.
 5. For every `{ name, type }` entry in `requires.states` there is a
    matching `states[name]` block in `config.yaml`, and that block's `type`
    equals the declared `type`. Missing names, type mismatches, or extra
@@ -652,12 +653,11 @@ config — is read, merged, or consulted.
 
 Two consequences follow and must both hold:
 
-- Absent fields stay absent. If `config.yaml` omits a value whose
-  authoritative source lives outside Tychonic (for example `model`,
-  `reasoning_effort`, `thinking_budget`), the generated command omits the
-  corresponding flag. Tychonic never supplies a system default. This is the
-  existing "Pass-through values vs Orchestration values" rule applied to
-  the sole configuration surface.
+- Absent fields stay absent. Values whose authoritative source lives outside
+  Tychonic (for example `model`, `reasoning_effort`, `thinking_budget`) are
+  not config fields and are never filled by Tychonic. Operators put those
+  vendor-owned flags directly in `command` / `resume_command` or in the
+  external CLI's own configuration.
 - Product defaults are expressed in workflow code, not configuration.
   Invariants that must hold regardless of any bundle (for example, per-TYPE
   command timeout defaults when a block omits `timeout`) are applied by the
@@ -887,36 +887,34 @@ Tychonic is an orchestrator for external agent CLIs. It must not bake in
 defaults for settings whose authoritative source is the external CLI or its
 provider.
 
-**Rule:** if omitting a setting causes the external agent CLI to fall back
-to its own default (for example `model`, `reasoning_effort`, or
-`thinking_budget` — values whose valid set is owned by the vendor and
-already resolvable from the CLI's own configuration), Tychonic must not
-carry a system default for that setting. Omission in the user's
-profile/config must result in omission of the corresponding flag in the
-generated command.
+**Rule:** if a setting is owned by the external agent CLI (for example
+`model`, `reasoning_effort`, or `thinking_budget` — values whose valid set is
+owned by the vendor and already resolvable from the CLI's own
+configuration), Tychonic must not carry a system default or schema field for
+that setting. Operators express it directly in `command` /
+`resume_command`, or leave it to the external CLI's own configuration.
 
 - **Orchestration values** — settings Tychonic owns because they encode
   Tychonic's own isolation and safety contract. Role-aware defaults are
   allowed only when they are attached to an explicit command contract, not
-  to a vendor preset. Current list: `sandbox`, `approval` /
-  `approval_mode`, `permission_mode`, `trust_all_tools`, and the command
-  shape itself (argv, stdin contract, session resume flags).
+  to a vendor preset. Current config-field list: `sandbox`, `approval`,
+  `permission_mode`, and `trust_all_tools`. The command shape itself
+  (argv, stdin contract, session resume flags) is explicit operator-owned
+  data in `command` / `resume_command`.
 - **Pass-through values** — everything else the external CLI already knows
   how to handle on its own. Model selection, reasoning effort, thinking
   budget, provider endpoints, and any similar field whose valid values
   follow the upstream vendor's release cadence. Tychonic must not hardcode
-  defaults for these. If the profile/config omits the field, Tychonic emits
-  the command without the corresponding flag and the external CLI falls
-  back to its own configuration outside the Tychonic repository.
+  defaults for these and must reject them as config fields.
 
 Consequence: a new model name, a renamed effort level, or a deprecated
 provider alias on the external side never requires a Tychonic code change.
 Users control those values through their own CLI configuration or through
-explicit Tychonic profile/config entries.
+explicit `command` / `resume_command` strings.
 
-Activity/role-specific sandbox and approval values are the exception. They
-are Tychonic's safety policy, not user preference, and are baked in with
-per-role defaults that the user can still override explicitly.
+Activity/role-specific sandbox and approval values are the exception only as
+Tychonic-owned orchestration policy. They do not imply a built-in provider
+preset and must not cause Tychonic to synthesize vendor-specific flags.
 
 Slots may accept either a single explicit command or an ordered command-backed
 candidate list. An ordered candidate list is not a workflow graph. It is
@@ -1021,7 +1019,8 @@ Integration position is also explicit:
 
 When `simpleWorkflow` exhausts `loop.max_review_iterations` with the last
 structured review still failing, the workflow enters `waiting_user`. If it
-was started with `--hold-open`, it accepts operator signals to continue:
+was started with workflow input `holdOpenOnWaiting: true`, it accepts
+operator signals to continue:
 
 - per-inbox-item continuation (`tychonic inbox execute`) processes one
   finding with one worker+verify+review cycle
@@ -1083,13 +1082,12 @@ When `policies.interaction.mode === "interactive"`:
   general "signals must not widen the effective profile" rule
   already stated above.
 - Hold-open semantics are unchanged by interactive mode. A workflow
-  started with `--hold-open` that reaches `waiting_user` under
-  interactive mode still accepts the existing signals
-  (`simple_workflow:continue`, `resume`, `inbox execute`,
-  `simple_workflow:extend_iterations`, `simple_workflow:dismiss_inbox`)
-  in addition to the three interactive signals. Interactive signals
-  are independent of hold-open; they work from workflow start, not
-  only after `waiting_user`.
+  started with input `holdOpenOnWaiting: true` that reaches
+  `waiting_user` under interactive mode still accepts the existing
+  signals (`simple_workflow:continue`, `resume`, `inbox execute`,
+  `inbox dismiss`) in addition to the three interactive signals.
+  Interactive signals are independent of hold-open; they work from
+  workflow start, not only after `waiting_user`.
 
 Interactive mode does **not** change any of:
 

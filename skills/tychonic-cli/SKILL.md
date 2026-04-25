@@ -33,8 +33,8 @@ Quick health checks before running work:
 
 ```sh
 tychonic temporal doctor
+tychonic temporal status
 tychonic status
-tychonic agents doctor
 ```
 
 External Temporal can be selected with `--mode external`, `--address`,
@@ -47,7 +47,7 @@ Config files declare named states and policies for existing workflows. They are 
 Use config files for:
 
 - state commands
-- agent typed settings
+- agent labels and explicit commands
 - adapter commands
 - state timeouts
 - workflow/state scoped policy knobs
@@ -65,7 +65,7 @@ follow it exactly.
 Validate config and workflow settings:
 
 ```sh
-tychonic workflows validate examples/strict-checkpoint.tychonic.yaml
+tychonic workflows validate ./examples/workflows/pipelineWorkflow
 ```
 
 Run `simpleWorkflow`:
@@ -80,8 +80,7 @@ tychonic sessions --workflow-id <id>
 
 The JSON input must carry the full Temporal workflow input object. For
 `simpleWorkflow`, that usually means `cwd`, `verifyCommand`, worker/reviewer
-fields, and any resolved `profile` / `profileSources` snapshot you want the
-workflow to run with.
+fields, and any resolved `profile` snapshot you want the workflow to run with.
 
 `tychonic inbox` and `tychonic sessions` are themselves the listing commands.
 Subcommands (`inbox execute`, `inbox dismiss`, `sessions register`) act on
@@ -166,7 +165,7 @@ bundle itself.
 
 If `simpleWorkflow` hits its `max_review_iterations` and the final
 review still fails, the workflow enters `waiting_user`. With
-`--hold-open`, it accepts these recovery signals:
+input `holdOpenOnWaiting: true`, it accepts these recovery signals:
 
 ```sh
 tychonic inbox execute <item-id> --workflow-id <id> --config <file>
@@ -214,62 +213,42 @@ separately.
 
 ## Agent Configuration
 
-Each activity block selects an agent via its `agent` field and carries
-the settings that agent needs for that role. There is no standalone
-`agents.<name>` registration — every agent setting lives inside the
-activity block that uses it.
+Each activity block runs an explicit `command`. The `agent` field is a
+label for logs, sessions, and UI output; it does not select a built-in
+provider adapter or generate provider-specific flags. There is no
+standalone `agents.<name>` registration.
 
-Built-in agent names:
-
-- `codex`: usable as worker or structured reviewer
-- `claude`: usable as worker or structured reviewer
-- `gemini`: worker (reviewer requires an explicit custom command that
-  emits `tychonic.review.v1`)
-- `kiro`: worker (same reviewer caveat)
-
-Agent-specific typed settings recognised inside an activity block:
-
-- Codex: `model`, `reasoning_effort`, `plan_mode_reasoning_effort`,
-  `sandbox`, `approval`
-- Claude: `model`, `effort`, `permission_mode`
-- Gemini: `model`, `approval_mode`, `sandbox`, `thinking_budget`
-- Kiro: `model`, `trust_all_tools`
-
-If an activity block supplies a custom `command`, Tychonic treats the
-block as a custom adapter. Do not mix a custom `command` with the
-official typed settings above in the same activity block; choose one
-form per block. Pass-through values (`model`, `reasoning_effort`,
-`thinking_budget`) are optional: omission in the block means omission
-of the corresponding CLI flag, so the external agent CLI falls back to
-its own configuration.
+Allowed state-block orchestration fields are `sandbox`, `approval`,
+`permission_mode`, and `trust_all_tools`. Vendor-owned pass-through
+values such as `model`, `reasoning_effort`, `thinking_budget`,
+`approval_mode`, `effort`, and `plan_mode_reasoning_effort` are not
+valid config fields; put those flags directly in `command` or
+`resume_command`.
 
 ## Permissions And Resume
 
-Worker defaults are non-interactive and intended for isolated worktrees:
+Worker commands should be non-interactive and intended for isolated
+worktrees. Put these provider flags directly in `command` when that
+provider is used:
 
 - Codex worker: `workspace-write`, approval `never`
 - Claude worker: `--permission-mode dontAsk`
 - Gemini worker: `--approval-mode yolo --sandbox`
 - Kiro worker: `--trust-all-tools`
 
-Reviewer defaults are more constrained:
+Reviewer commands should be more constrained:
 
 - Codex reviewer: `read-only`, approval `never`
 - Claude reviewer: `--permission-mode plan`
-- Gemini and Kiro are not default structured reviewers unless a custom command
-  emits the review contract.
+- Gemini and Kiro review commands must explicitly emit the review contract.
 
-Built-in worker resume support records external session references when the CLI
-exposes one:
+Worker resume uses an explicit `resume_command` stored on the Tychonic
+session record. External session ids can be attached through
+`tychonic sessions register`, but Tychonic does not infer provider-specific
+resume commands from agent labels.
 
-- Codex: JSONL `thread_id` or session id
-- Claude: stream JSON `session_id`
-- Gemini: JSON `session_id`
-- Kiro: new `Chat SessionId` discovered by comparing `kiro-cli chat
-  --list-sessions` before and after a worker run
-
-If no trustworthy session key is found, leave the worker session non-resumable
-instead of attaching stale state.
+If no explicit `resume_command` is available, leave the worker session
+non-resumable instead of attaching stale state.
 
 ## Verification
 

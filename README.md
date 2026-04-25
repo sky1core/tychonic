@@ -118,8 +118,8 @@ agent target.
 
 Once installed, you can ask your agent in plain language — for example:
 
-> Set up Tychonic to run `simpleWorkflow` in this repo with Codex as the worker and
-> `npm test` as verify, then start it with `--hold-open`.
+> Set up Tychonic to run `simpleWorkflow` in this repo with Codex as the worker,
+> `npm test` as verify, and `holdOpenOnWaiting: true` in the workflow input.
 
 The agent reads the skill and drives the CLI, so you do not need to
 memorise Tychonic's flags or YAML schema up front.
@@ -179,7 +179,7 @@ Useful status commands:
 ```sh
 tychonic temporal doctor
 tychonic status
-tychonic agents doctor
+tychonic temporal status
 ```
 
 ## Agent CLI Discovery
@@ -218,8 +218,8 @@ inside a state block are exactly `type`, `agent`, `command`,
 `resume_command`, `timeout`, `sandbox`, `approval`, `permission_mode`,
 `trust_all_tools`, and `emits` (review TYPE only). Vendor-owned
 pass-through values such as `model`, `reasoning_effort`, and
-`thinking_budget` belong in the external agent CLI's own config, not in
-Tychonic's.
+`thinking_budget` belong in the external agent CLI's own config or in the
+explicit `command` / `resume_command` strings, not as Tychonic config fields.
 
 ```yaml
 version: tychonic.config.v1
@@ -271,9 +271,9 @@ finished:
   attempt. Bounded by `max_reject_iterations` (default 5). This cap is
   independent of `policies.loop.max_review_iterations`, which bounds the
   internal review-fail → work-retry loop.
-- `tychonic modify <workflow-id> [--state <name>] --state-record-file
-  <path.json>` — replace the latest state record for `<name>` with a
-  caller-supplied JSON document matching `WorkflowStateRecord`.
+- `tychonic modify <workflow-id> [--state <name>] [--status <status>]
+  [--reason <text>] [--note <text>] [--patch-file <path.json>]` — overlay
+  a `StateRecordPatch` on the latest state record for `<name>`.
 
 Omitting the block is identical to `mode: auto`. `--state` is optional
 for the three commands; when absent, the CLI queries the workflow's
@@ -372,8 +372,8 @@ non-resumable state in run artifacts.
 ## Resuming A Blocked Simple Workflow
 
 When `simpleWorkflow` exhausts its review iteration budget and the
-last review still fails, the run enters `waiting_user`. If the workflow was
-started with `--hold-open`, it remains open for operator signals.
+last review still fails, the run enters `waiting_user`. If the workflow input
+set `holdOpenOnWaiting: true`, it remains open for operator signals.
 
 Inbox-level signals process one pending finding at a time:
 
@@ -405,8 +405,10 @@ separate `agents.<name>` registration exists.
 
 Provider-specific flags belong inside `command` and `resume_command`
 strings, owned by the external CLI itself. Tychonic does not define typed
-provider settings such as model, sandbox, approval, reasoning, or
-permission fields.
+provider settings such as model, reasoning, or thinking-budget fields.
+Tychonic-owned orchestration fields such as `sandbox`, `approval`,
+`permission_mode`, and `trust_all_tools` remain part of the state-block
+schema.
 
 Structured reviewers must emit the `tychonic.review.v1` JSON contract and
 declare `emits: ["tychonic.review.v1"]` in config.

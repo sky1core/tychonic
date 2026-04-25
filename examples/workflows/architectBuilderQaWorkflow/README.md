@@ -49,7 +49,7 @@ tychonic workflows install ./examples/workflows/architectBuilderQaWorkflow \
 ## Start a run
 
 ```sh
-tychonic run architectBuilderQaWorkflow --input-file input.json --hold-open
+tychonic run architectBuilderQaWorkflow --input-file input.json
 ```
 
 Minimal input:
@@ -78,8 +78,8 @@ the `builder ↔ qa` pair runs in a loop. When qa reports `fail`
 the qa reason threaded into the next prompt as numbered findings. The
 loop is capped by `policies.loop.max_review_iterations` (default 3).
 At the cap the run transitions to `waiting_user` with an inbox item
-(`inbox_review_cap`); the operator can then approve/modify/reject the
-parked qa state via one-shot signals, or abandon the run.
+(`inbox_review_cap`) in the completed run result; the operator can inspect
+the recorded states and start a follow-up run with adjusted input/config.
 
 Interactive mode behaves independently: each stage's own reject
 signal reruns that stage (reject feedback accumulates as a numbered
