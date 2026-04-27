@@ -17,9 +17,13 @@ describe("parseReviewOutput — raw JSON", () => {
     expect(parsed?.findings[0]?.title).toBe("t");
   });
 
-  it("parses JSON embedded between noise lines", () => {
-    const parsed = parseReviewOutput(`noise line\n${failReview}\ntrailing noise`);
+  it("parses a pretty-printed review JSON object", () => {
+    const parsed = parseReviewOutput(JSON.stringify(JSON.parse(failReview), null, 2));
     expect(parsed?.status).toBe("fail");
+  });
+
+  it("rejects JSON embedded between noise lines", () => {
+    expect(parseReviewOutput(`noise line\n${failReview}\ntrailing noise`)).toBeUndefined();
   });
 
   it("rejects pass result with non-empty findings", () => {
@@ -72,15 +76,13 @@ describe("parseReviewOutput — codex exec --json stream envelope", () => {
     expect(parsed?.findings).toEqual([]);
   });
 
-  it("unwraps review JSON wrapped in a fenced code block inside agent_message", () => {
+  it("rejects review JSON wrapped in a fenced code block inside agent_message", () => {
     const fenced = "Here is the review:\n\n```json\n" + failReview + "\n```\n";
     const stream = [
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(fenced)}}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
-    expect(parsed?.status).toBe("fail");
-    expect(parsed?.findings[0]?.target).toBe("src/x.ts");
+    expect(parseReviewOutput(stream)).toBeUndefined();
   });
 
   it("returns undefined when no agent_message contains a conforming review", () => {
@@ -93,6 +95,18 @@ describe("parseReviewOutput — codex exec --json stream envelope", () => {
     expect(parseReviewOutput(stream)).toBeUndefined();
   });
 
+  it("ignores non-JSON adapter warning lines while still unwrapping documented codex envelopes", () => {
+    const stream = [
+      `2026-04-27T15:59:43.003779Z ERROR codex_core::session: failed to load skill /path/SKILL.md: invalid YAML`,
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"checking"}}`,
+      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
+      `{"type":"turn.completed"}`
+    ].join("\n");
+    const parsed = parseReviewOutput(stream);
+    expect(parsed?.status).toBe("pass");
+  });
+
 });
 
 describe("parseReviewOutput — gemini envelope is not unwrapped", () => {
@@ -101,8 +115,7 @@ describe("parseReviewOutput — gemini envelope is not unwrapped", () => {
     // `tychonic.review.v1` by default. A real gemini --output-format json
     // object has `{ response: "<stringified review>", ... }`. The parser
     // must NOT unwrap that envelope; if an operator wants gemini as a
-    // reviewer they must emit the contract directly and declare
-    // `emits: ["tychonic.review.v1"]` in their profile.
+    // reviewer they must emit the contract directly.
     const geminiLike = JSON.stringify({
       session_id: "sess_test",
       response: passReview,
@@ -124,31 +137,29 @@ describe("parseReviewOutput — claude --print --output-format stream-json", () 
     expect(parsed?.status).toBe("pass");
   });
 
-  it("unwraps a result field with fenced code block around review JSON", () => {
+  it("rejects a result field with fenced code block around review JSON", () => {
     const fenced = "Summary of review:\n\n```json\n" + failReview + "\n```";
     const stream = [
       `{"type":"system","subtype":"init","session_id":"s1"}`,
       `{"type":"result","subtype":"success","result":${JSON.stringify(fenced)},"session_id":"s1"}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
-    expect(parsed?.status).toBe("fail");
+    expect(parseReviewOutput(stream)).toBeUndefined();
   });
 
-  it("falls back to assistant.message.content text when result field is absent", () => {
+  it("rejects assistant.message.content text when result field is absent", () => {
     const stream = [
       `{"type":"system","subtype":"init","session_id":"s1"}`,
       `{"type":"assistant","message":{"id":"m","role":"assistant","content":[{"type":"text","text":${JSON.stringify(passReview)}}]}}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
-    expect(parsed?.status).toBe("pass");
+    expect(parseReviewOutput(stream)).toBeUndefined();
   });
 
-  it("prefers the LAST assistant text over earlier ones", () => {
+  it("selects the LAST terminal result over earlier terminal results", () => {
     const earlier = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"early","findings":[{"severity":"low","title":"x","detail":"y","target":"z"}]}`;
     const stream = [
       `{"type":"system","subtype":"init","session_id":"s1"}`,
-      `{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":${JSON.stringify(earlier)}}]}}`,
-      `{"type":"assistant","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":${JSON.stringify(passReview)}}]}}`
+      `{"type":"result","subtype":"success","result":${JSON.stringify(earlier)},"session_id":"s1"}`,
+      `{"type":"result","subtype":"success","result":${JSON.stringify(passReview)},"session_id":"s1"}`
     ].join("\n");
     const parsed = parseReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
@@ -165,15 +176,13 @@ describe("parseReviewOutput — claude --print --output-format stream-json", () 
 });
 
 describe("parseReviewOutput — generic fenced code blocks", () => {
-  it("parses review JSON inside a ```json fenced block in otherwise plain text output", () => {
+  it("rejects review JSON inside a ```json fenced block in otherwise plain text output", () => {
     const out = "Here is my review:\n\n```json\n" + passReview + "\n```\n\nDone.";
-    const parsed = parseReviewOutput(out);
-    expect(parsed?.status).toBe("pass");
+    expect(parseReviewOutput(out)).toBeUndefined();
   });
 
-  it("parses review JSON inside an unlabeled fenced block", () => {
+  it("rejects review JSON inside an unlabeled fenced block", () => {
     const out = "prefix\n```\n" + failReview + "\n```\nsuffix";
-    const parsed = parseReviewOutput(out);
-    expect(parsed?.status).toBe("fail");
+    expect(parseReviewOutput(out)).toBeUndefined();
   });
 });

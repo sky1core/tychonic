@@ -21,10 +21,10 @@ export async function runLintActivity(input: RunLintActivityInput): Promise<RunL
     });
   }
 
-  const command = input.extras.command ?? block.command;
+  const command = block.command;
   if (!command) {
     throw ApplicationFailure.create({
-      message: `lint activity '${input.stateName}' requires a command (profile.states.${input.stateName}.command or extras.command)`,
+      message: `lint activity '${input.stateName}' requires profile.states.${input.stateName}.command`,
       type: "CommandMissing",
       nonRetryable: true
     });
@@ -38,7 +38,7 @@ export async function runLintActivity(input: RunLintActivityInput): Promise<RunL
     nextId: nextIdFromRun(input.run)
   };
   const timeoutMs = activityTimeoutMs(input.profile, input.stateName, defaultActivityTimeoutMs("lint"));
-  const executionCwd = input.extras.worktreePath ?? input.cwd;
+  const executionCwd = input.worktreePath ?? input.cwd;
 
   return runDeterministicCommandBody({
     input,

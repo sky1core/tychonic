@@ -3,9 +3,11 @@
 //
 // Install with:
 //
+//   (cd examples/workflows/pipelineWorkflow && npm install)
 //   tychonic workflows install ./examples/workflows/pipelineWorkflow
 //
-// `tychonic workflows install` replaces the worker in the same command.
+// Operational installs refresh the LaunchAgent worker when one is installed.
+// Isolated-instance installs require restarting that instance's runtime.
 // See docs/plugin-workflows.md for the authoring guide.
 
 import { proxyActivities } from "@temporalio/workflow";
@@ -29,16 +31,32 @@ const {
   finalizeRunActivity
 } = act;
 
-export const requires = {
-  states: [
-    { name: "work", type: "work" },
-    { name: "static", type: "lint" },
-    { name: "unit", type: "unit_test" },
-    { name: "review_1", type: "review" },
-    { name: "integration", type: "integration" },
-    { name: "review_2", type: "review" },
-    { name: "security", type: "verify" }
-  ]
+export const defaultProfile = {
+  version: "tychonic.config.v1",
+  states: {
+    work: {
+      type: "work",
+      agent: "claude",
+      resume: 0,
+      permission_mode: "acceptEdits"
+    },
+    static: { type: "lint", command: "npm run lint" },
+    unit: { type: "unit_test", command: "npm test" },
+    review_1: {
+      type: "review",
+      agent: "claude",
+      permission_mode: "plan"
+    },
+    integration: { type: "integration", command: "npm run test:integration" },
+    review_2: {
+      type: "review",
+      agent: "codex",
+      sandbox: "read-only",
+      approval: "never"
+    },
+    security: { type: "verify", command: "./scripts/security-gate.sh" }
+  },
+  policies: {}
 };
 
 /**
@@ -53,11 +71,32 @@ export const requires = {
  * Result:
  *   { runId, status, run, artifactRoot, summary? }
  */
+const PIPELINE_WORKFLOW_INPUT_FIELDS = new Set([
+  "cwd",
+  "profile",
+  "goal",
+  "prompt",
+  "reviewPrompt",
+  "reviewPrompt2"
+]);
+
+function rejectUnknownInputFields(input) {
+  if (!input || typeof input !== "object") return;
+  for (const field of Object.keys(input)) {
+    if (!PIPELINE_WORKFLOW_INPUT_FIELDS.has(field)) {
+      throw new Error(`unsupported input field: ${field}`);
+    }
+  }
+}
+
 export async function pipelineWorkflow(input) {
+  rejectUnknownInputFields(input);
+  const profile = input.profile;
   let run = await startRunActivity({
     template: "pipeline_7stage",
     cwd: input.cwd,
-    goal: input.goal
+    ...(profile ? { profile } : {}),
+    ...(input.goal ? { goal: input.goal } : {})
   });
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
@@ -70,8 +109,9 @@ export async function pipelineWorkflow(input) {
     stateName: "work",
     run,
     cwd: input.cwd,
-    profile: input.profile,
-    extras: { worktreePath, prompt: input.prompt ?? input.goal ?? "" }
+    profile,
+    worktreePath,
+    prompt: input.prompt ?? input.goal ?? ""
   });
   run = apply(run, work);
   if (work.workerOutcome?.status !== "succeeded") {
@@ -87,8 +127,8 @@ export async function pipelineWorkflow(input) {
       stateName,
       run,
       cwd: input.cwd,
-      profile: input.profile,
-      extras: { worktreePath }
+      profile,
+      worktreePath
     });
     run = apply(run, res);
     if (res.delta.states?.[0]?.status !== "succeeded") {
@@ -101,8 +141,9 @@ export async function pipelineWorkflow(input) {
     stateName: "review_1",
     run,
     cwd: input.cwd,
-    profile: input.profile,
-    extras: { worktreePath, prompt: input.reviewPrompt ?? structuredReviewPrompt("work stages 1-3") }
+    profile,
+    worktreePath,
+    prompt: input.reviewPrompt ?? structuredReviewPrompt("work stages 1-3")
   });
   run = apply(run, review1);
   const review1Decision = gateReviewStage(run, review1, "review_1");
@@ -116,8 +157,8 @@ export async function pipelineWorkflow(input) {
     stateName: "integration",
     run,
     cwd: input.cwd,
-    profile: input.profile,
-    extras: { worktreePath }
+    profile,
+    worktreePath
   }));
 
   // Stage 6: review_2 (review TYPE, second NAME — same activity function).
@@ -125,8 +166,9 @@ export async function pipelineWorkflow(input) {
     stateName: "review_2",
     run,
     cwd: input.cwd,
-    profile: input.profile,
-    extras: { worktreePath, prompt: input.reviewPrompt2 ?? structuredReviewPrompt("integration and prior review follow-up") }
+    profile,
+    worktreePath,
+    prompt: input.reviewPrompt2 ?? structuredReviewPrompt("integration and prior review follow-up")
   });
   run = apply(run, review2);
   const review2Decision = gateReviewStage(run, review2, "review_2");
@@ -140,8 +182,8 @@ export async function pipelineWorkflow(input) {
     stateName: "security",
     run,
     cwd: input.cwd,
-    profile: input.profile,
-    extras: { worktreePath }
+    profile,
+    worktreePath
   }));
 
   return done(run, input.cwd, `pipeline_7stage finished: ${run.states.map((s) => `${s.name}=${s.status}`).join(", ")}`);

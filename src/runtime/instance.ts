@@ -5,7 +5,7 @@
  * undefined). Isolated dev instances are activated by `--instance <name>`
  * on any CLI command, or by `TYCHONIC_INSTANCE=<name>` in the shell
  * environment. When an instance is active, this module derives the
- * isolation vectors (state dir, log dir, Temporal frontend/UI port,
+ * isolation vectors (state dir, log dir, Temporal API/dev-UI port,
  * address, task queue, web port) from `<name>`.
  *
  * Only these primitives live here:
@@ -31,13 +31,13 @@ const RESERVED_INSTANCE_NAMES: ReadonlySet<string> = new Set([
   "service"
 ]);
 
-const DEFAULT_TEMPORAL_FRONTEND_PORT = 7233;
-const DEFAULT_TEMPORAL_UI_PORT = 8233;
+const DEFAULT_TEMPORAL_API_PORT = 7233;
+const DEFAULT_TEMPORAL_DEV_UI_PORT = 8233;
 const DEFAULT_TEMPORAL_NAMESPACE = "default";
 const DEFAULT_TEMPORAL_TASK_QUEUE = "tychonic";
 const DEFAULT_WEB_PORT = 8765;
 
-const INSTANCE_FRONTEND_PORT_BASE = 17000;
+const INSTANCE_API_PORT_BASE = 17000;
 const INSTANCE_WEB_PORT_BASE = 18000;
 const INSTANCE_PORT_SLOTS = 1000;
 
@@ -84,12 +84,12 @@ function fnv1a32(input: string): number {
 }
 
 /**
- * Derive the Temporal frontend port for `name`. Deterministic.
- * Range: [17000, 17999]. UI port is caller-computed as `+ 1`.
+ * Derive the Temporal API port for `name`. Deterministic.
+ * Range: [17000, 17999]. Temporal dev-UI port is caller-computed as `+ 1`.
  */
 export function deriveInstancePort(name: string): number {
   validateInstanceName(name);
-  return INSTANCE_FRONTEND_PORT_BASE + (fnv1a32(name) % INSTANCE_PORT_SLOTS);
+  return INSTANCE_API_PORT_BASE + (fnv1a32(name) % INSTANCE_PORT_SLOTS);
 }
 
 /**
@@ -142,8 +142,8 @@ export interface ResolveInstanceRuntimeExplicit {
   stateHome?: string;
   logHome?: string;
   address?: string;
-  frontendPort?: number;
-  uiPort?: number;
+  apiPort?: number;
+  devUiPort?: number;
   taskQueue?: string;
   namespace?: string;
   webPort?: number;
@@ -164,8 +164,8 @@ export interface ResolvedInstanceRuntimeTemporal {
   address: string;
   namespace: string;
   taskQueue: string;
-  frontendPort: number;
-  uiPort: number;
+  apiPort: number;
+  devUiPort: number;
 }
 
 export interface ResolvedInstanceRuntime {
@@ -235,39 +235,39 @@ export function resolveInstanceRuntime(
     logDir = defaultLogDir;
   }
 
-  // Temporal frontend port: explicit > instance-derived > default
-  let frontendPort: number;
-  if (explicit.frontendPort !== undefined) {
-    frontendPort = explicit.frontendPort;
+  // Temporal API port: explicit > instance-derived > default
+  let apiPort: number;
+  if (explicit.apiPort !== undefined) {
+    apiPort = explicit.apiPort;
   } else if (instance !== undefined) {
-    frontendPort = deriveInstancePort(instance);
+    apiPort = deriveInstancePort(instance);
   } else {
-    frontendPort = DEFAULT_TEMPORAL_FRONTEND_PORT;
+    apiPort = DEFAULT_TEMPORAL_API_PORT;
   }
 
-  // Temporal UI port: explicit > (resolved frontendPort + 1) > default.
-  // When frontendPort is explicit, ui derives from that explicit value —
+  // Temporal dev-UI port: explicit > (resolved apiPort + 1) > default.
+  // When apiPort is explicit, ui derives from that explicit value —
   // still a deterministic "+ 1" rule, just anchored on the explicit port.
-  let uiPort: number;
-  if (explicit.uiPort !== undefined) {
-    uiPort = explicit.uiPort;
+  let devUiPort: number;
+  if (explicit.devUiPort !== undefined) {
+    devUiPort = explicit.devUiPort;
   } else if (
-    explicit.frontendPort !== undefined ||
+    explicit.apiPort !== undefined ||
     instance !== undefined
   ) {
-    uiPort = frontendPort + 1;
+    devUiPort = apiPort + 1;
   } else {
-    uiPort = DEFAULT_TEMPORAL_UI_PORT;
+    devUiPort = DEFAULT_TEMPORAL_DEV_UI_PORT;
   }
 
-  // Temporal address: explicit > derived from resolved frontendPort > default
+  // Temporal address: explicit > derived from resolved API port > default
   let address: string;
   if (explicit.address !== undefined) {
     address = explicit.address;
-  } else if (instance !== undefined || explicit.frontendPort !== undefined) {
-    address = `127.0.0.1:${frontendPort}`;
+  } else if (instance !== undefined || explicit.apiPort !== undefined) {
+    address = `127.0.0.1:${apiPort}`;
   } else {
-    address = `127.0.0.1:${DEFAULT_TEMPORAL_FRONTEND_PORT}`;
+    address = `127.0.0.1:${DEFAULT_TEMPORAL_API_PORT}`;
   }
 
   // Temporal namespace: explicit > default ("default"). Instance does
@@ -301,8 +301,8 @@ export function resolveInstanceRuntime(
       address,
       namespace,
       taskQueue,
-      frontendPort,
-      uiPort
+      apiPort,
+      devUiPort
     },
     webPort,
     warnings

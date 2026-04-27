@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -35,27 +35,25 @@ describe("createIsolatedWorktree", () => {
     expect(stdout).toContain("?? untracked.txt");
   });
 
-  it("creates a writable node_modules anchor inside the isolated worktree", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-tool-anchor-"));
+  it("uses standard git ignore rules when copying a repository with no HEAD", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-no-head-"));
     await execFileAsync("git", ["init"], { cwd });
-    await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd });
-    await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd });
-    await writeFile(join(cwd, ".gitignore"), "node_modules/\n", "utf8");
-    await writeFile(join(cwd, "package.json"), "{\"scripts\":{\"test\":\"vitest\"}}\n", "utf8");
-    await execFileAsync("git", ["add", ".gitignore", "package.json"], { cwd });
-    await execFileAsync("git", ["commit", "-m", "initial"], { cwd });
+    await writeFile(join(cwd, ".gitignore"), ".env\n*.local.md\n", "utf8");
+    await writeFile(join(cwd, ".env"), "SECRET=value\n", "utf8");
+    await writeFile(join(cwd, "notes.local.md"), "private notes\n", "utf8");
+    await writeFile(join(cwd, "README.md"), "visible\n", "utf8");
+    await mkdir(join(cwd, "src"));
+    await writeFile(join(cwd, "src", "app.ts"), "export const visible = true;\n", "utf8");
 
-    const isolated = await createIsolatedWorktree({ cwd, runId: "run_with_tool_anchor" });
+    const isolated = await createIsolatedWorktree({ cwd, runId: "run_no_head_ignore" });
 
-    await expect(stat(join(isolated.path, "node_modules"))).resolves.toMatchObject({
-      mode: expect.any(Number)
-    });
-    await writeFile(join(isolated.path, "node_modules", ".vite-temp-probe"), "ok\n", "utf8");
-
-    const { stdout } = await execFileAsync("git", ["status", "--short", "--untracked-files=all"], {
-      cwd: isolated.path,
-      encoding: "utf8"
-    });
-    expect(stdout).toBe("");
+    expect(isolated.mode).toBe("directory_copy_no_head");
+    await expect(readFile(join(isolated.path, ".gitignore"), "utf8")).resolves.toBe(".env\n*.local.md\n");
+    await expect(readFile(join(isolated.path, "README.md"), "utf8")).resolves.toBe("visible\n");
+    await expect(readFile(join(isolated.path, "src", "app.ts"), "utf8")).resolves.toBe(
+      "export const visible = true;\n"
+    );
+    await expect(readFile(join(isolated.path, ".env"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(isolated.path, "notes.local.md"), "utf8")).rejects.toThrow();
   });
 });

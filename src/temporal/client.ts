@@ -5,25 +5,12 @@ import {
   type WorkflowExecutionInfo
 } from "@temporalio/client";
 import { arrayFromPayloads, defaultDataConverter } from "@temporalio/common";
-import { assertNoInlineSecrets } from "../security/inlineSecrets.js";
 import { normalizeTemporalConfig, type TemporalConfig } from "./manager.js";
-import type {
-  SimpleWorkflowDismissInboxSignalInput,
-  SimpleWorkflowExtendIterationsSignalInput,
-  SimpleWorkflowRegisterSessionSignalInput,
-  SimpleWorkflowResumeSessionSignalInput,
-  SimpleWorkflowContinuationSignalInput
-} from "./types.js";
 import {
   interactionApproveStateSignalName,
   interactionModifyStateSignalName,
   interactionPendingStateQueryName,
   interactionRejectStateSignalName,
-  simpleWorkflowContinueSignalName,
-  simpleWorkflowDismissInboxSignalName,
-  simpleWorkflowExtendIterationsSignalName,
-  simpleWorkflowRegisterSessionSignalName,
-  simpleWorkflowResumeSessionSignalName,
   tychonicWorkflowStateQueryName,
   type InteractionApproveStatePayload,
   type InteractionModifyStatePayload,
@@ -47,37 +34,10 @@ export interface StartNamedTemporalWorkflowResult {
   result?: unknown;
 }
 
-export interface SignalSimpleWorkflowContinuationOptions extends TemporalConfig, SimpleWorkflowContinuationSignalInput {
-  workflowId: string;
-  runId?: string;
-}
-
-export interface SignalSimpleWorkflowSignalResult {
+export interface WorkflowSignalResult {
   workflowId: string;
   runId?: string;
   signaled: true;
-}
-
-export interface SignalSimpleWorkflowInboxDismissOptions extends TemporalConfig, SimpleWorkflowDismissInboxSignalInput {
-  workflowId: string;
-  runId?: string;
-}
-
-export interface SignalSimpleWorkflowRegisterSessionOptions extends TemporalConfig, SimpleWorkflowRegisterSessionSignalInput {
-  workflowId: string;
-  runId?: string;
-}
-
-export interface SignalSimpleWorkflowResumeSessionOptions extends TemporalConfig, SimpleWorkflowResumeSessionSignalInput {
-  workflowId: string;
-  runId?: string;
-}
-
-export interface SignalSimpleWorkflowExtendIterationsOptions
-  extends TemporalConfig,
-    SimpleWorkflowExtendIterationsSignalInput {
-  workflowId: string;
-  runId?: string;
 }
 
 export interface SignalInteractionApproveStateOptions extends TemporalConfig {
@@ -244,130 +204,44 @@ export async function describeTychonicTemporalWorkflow(
   }
 }
 
-export async function signalSimpleWorkflowContinuation(
-  options: SignalSimpleWorkflowContinuationOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
-  validateSignalCommandOptions(options, "simple_workflow continuation");
-  const config = normalizeTemporalConfig(options);
-  const connection = await Connection.connect({ address: config.address });
-  const client = new Client({ connection, namespace: config.namespace });
-  const handle = client.workflow.getHandle(options.workflowId, options.runId);
-  await handle.signal(simpleWorkflowContinueSignalName, {
-    inboxItemId: options.inboxItemId,
-    ...(options.command ? { command: options.command } : {}),
-    ...(options.agent ? { agent: options.agent } : {}),
-    ...(options.resumeCommand ? { resumeCommand: options.resumeCommand } : {}),
-    ...(options.workerCandidates ? { workerCandidates: options.workerCandidates } : {}),
-    ...(options.goal ? { goal: options.goal } : {}),
-    ...(options.verifyCommand ? { verifyCommand: options.verifyCommand } : {}),
-    ...(options.reviewCommand ? { reviewCommand: options.reviewCommand } : {}),
-    ...(options.reviewAgent ? { reviewAgent: options.reviewAgent } : {}),
-    ...(options.reviewCandidates ? { reviewCandidates: options.reviewCandidates } : {}),
-    ...(options.commandTimeoutMs ? { commandTimeoutMs: options.commandTimeoutMs } : {}),
-    ...(options.activityTimeouts ? { activityTimeouts: options.activityTimeouts } : {})
-  });
-  return {
-    workflowId: options.workflowId,
-    ...(options.runId ? { runId: options.runId } : {}),
-    signaled: true
-  };
+export interface SignalNamedWorkflowOptions extends TemporalConfig {
+  workflowId: string;
+  runId?: string;
+  signalName: string;
+  payload?: unknown;
 }
 
-export async function signalSimpleWorkflowInboxDismiss(
-  options: SignalSimpleWorkflowInboxDismissOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
-  const config = normalizeTemporalConfig(options);
-  const connection = await Connection.connect({ address: config.address });
-  const client = new Client({ connection, namespace: config.namespace });
-  const handle = client.workflow.getHandle(options.workflowId, options.runId);
-  await handle.signal(simpleWorkflowDismissInboxSignalName, {
-    inboxItemId: options.inboxItemId,
-    ...(options.reason ? { reason: options.reason } : {})
-  });
-  return {
-    workflowId: options.workflowId,
-    ...(options.runId ? { runId: options.runId } : {}),
-    signaled: true
-  };
-}
-
-export async function signalSimpleWorkflowRegisterSession(
-  options: SignalSimpleWorkflowRegisterSessionOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
-  assertOptionalCommandHasNoInlineSecrets(options.resumeCommand, "registered resume command");
-  const config = normalizeTemporalConfig(options);
-  const connection = await Connection.connect({ address: config.address });
-  const client = new Client({ connection, namespace: config.namespace });
-  const handle = client.workflow.getHandle(options.workflowId, options.runId);
-  await handle.signal(simpleWorkflowRegisterSessionSignalName, {
-    id: options.id,
-    agent: options.agent,
-    role: options.role,
-    cwd: options.cwd,
-    ...(options.status ? { status: options.status } : {}),
-    ...(options.externalSessionId ? { externalSessionId: options.externalSessionId } : {}),
-    ...(options.resumeCommand ? { resumeCommand: options.resumeCommand } : {}),
-    startedAt: options.startedAt
-  });
-  return {
-    workflowId: options.workflowId,
-    ...(options.runId ? { runId: options.runId } : {}),
-    signaled: true
-  };
-}
-
-export async function signalSimpleWorkflowResumeSession(
-  options: SignalSimpleWorkflowResumeSessionOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
-  validateSignalCommandOptions(options, "session resume");
-  const config = normalizeTemporalConfig(options);
-  const connection = await Connection.connect({ address: config.address });
-  const client = new Client({ connection, namespace: config.namespace });
-  const handle = client.workflow.getHandle(options.workflowId, options.runId);
-  await handle.signal(simpleWorkflowResumeSessionSignalName, {
-    sessionId: options.sessionId,
-    prompt: options.prompt,
-    verifyCommand: options.verifyCommand,
-    ...(options.reviewCommand ? { reviewCommand: options.reviewCommand } : {}),
-    ...(options.reviewAgent ? { reviewAgent: options.reviewAgent } : {}),
-    ...(options.reviewCandidates ? { reviewCandidates: options.reviewCandidates } : {}),
-    ...(options.commandTimeoutMs ? { commandTimeoutMs: options.commandTimeoutMs } : {}),
-    ...(options.activityTimeouts ? { activityTimeouts: options.activityTimeouts } : {})
-  });
-  return {
-    workflowId: options.workflowId,
-    ...(options.runId ? { runId: options.runId } : {}),
-    signaled: true
-  };
-}
-
-export async function signalSimpleWorkflowExtendIterations(
-  options: SignalSimpleWorkflowExtendIterationsOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
-  validateSignalCommandOptions(options, "simple_workflow extend iterations");
-  if (options.maxIterations !== undefined) {
-    if (!Number.isInteger(options.maxIterations) || options.maxIterations < 1) {
-      throw new Error("simple_workflow extend iterations maxIterations must be a positive integer");
-    }
+/**
+ * Workflow-agnostic Temporal signal dispatch. Used by the generic
+ * `tychonic signal` CLI verb and by any host caller that needs to send
+ * an arbitrary signal name to a running workflow without participating
+ * in a workflow-specific payload schema.
+ *
+ * Validation here is intentionally minimal: the host has no opinion on
+ * the signal name (each bundle owns its own) and no opinion on payload
+ * shape. Unknown signal names surface as Temporal-side errors verbatim;
+ * payload shape mismatches surface from the workflow's signal handler.
+ * The only host-level rule is that `workflowId` and `signalName` are
+ * non-empty strings.
+ */
+export async function signalNamedWorkflow(
+  options: SignalNamedWorkflowOptions
+): Promise<WorkflowSignalResult> {
+  if (typeof options.workflowId !== "string" || options.workflowId.length === 0) {
+    throw new Error("signalNamedWorkflow workflowId must be a non-empty string");
+  }
+  if (typeof options.signalName !== "string" || options.signalName.length === 0) {
+    throw new Error("signalNamedWorkflow signalName must be a non-empty string");
   }
   const config = normalizeTemporalConfig(options);
   const connection = await Connection.connect({ address: config.address });
   const client = new Client({ connection, namespace: config.namespace });
   const handle = client.workflow.getHandle(options.workflowId, options.runId);
-  await handle.signal(simpleWorkflowExtendIterationsSignalName, {
-    ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
-    ...(options.command ? { command: options.command } : {}),
-    ...(options.agent ? { agent: options.agent } : {}),
-    ...(options.resumeCommand ? { resumeCommand: options.resumeCommand } : {}),
-    ...(options.workerCandidates ? { workerCandidates: options.workerCandidates } : {}),
-    ...(options.goal ? { goal: options.goal } : {}),
-    ...(options.verifyCommand ? { verifyCommand: options.verifyCommand } : {}),
-    ...(options.reviewCommand ? { reviewCommand: options.reviewCommand } : {}),
-    ...(options.reviewAgent ? { reviewAgent: options.reviewAgent } : {}),
-    ...(options.reviewCandidates ? { reviewCandidates: options.reviewCandidates } : {}),
-    ...(options.commandTimeoutMs ? { commandTimeoutMs: options.commandTimeoutMs } : {}),
-    ...(options.activityTimeouts ? { activityTimeouts: options.activityTimeouts } : {})
-  });
+  if (options.payload === undefined) {
+    await handle.signal(options.signalName);
+  } else {
+    await handle.signal(options.signalName, options.payload);
+  }
   return {
     workflowId: options.workflowId,
     ...(options.runId ? { runId: options.runId } : {}),
@@ -389,7 +263,7 @@ const INTERACTION_MODIFY_TERMINAL_STATUSES: readonly WorkflowStateStatus[] = [
 
 export async function signalInteractionApproveState(
   options: SignalInteractionApproveStateOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
+): Promise<WorkflowSignalResult> {
   validateInteractionStateName(options.state, "approveState");
   const config = normalizeTemporalConfig(options);
   const connection = await Connection.connect({ address: config.address });
@@ -406,7 +280,7 @@ export async function signalInteractionApproveState(
 
 export async function signalInteractionRejectState(
   options: SignalInteractionRejectStateOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
+): Promise<WorkflowSignalResult> {
   validateInteractionStateName(options.state, "rejectState");
   if (typeof options.feedback !== "string" || options.feedback.length === 0) {
     throw new Error("rejectState feedback must be a non-empty string");
@@ -429,7 +303,7 @@ export async function signalInteractionRejectState(
 
 export async function signalInteractionModifyState(
   options: SignalInteractionModifyStateOptions
-): Promise<SignalSimpleWorkflowSignalResult> {
+): Promise<WorkflowSignalResult> {
   validateInteractionStateName(options.state, "modifyState");
   validateInteractionModifyPayload(options.state, options.patch);
   const config = normalizeTemporalConfig(options);
@@ -476,16 +350,11 @@ function validateInteractionStateName(state: unknown, signalLabel: string): void
 }
 
 /**
- * SPEC Edit 3 requires `modifyState` payloads to carry a full
- * `WorkflowStateRecord` whose `name === state` and whose `status` is
- * terminal. The worker-side `applyModifyStateDecision` re-validates
- * the same contract (defense in depth against non-CLI callers), but
- * client callers get a cleaner error here before the signal is sent.
- *
- * `WorkflowStateRecord` does not currently carry a command string (see
- * `src/domain/types.ts` lines 46-57), so there is no inline-secret
- * surface to guard today. If the shape ever grows a command field,
- * extend this guard with `assertOptionalCommandHasNoInlineSecrets`.
+ * SPEC §Interaction Signal Contract requires `modifyState` payloads to carry
+ * a `StateRecordPatch` whose optional `status` is terminal. The workflow-side
+ * patch application re-validates the same contract (defense in depth against
+ * non-CLI callers), but client callers get a cleaner error here before the
+ * signal is sent.
  */
 function validateInteractionModifyPayload(_state: string, patch: unknown): void {
   if (!patch || typeof patch !== "object") {
@@ -511,42 +380,6 @@ function validateInteractionModifyPayload(_state: string, patch: unknown): void 
   }
   if (p.findings !== undefined && !Array.isArray(p.findings)) {
     throw new Error("modifyState patch.findings must be an array");
-  }
-}
-
-function validateSignalCommandOptions(
-  options: {
-    command?: string;
-    verifyCommand?: string;
-    resumeCommand?: string;
-    workerCandidates?: { agent: string; command?: string; resumeCommand?: string }[];
-    reviewCommand?: string;
-    reviewCandidates?: { agent: string; command?: string; resumeCommand?: string }[];
-  },
-  label: string
-): void {
-  assertOptionalCommandHasNoInlineSecrets(options.command, `${label} worker command`);
-  assertOptionalCommandHasNoInlineSecrets(options.verifyCommand, `${label} verify command`);
-  assertOptionalCommandHasNoInlineSecrets(options.resumeCommand, `${label} resume command`);
-  assertOptionalCommandHasNoInlineSecrets(options.reviewCommand, `${label} review command`);
-  for (const candidate of options.workerCandidates ?? []) {
-    assertOptionalCommandHasNoInlineSecrets(candidate.command, `${label} worker candidate ${candidate.agent} command`);
-    assertOptionalCommandHasNoInlineSecrets(
-      candidate.resumeCommand,
-      `${label} worker candidate ${candidate.agent} resume command`
-    );
-  }
-  for (const candidate of options.reviewCandidates ?? []) {
-    assertOptionalCommandHasNoInlineSecrets(candidate.command, `${label} review candidate ${candidate.agent} command`);
-    if (candidate.resumeCommand) {
-      throw new Error(`${label} review candidate ${candidate.agent} must not set resumeCommand`);
-    }
-  }
-}
-
-function assertOptionalCommandHasNoInlineSecrets(command: string | undefined, label: string): void {
-  if (command) {
-    assertNoInlineSecrets(command, label);
   }
 }
 

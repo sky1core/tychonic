@@ -1,10 +1,9 @@
 # Authoring a plugin workflow
 
 A plugin workflow is a compiled ESM file that composes Tychonic's
-registered activities into a custom pipeline. Workflow modules such as
-`checkpointWorkflow` and `simpleWorkflow` use the same activity set; a
-plugin workflow does whatever your pipeline needs with the same
-primitives.
+registered activities into a custom pipeline. Workflow modules
+compose Tychonic's activity primitives; a plugin workflow does
+whatever your pipeline needs with the same set.
 
 You do **not** modify Tychonic source to add a new workflow shape.
 
@@ -45,7 +44,8 @@ export async function myPipelineWorkflow(input) {
     run,
     cwd: input.cwd,
     profile: input.profile,
-    extras: { worktreePath: input.worktreePath, prompt: input.prompt ?? input.goal ?? "" }
+    worktreePath: input.worktreePath,
+    prompt: input.prompt ?? input.goal ?? ""
   });
   run = mergeRun(run, workRes);
 
@@ -62,17 +62,27 @@ function mergeRun(run, result) { /* see §Merging activity results */ }
 Install and load:
 
 ```sh
+(cd ./my-pipeline && npm install)
 tychonic workflows install ./my-pipeline
 ```
 
-A bundle is a directory containing exactly `workflow.mjs` and
-`config.yaml` (plus an optional `README.md`). Tychonic copies the
-directory tree into
+A bundle is a directory containing `workflow.mjs`. It may also be a
+standard package directory with `package.json`, lockfiles, local helper
+modules, and `node_modules`. Tychonic copies the directory tree into
 `~/Library/Application Support/Tychonic/workflows/modules/<name>/`,
-validates the bundle, and replaces the worker so the new bundle is
-loaded. The worker resolves `@temporalio/workflow` from the Tychonic
-package's own `node_modules` — no vendoring or install-time symlink
-required.
+validates the bundle, and refreshes the operational LaunchAgent worker
+when that worker is installed. Under an isolated `--instance`, install
+updates only that instance's module registry; restart the isolated runtime
+to load newly installed bundles. Dependency resolution is standard package
+resolution from the installed bundle location: if `workflow.mjs` imports a
+package, that package must be installed in the bundle package or pre-bundled
+into the workflow file. Tychonic does not add its own `node_modules`, create
+symlinks, or run a package manager during install.
+
+Because Temporal's workflow bundler also resolves `@temporalio/workflow`
+from the workflow entrypoint package, ordinary bundles should declare
+`@temporalio/workflow` in their own `package.json` and run `npm install`
+before `tychonic workflows install`.
 
 See [Starting a plugin workflow](#starting-a-plugin-workflow) for
 how to kick a run.
@@ -89,9 +99,9 @@ regular async functions in workflow code.
 
 | Activity | Purpose |
 | --- | --- |
-| `startRunActivity({ workflow, cwd, profile?, goal?, targetSessionId?, runId? })` | Create the initial `WorkflowRunRecord`. Returns the full record. Call once at the start. |
+| `startRunActivity({ template, cwd, profile?, goal?, runId? })` | Create the initial `WorkflowRunRecord`. Returns the full record. Call once at the start. |
 | `collectGitFactsActivity({ run, cwd })` | Run `git diff` and attach a `RunFacts` patch via the returned delta. No state is created. |
-| `createWorktreeActivity({ run, cwd })` | Create an isolated worktree for `simpleWorkflow`-style runs. Returns `{ worktreePath, mode, reason }`. |
+| `createWorktreeActivity({ run, cwd })` | Create an isolated worktree for the workflow's worker steps. Returns `{ worktreePath, mode, reason }`. |
 | `finalizeRunActivity({ run, summary? })` | Compute terminal `run.status` from state/inbox state. Returns a delta with `status` (and optional `summary`). |
 
 ### Deterministic commands
@@ -104,7 +114,7 @@ Each takes `ActivityInput<T>` and returns `ActivityResult` with
 | `runLintActivity` | `lint` |
 | `runUnitTestActivity` | `unit_test` |
 | `runIntegrationActivity` | `integration` |
-| `runVerifyActivity` | `verify` (accepts `extras.worktreePath`) |
+| `runVerifyActivity` | `verify` (accepts `worktreePath`) |
 
 ### Structured review
 
@@ -116,8 +126,8 @@ Each takes `ActivityInput<T>` and returns `ActivityResult` with
 
 | Activity | TYPE | Notes |
 | --- | --- | --- |
-| `runWorkerActivity` | `work` | Runs one worker candidate. `extras.worktreePath` is required. When the workflow passes `extras.sessionId`, the worker resumes that prior session instead of starting fresh. Returns `workerOutcome` with `agentSessions` and `artifacts`. |
-| `runAutoContinueActivity` | `auto_continue` | Dispatcher: resume mode when `extras.sessionId` is present, fresh mode otherwise. |
+| `runWorkerActivity` | `work` | Runs one worker invocation. `worktreePath` is required. When the workflow passes `sessionId`, the worker resumes that prior session instead of starting fresh. Returns `workerOutcome` with `agentSessions` and `artifacts`. |
+| `runAutoContinueActivity` | `auto_continue` | Dispatcher: resume mode when `sessionId` is present, fresh mode otherwise. |
 
 ---
 
@@ -128,13 +138,12 @@ review, work, auto_continue) share
 `ActivityInput<TYPE>`:
 
 ```ts
-interface ActivityInput<T> {
+type ActivityInput<T> = {
   stateName: string;       // state NAME (user-chosen; appears in run.states and artifact kinds)
   run: WorkflowRunRecord;  // the current run — never mutated
-  profile: WorkflowProfile;// merged profile snapshot
+  profile: TychonicConfig;  // effective profile snapshot
   cwd: string;             // project root
-  extras: ExtrasByType[T]; // per-TYPE inputs (command, prompt, worktreePath, ...)
-}
+} & ActivityCallFieldsByType[T]; // runtime fields: prompt, worktreePath, sessionId, ...
 ```
 
 Every activity call returns:
@@ -149,7 +158,7 @@ interface ActivityResult {
 ```
 
 The activity body **never mutates `input.run`**
-(SPEC §File I/O vs run mutation). It writes files directly and
+(SPEC §Activity Result And Evidence Invariants). It writes files directly and
 returns records through the outcome payloads. The workflow is
 responsible for applying delta + outcome to its local run copy.
 
@@ -167,16 +176,10 @@ different NAMEs. SPEC §State Identity And Activity TYPE.
 ## Merging activity results into the run
 
 The workflow owns a local `WorkflowRunRecord`. After each activity
-call, merge the result into it. Tychonic ships pure helpers in
-`src/workflows/runMerge.ts`:
-
-```ts
-import { applyActivityResult } from "../workflows/runMerge.js";
-```
-
-If you prefer inline merge (the plugin is an ESM file and the
-helpers live in Tychonic's source tree; you can import them because
-the bundler resolves from Tychonic's `node_modules`), just call:
+call, merge the result into it. Keep merge helper logic inside the
+bundle, pre-bundle it into `workflow.mjs`, or publish it as a real
+dependency of that bundle package. Do not rely on Tychonic source-tree
+imports being available at runtime:
 
 ```js
 run = applyActivityResult(run, result);
@@ -220,7 +223,8 @@ run = { ...run, states: [...run.states, skippedState("state_1", "lint", "autonom
 
 Temporal workflow code runs in a deterministic V8 sandbox. Your
 plugin file is bundled into the workflow bundle; webpack pulls in
-any transitive imports.
+transitive imports that resolve through the bundle's own standard
+package layout.
 
 - No `node:fs`, `node:child_process`, `node:net`, ... — plugin
   code runs in the workflow sandbox. File and network I/O belongs
@@ -228,18 +232,15 @@ any transitive imports.
 - No top-level `Math.random()`, `Date.now()` outside Temporal's
   replay-safe wrappers. Within a workflow, `new Date()` is OK
   because Temporal replaces it at replay.
-- Only import pure modules. Importing
-  `../bootstrap/checkpointRunner.js` would fail because bootstrap
-  pulls in `runCommand` → `child_process`.
+- Only import pure modules. Anything that pulls in `runCommand` →
+  `child_process` (or any other Node I/O API) belongs in an
+  activity module, not in the workflow file.
 
 Safe imports include:
 
 - `@temporalio/workflow`
-- Tychonic types: `import type { ... } from "../domain/types.js"` or
-  `.../temporal/types.js`
-- Tychonic pure helpers:
-  `src/domain/runDelta.ts`, `src/workflows/runMerge.ts`,
-  `src/workflows/checkpointPure.ts`
+- package dependencies installed in this bundle directory
+- relative helper modules that are copied with this bundle
 - Your own pure helpers in the plugin file
 
 If in doubt, the worker will refuse to start the bundle and print
@@ -250,13 +251,17 @@ the failing import in
 
 ## Starting a plugin workflow
 
-`tychonic run <workflow-type>` starts workflow exports by their exact
-exported function name. Examples include `checkpointWorkflow`,
-`simpleWorkflow`, `selfRepairWorkflow`, and any project-specific workflow
-name. Pass the workflow input explicitly with `--input` or `--input-file`.
+`tychonic run <workflow-name>` starts workflow exports by their exact
+exported function name. The name is the bundle directory name, which
+is also the exported function name in `workflow.mjs`. Example bundles
+under `examples/workflows/` (such as `simpleWorkflow`,
+`selfRepairWorkflow`, `checkpointWorkflow`) are user-installable
+references — they are not built-in workflows. Pass the workflow input
+explicitly with `--input` or `--input-file`.
 
 ```sh
 tychonic run myPipelineWorkflow --input-file ./input.json
+# After installing the example bundle examples/workflows/selfRepairWorkflow/:
 tychonic run selfRepairWorkflow --input-file ./self-repair-input.json
 ```
 
@@ -294,18 +299,34 @@ await conn.close();
 
 ---
 
+## Policies are bundle-defined
+
+The host config schema treats `policies` as an opaque object keyed by
+string. The host accepts any `policies.<key>` block without inspecting
+its inner shape; the workflow bundle that consumes a policy is
+responsible for validating its own keys at workflow start. Use a small
+inline validator in your `workflow.mjs` (a hand-rolled object check or
+an inline zod schema) so a typo or wrong type surfaces as a clear
+error before the workflow does any real work. The example bundles
+under `examples/workflows/` demonstrate the pattern.
+
+Signal payload shape is also a public contract. Once a bundle author
+publishes a signal name, the string and the documented payload become
+part of the user-facing surface and operators (and other agents) drive
+the workflow through them via `tychonic signal`.
+
 ## Interactive gating in plugin workflows
 
-A plugin that opts into `policies.interaction.mode: interactive` gates
-every state transition on an external decision by installing signal
-handlers (using only `@temporalio/workflow`) and pausing after each
-activity call until one of the three interaction signals arrives.
+This section describes the interaction convention used by the reference
+bundles. The host config schema treats `policies.*` as bundle-defined data:
+`policies.interaction.mode: interactive` has meaning only for a workflow that
+chooses to validate that policy and register matching signal handlers.
 
-The interaction protocol is a set of stable signal/query names
-Tychonic's CLI already speaks — plugins register those names directly
-rather than importing an internal Tychonic helper. This keeps the
-plugin self-contained and independent of Tychonic's internal module
-layout. The names live in `src/temporal/types.ts`:
+Tychonic's CLI can send the following public signal/query names. Plugins that
+want to be driven by `tychonic approve`, `tychonic reject`, and
+`tychonic modify` register those names directly with `@temporalio/workflow`
+rather than importing an internal Tychonic helper. This keeps the plugin
+self-contained and independent of Tychonic's internal module layout:
 
 - `tychonic.interaction.approve_state`
 - `tychonic.interaction.reject_state`
@@ -327,8 +348,6 @@ const APPROVE = "tychonic.interaction.approve_state";
 const REJECT = "tychonic.interaction.reject_state";
 const MODIFY = "tychonic.interaction.modify_state";
 const PENDING = "tychonic.interaction.pending_state";
-
-export const requires = { states: [{ name: "work", type: "work" }] };
 
 export async function myPlugin(input) {
   const queue = [];
@@ -360,10 +379,12 @@ export async function myPlugin(input) {
     } finally { pending = undefined; }
   }
 
-  let run = await startRunActivity({ template: "my_plugin", cwd: input.cwd });
+  let run = await startRunActivity({ template: "my_plugin", cwd: input.cwd, profile: input.profile });
+  const wt = await createWorktreeActivity({ run, cwd: input.cwd });
   const res = await runWorkerActivity({
     stateName: "work", run, profile: input.profile, cwd: input.cwd,
-    extras: { prompt: input.goal ?? "" }
+    worktreePath: wt.worktreePath,
+    prompt: input.goal ?? ""
   });
   run = applyActivityResult(run, res);
 
@@ -399,12 +420,10 @@ Operator recovery: the three CLI commands surface each decision class.
   fields in the file when both are present.
 
 When `--state` is omitted, the CLI queries
-`tychonic.interaction.pending_state`. A plugin that omits
-`registerInteractionSignals`/`waitForStateApproval` exposes no such
-query; the CLI fails with a clear error directing the operator to pass
-`--state` explicitly. This is the escape hatch for the auto-only
-failure mode: `policies.interaction.mode: interactive` on a plugin
-that never calls the hook cannot silently hang because no gate waits.
+`tychonic.interaction.pending_state`. A plugin that does not register that
+query cannot be auto-targeted; the CLI fails with a clear error directing the
+operator to pass `--state` explicitly. A `policies.interaction` block alone
+does not affect a workflow unless that workflow reads and implements it.
 
 ---
 
@@ -443,8 +462,9 @@ const {
 
 export async function pipelineWorkflow(input) {
   let run = await startRunActivity({
-    workflow: "pipeline_7stage",
+    template: "pipeline_7stage",
     cwd: input.cwd,
+    profile: input.profile,
     goal: input.goal
   });
 
@@ -456,14 +476,15 @@ export async function pipelineWorkflow(input) {
   // stage 1: work
   const work = await runWorkerActivity({
     stateName: "work", run, cwd: input.cwd, profile: input.profile,
-    extras: { worktreePath, prompt: input.prompt ?? input.goal ?? "" }
+    worktreePath,
+    prompt: input.prompt ?? input.goal ?? ""
   });
   run = apply(run, work);
   if (work.workerOutcome?.status !== "succeeded") return done(run, input.cwd, "stage 1 work failed");
 
   // stages 2-3: deterministic
   for (const [stateName, activity] of [["static", runLintActivity], ["unit", runUnitTestActivity]]) {
-    const res = await activity({ stateName, run, cwd: input.cwd, profile: input.profile, extras: { worktreePath } });
+    const res = await activity({ stateName, run, cwd: input.cwd, profile: input.profile, worktreePath });
     run = apply(run, res);
     if (res.delta.states?.[0]?.status !== "succeeded") return done(run, input.cwd, `stage ${stateName} failed`);
   }
@@ -471,7 +492,8 @@ export async function pipelineWorkflow(input) {
   // stage 4: review_1
   const review1 = await runReviewActivity({
     stateName: "review_1", run, cwd: input.cwd, profile: input.profile,
-    extras: { worktreePath, prompt: input.reviewPrompt ?? structuredReviewPrompt("work stages 1-3") }
+    worktreePath,
+    prompt: input.reviewPrompt ?? structuredReviewPrompt("work stages 1-3")
   });
   run = apply(run, review1);
   const review1Decision = gateReviewStage(run, review1, "review_1");
@@ -480,13 +502,14 @@ export async function pipelineWorkflow(input) {
 
   // stage 5: integration
   run = apply(run, await runIntegrationActivity({
-    stateName: "integration", run, cwd: input.cwd, profile: input.profile, extras: { worktreePath }
+    stateName: "integration", run, cwd: input.cwd, profile: input.profile, worktreePath
   }));
 
   // stage 6: review_2 (same TYPE, different NAME)
   const review2 = await runReviewActivity({
     stateName: "review_2", run, cwd: input.cwd, profile: input.profile,
-    extras: { worktreePath, prompt: input.reviewPrompt2 ?? structuredReviewPrompt("integration and prior review follow-up") }
+    worktreePath,
+    prompt: input.reviewPrompt2 ?? structuredReviewPrompt("integration and prior review follow-up")
   });
   run = apply(run, review2);
   const review2Decision = gateReviewStage(run, review2, "review_2");
@@ -496,7 +519,7 @@ export async function pipelineWorkflow(input) {
   // stage 7: security (TYPE verify)
   run = apply(run, await runVerifyActivity({
     stateName: "security", run, cwd: input.cwd, profile: input.profile,
-    extras: { worktreePath }
+    worktreePath
   }));
 
   return done(run, input.cwd, `pipeline finished: ${run.states.map((s) => `${s.name}=${s.status}`).join(", ")}`);
@@ -604,12 +627,13 @@ Every stage NAME must have a matching `states.<name>` block with the
 right TYPE. The working example ships as a bundle at
 [`examples/workflows/pipelineWorkflow/`](../examples/workflows/pipelineWorkflow),
 with two review NAMEs of the same TYPE. See
-[`examples/workflows/pipelineWorkflow/config.yaml`](../examples/workflows/pipelineWorkflow/config.yaml)
-for the current reference content.
+[`examples/workflows/pipelineWorkflow/workflow.mjs`](../examples/workflows/pipelineWorkflow/workflow.mjs)
+(the `defaultProfile` export) for the current reference content.
 
 ### Install and run
 
 ```sh
+(cd examples/workflows/pipelineWorkflow && npm install)
 tychonic workflows install ./examples/workflows/pipelineWorkflow
 
 # kick it via the client script above, passing { cwd, profile, ... }
@@ -632,7 +656,6 @@ run can look `succeeded` merely because no state failed.
 - `SPEC.md` §Plugin Composition Path — contract
 - `SPEC.md` §Activity Invariants — what each activity guarantees
 - `src/activities/` — the registered activity implementations
-- `src/workflows/checkpoint.ts` — the included `checkpointWorkflow` module
-  as a reference for how the product itself composes activities
-- `src/workflows/runMerge.ts`,
-  `src/workflows/checkpointPure.ts` — reusable pure helpers
+- `examples/workflows/checkpointWorkflow/workflow.mjs` — example
+  bundle that composes the activity primitives end-to-end
+- `src/workflows/runMerge.ts` — reusable pure helper

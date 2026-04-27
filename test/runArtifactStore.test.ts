@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -74,5 +74,38 @@ describe("RunArtifactStore path resolution", () => {
     };
 
     expect(() => store.artifactPath(run, "artifact_bad")).toThrow(/escapes/);
+  });
+
+  it("writes artifacts without mutating the run record", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-store-write-"));
+    const store = new RunArtifactStore(join(cwd, ".tychonic"));
+    const run: WorkflowRunRecord = {
+      schema_version: "tychonic.run.v1",
+      id: "run_store_write",
+      template: "checkpoint",
+      status: "running",
+      cwd,
+      created_at: "2026-04-19T00:00:00.000Z",
+      updated_at: "2026-04-19T00:00:00.000Z",
+      states: [],
+      activity_attempts: [],
+      agent_sessions: [],
+      artifacts: [],
+      findings: [],
+      inbox: []
+    };
+
+    const artifact = await store.writeArtifact({
+      run,
+      id: "artifact_1",
+      kind: "output",
+      filename: "output.txt",
+      content: "hello\n",
+      createdAt: "2026-04-19T00:00:00.000Z"
+    });
+
+    expect(run.artifacts).toEqual([]);
+    expect(artifact.path).toBe(".tychonic/runs/run_store_write/artifacts/output.txt");
+    await expect(readFile(join(cwd, artifact.path), "utf8")).resolves.toBe("hello\n");
   });
 });

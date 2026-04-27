@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -33,12 +33,37 @@ describe("bootstrap activities", () => {
         template: "simple_workflow",
         cwd: "/repo",
         runId: "simple_workflow_custom_id",
-        goal: "fix the bug",
-        targetSessionId: "prev_session_7"
+        goal: "fix the bug"
       });
       expect(run.id).toBe("simple_workflow_custom_id");
       expect(run.goal).toBe("fix the bug");
-      expect(run.target_session_id).toBe("prev_session_7");
+    });
+
+    it("records a profile_snapshot artifact when a profile is supplied", async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "tychonic-profile-snapshot-"));
+      const run = await startRunActivity({
+        template: "simple_workflow",
+        cwd,
+        runId: "simple_workflow_profile_snapshot",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            verify: { type: "verify", command: "npm run verify:worker" }
+          }
+        }
+      });
+
+      expect(run.profile_snapshot_artifact_id).toBe("artifact_1");
+      expect(run.artifacts).toEqual([
+        expect.objectContaining({
+          id: "artifact_1",
+          kind: "profile_snapshot",
+          path: ".tychonic/runs/simple_workflow_profile_snapshot/artifacts/profile_snapshot.yaml"
+        })
+      ]);
+      const content = await readFile(join(cwd, run.artifacts[0]!.path), "utf8");
+      expect(content).toContain("version: tychonic.config.v1");
+      expect(content).toContain("command: npm run verify:worker");
     });
   });
 
@@ -119,6 +144,25 @@ describe("bootstrap activities", () => {
       ];
       const result = await finalizeRunActivity({ run });
       expect(result.delta.status).toBe("waiting_user");
+    });
+
+    it("returns 'blocked' when the latest state is blocked and no inbox item is open", async () => {
+      const run = baseRun("run_fin_blocked");
+      run.states = [
+        {
+          id: "state_blocked",
+          name: "review",
+          status: "blocked",
+          reason: "reviewer output did not match tychonic.review.v1",
+          activity_attempt_ids: [],
+          artifact_ids: [],
+          finding_ids: [],
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:00:05Z"
+        }
+      ];
+      const result = await finalizeRunActivity({ run });
+      expect(result.delta.status).toBe("blocked");
     });
 
     it("returns 'succeeded' when no state failed and no inbox item is open", async () => {

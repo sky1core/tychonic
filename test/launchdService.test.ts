@@ -1,16 +1,13 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { installLaunchdServices } from "../src/service/launchd.js";
 
 describe("launchd service installer", () => {
-  it("writes LaunchAgents that run from a packaged CLI and install the packaged workflow bundle", async () => {
+  it("writes LaunchAgents that run from a packaged CLI without auto-seeding any workflow bundle", async () => {
     const root = await makeTempRoot("tychonic-launchd-install-");
-    const fixture = await makePackagedInstallFixture(
-      root,
-      packagedBundleWorkflowSource("one")
-    );
+    const fixture = await makePackagedInstallFixture(root);
     const launchAgentDir = join(root, "LaunchAgents");
     const stateHome = join(root, "state");
     const logHome = join(root, "logs");
@@ -21,12 +18,11 @@ describe("launchd service installer", () => {
     process.env.TYCHONIC_LOG_HOME = logHome;
     try {
       const installed = await installLaunchdServices({
-        projectCwd: join(root, "project"),
+        projectDir: join(root, "project"),
         nodePath: process.execPath,
         cliPath: fixture.cliPath,
         temporalCliPath: fixture.temporalPath,
-        frontendPort: 9233,
-        uiPort: 10233,
+        temporalPort: 9233,
         workerShutdownGraceTime: "35m",
         launchAgentDir,
         load: false
@@ -49,60 +45,39 @@ describe("launchd service installer", () => {
       expect(temporalPlist).toContain("<string>--port</string>");
       expect(temporalPlist).toContain("<string>9233</string>");
       expect(temporalPlist).toContain("<string>--ui-port</string>");
-      expect(temporalPlist).toContain("<string>10233</string>");
+      expect(temporalPlist).toContain("<string>9234</string>");
       const workerPlist = await readFile(installed.plists.worker, "utf8");
       expect(workerPlist).toContain("<string>worker</string>");
-      expect(workerPlist).toContain("<string>--frontend-port</string>");
+      expect(workerPlist).toContain("<string>--temporal-mode</string>");
+      expect(workerPlist).toContain("<string>managed-local</string>");
+      expect(workerPlist).toContain("<string>--temporal-port</string>");
       expect(workerPlist).toContain("<string>9233</string>");
-      expect(workerPlist).toContain("<string>--ui-port</string>");
-      expect(workerPlist).toContain("<string>10233</string>");
+      expect(workerPlist).not.toContain("<string>--mode</string>");
+      expect(workerPlist).not.toContain("<string>--frontend-port</string>");
+      expect(workerPlist).not.toContain("<string>--ui-port</string>");
       expect(workerPlist).toContain("<string>--shutdown-grace-time</string>");
       expect(workerPlist).toContain("<string>35m</string>");
-      expect(await readInstalledPackagedBundle(stateHome, fixture.bundleName)).toBe(
-        await readFile(fixture.packagedWorkflowPath, "utf8")
-      );
-    } finally {
-      restoreEnv("TYCHONIC_STATE_HOME", originalStateHome);
-      restoreEnv("TYCHONIC_LOG_HOME", originalLogHome);
-    }
-  });
-
-  it("refreshes the installed packaged workflow bundle on service reinstall", async () => {
-    const root = await makeTempRoot("tychonic-launchd-reinstall-");
-    const fixture = await makePackagedInstallFixture(root, packagedBundleWorkflowSource("one"));
-    const launchAgentDir = join(root, "LaunchAgents");
-    const stateHome = join(root, "state");
-    const logHome = join(root, "logs");
-
-    const originalStateHome = process.env.TYCHONIC_STATE_HOME;
-    const originalLogHome = process.env.TYCHONIC_LOG_HOME;
-    process.env.TYCHONIC_STATE_HOME = stateHome;
-    process.env.TYCHONIC_LOG_HOME = logHome;
-    try {
-      await installLaunchdServices({
-        projectCwd: join(root, "project"),
-        nodePath: process.execPath,
-        cliPath: fixture.cliPath,
-        temporalCliPath: fixture.temporalPath,
-        launchAgentDir,
-        load: false
-      });
-      expect(await readInstalledPackagedBundle(stateHome, fixture.bundleName)).toBe(
-        packagedBundleWorkflowSource("one")
-      );
-
-      await writeFile(fixture.packagedWorkflowPath, packagedBundleWorkflowSource("two"), "utf8");
-      await installLaunchdServices({
-        projectCwd: join(root, "project"),
-        nodePath: process.execPath,
-        cliPath: fixture.cliPath,
-        temporalCliPath: fixture.temporalPath,
-        launchAgentDir,
-        load: false
-      });
-      expect(await readInstalledPackagedBundle(stateHome, fixture.bundleName)).toBe(
-        packagedBundleWorkflowSource("two")
-      );
+      expect(webPlist).toContain("<string>--project-dir</string>");
+      expect(webPlist).toContain(join(root, "project"));
+      expect(webPlist).toContain("<string>--temporal-mode</string>");
+      expect(webPlist).toContain("<string>managed-local</string>");
+      expect(webPlist).toContain("<string>--temporal-port</string>");
+      expect(webPlist).toContain("<string>9233</string>");
+      expect(webPlist).not.toContain("<string>--mode</string>");
+      expect(webPlist).not.toContain("<string>--cwd</string>");
+      expect(webPlist).not.toContain("<string>--frontend-port</string>");
+      expect(webPlist).not.toContain("<string>--ui-port</string>");
+      // After Step 2 the host installer no longer seeds any workflow bundle.
+      // The runtime workflow modules dir must contain zero bundles until the
+      // operator runs `tychonic workflows install` explicitly.
+      const modulesDir = join(stateHome, "workflows", "modules");
+      let installedBundles: string[] = [];
+      try {
+        installedBundles = await readdir(modulesDir);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      expect(installedBundles).toEqual([]);
     } finally {
       restoreEnv("TYCHONIC_STATE_HOME", originalStateHome);
       restoreEnv("TYCHONIC_LOG_HOME", originalLogHome);
@@ -121,7 +96,7 @@ describe("launchd service installer", () => {
 
     await expect(
       installLaunchdServices({
-        projectCwd: root,
+        projectDir: root,
         nodePath: process.execPath,
         cliPath,
         temporalCliPath: process.execPath,
@@ -144,7 +119,7 @@ describe("launchd service installer", () => {
 
     await expect(
       installLaunchdServices({
-        projectCwd: root,
+        projectDir: root,
         webHost: "0.0.0.0",
         nodePath: process.execPath,
         cliPath,
@@ -157,7 +132,7 @@ describe("launchd service installer", () => {
 
   it("passes the explicit network-bind escape hatch to the web LaunchAgent", async () => {
     const root = await makeTempRoot("tychonic-launchd-bind-allow-");
-    const fixture = await makePackagedInstallFixture(root, packagedBundleWorkflowSource("bind"));
+    const fixture = await makePackagedInstallFixture(root);
     const launchAgentDir = join(root, "LaunchAgents");
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     const originalLogHome = process.env.TYCHONIC_LOG_HOME;
@@ -166,7 +141,7 @@ describe("launchd service installer", () => {
 
     try {
       const installed = await installLaunchdServices({
-        projectCwd: root,
+        projectDir: root,
         webHost: "0.0.0.0",
         allowNetworkBind: true,
         nodePath: process.execPath,
@@ -191,40 +166,17 @@ async function makeTempRoot(prefix: string): Promise<string> {
 }
 
 async function makePackagedInstallFixture(
-  root: string,
-  packagedContents: string
-): Promise<{ cliPath: string; temporalPath: string; packagedWorkflowPath: string; bundleName: string }> {
-  const bundleName = "packagedBundle";
+  root: string
+): Promise<{ cliPath: string; temporalPath: string }> {
   const packageRoot = join(root, "app", "node_modules", "tychonic");
   const cliPath = join(packageRoot, "dist", "cli", "main.js");
   const temporalPath = join(root, "bin", "temporal");
-  const bundleRoot = join(packageRoot, "dist", "workflow-bundles", bundleName);
-  const packagedWorkflowPath = join(bundleRoot, "workflow.mjs");
   await mkdir(join(packageRoot, "dist", "cli"), { recursive: true });
-  await mkdir(bundleRoot, { recursive: true });
   await mkdir(join(root, "bin"), { recursive: true });
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "tychonic" }), "utf8");
   await writeFile(cliPath, "#!/usr/bin/env node\n", "utf8");
   await writeFile(temporalPath, "#!/bin/sh\n", "utf8");
-  await writeFile(packagedWorkflowPath, packagedContents, "utf8");
-  await writeFile(
-    join(bundleRoot, "config.yaml"),
-    "version: tychonic.config.v1\nstates:\n  verify:\n    type: verify\n    command: echo ok\n",
-    "utf8"
-  );
-  return { cliPath, temporalPath, packagedWorkflowPath, bundleName };
-}
-
-async function readInstalledPackagedBundle(stateHome: string, bundleName: string): Promise<string> {
-  return readFile(join(stateHome, "workflows", "modules", bundleName, "workflow.mjs"), "utf8");
-}
-
-function packagedBundleWorkflowSource(tag: string): string {
-  return [
-    "export const requires = { states: [ { name: 'verify', type: 'verify' } ] };",
-    `export async function packagedBundle() { return ${JSON.stringify(tag)}; }`,
-    ""
-  ].join("\n");
+  return { cliPath, temporalPath };
 }
 
 function restoreEnv(name: string, value: string | undefined): void {

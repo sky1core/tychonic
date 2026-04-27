@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,7 +20,8 @@ describe("runAutoContinueActivity", () => {
       run,
       cwd,
       profile: profileFresh("node -e \"console.log('auto fresh ok')\""),
-      extras: { worktreePath, prompt: "continue" }
+      worktreePath,
+      prompt: "continue"
     });
 
     expect(run).toEqual(runBefore);
@@ -35,14 +36,22 @@ describe("runAutoContinueActivity", () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-auto-resume-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-auto-resume-wt-"));
     const run = baseRunWithSession("run_auto_resume", "sess_auto");
+    const restorePath = await installFakeCodex();
 
-    const result = await runAutoContinueActivity({
-      stateName: ACTIVITY_NAME,
-      run,
-      cwd,
-      profile: profileResume(),
-      extras: { worktreePath, prompt: "resume please", sessionId: "sess_auto" }
-    });
+    let result;
+    try {
+      result = await runAutoContinueActivity({
+        stateName: ACTIVITY_NAME,
+        run,
+        cwd,
+        profile: profileResume(),
+        worktreePath,
+        prompt: "resume please",
+        sessionId: "sess_auto"
+      });
+    } finally {
+      restorePath();
+    }
 
     expect(result.delta.states?.[0]?.status).toBe("succeeded");
     expect(result.delta.activityAttempts?.[0]?.kind).toBe("resume_work");
@@ -50,7 +59,7 @@ describe("runAutoContinueActivity", () => {
     expect(result.workerOutcome.resumedSessionId).toBe("sess_auto");
   });
 
-  it("throws ApplicationFailure when neither sessionId nor command is available", async () => {
+  it("rejects an unvalidated auto_continue profile block before command resolution", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-auto-empty-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-auto-empty-wt-"));
 
@@ -60,9 +69,9 @@ describe("runAutoContinueActivity", () => {
         run: baseRun("run_auto_empty"),
         cwd,
         profile: profileNoCommand(),
-        extras: { worktreePath }
+        worktreePath
       })
-    ).rejects.toThrow(/sessionId.*resume.*command/);
+    ).rejects.toThrow(/profile\.states\.auto_alt failed schema validation/);
   });
 });
 
@@ -72,7 +81,6 @@ function profileFresh(command: string): TychonicConfig {
     states: {
       [ACTIVITY_NAME]: {
         type: "auto_continue",
-        agent: "codex",
         command
       }
     }
@@ -97,7 +105,7 @@ function profileNoCommand(): TychonicConfig {
     states: {
       [ACTIVITY_NAME]: {
         type: "auto_continue",
-        agent: "codex"
+        agent: "custom-non-builtin"
       }
     }
   };
@@ -131,10 +139,26 @@ function baseRunWithSession(id: string, sessionId: string): WorkflowRunRecord {
         role: "worker",
         cwd: "/ignored",
         status: "succeeded",
-        resume_command: "node -e \"console.log('resumed ok')\"",
+        resumable: true,
         started_at: "2026-04-19T00:00:00.000Z",
         finished_at: "2026-04-19T00:00:10.000Z"
       }
     ]
+  };
+}
+
+async function installFakeCodex(): Promise<() => void> {
+  const binDir = await mkdtemp(join(tmpdir(), "tychonic-fake-codex-"));
+  const binPath = join(binDir, "codex");
+  await writeFile(binPath, "#!/bin/sh\necho '{\"session_id\":\"external-session-auto\"}'\n", "utf8");
+  await chmod(binPath, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+  return () => {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
   };
 }

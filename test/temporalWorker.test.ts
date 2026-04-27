@@ -29,8 +29,7 @@ vi.mock("../src/temporal/workflowModules.js", () => ({
     {
       name: "simpleWorkflow",
       path: "/tmp/tychonic-test-state/workflows/modules/simpleWorkflow",
-      workflowPath: "/tmp/tychonic-test-state/workflows/modules/simpleWorkflow/workflow.mjs",
-      configPath: "/tmp/tychonic-test-state/workflows/modules/simpleWorkflow/config.yaml"
+      workflowPath: "/tmp/tychonic-test-state/workflows/modules/simpleWorkflow/workflow.mjs"
     }
   ]),
   workflowModuleFileUrl: vi.fn((path: string) => `file://${path}`)

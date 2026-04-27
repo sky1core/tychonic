@@ -1,49 +1,26 @@
 import { constants as fsConstants } from "node:fs";
 import { cp, access, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { Parser, type Node as AcornNode } from "acorn";
 import { tychonicRuntimeDirs } from "./manager.js";
-import { parseBundleConfigYaml } from "../catalog/loadProfile.js";
-import type { TychonicConfig } from "../catalog/types.js";
-import {
-  normalizeBundleRequires,
-  validateBundleFileShape,
-  validateBundleRequires,
-  type BundleRequires
-} from "./bundleValidator.js";
+import { TychonicConfigSchema, type TychonicConfig } from "../catalog/types.js";
+import { validateBundleFileShape } from "./bundleValidator.js";
 
 export interface InstalledWorkflowModule {
   name: string;
   path: string;
   workflowPath: string;
-  configPath: string;
 }
 
 export interface WorkflowBundleInspection {
   exportNames: string[];
-  requires: BundleRequires;
+  workflowFunctionNames: string[];
+  defaultProfile: TychonicConfig;
 }
 
 const BUNDLE_WORKFLOW_FILE = "workflow.mjs";
-const BUNDLE_CONFIG_FILE = "config.yaml";
 const BUNDLE_README_FILE = "README.md";
-
-/**
- * Absolute path of the packaged bundle root under the tychonic package's
- * `dist/workflow-bundles/` directory. Each immediate subdirectory under
- * this path is a bundle directory (see SPEC §Workflow Modules → Bundle
- * layout on disk).
- *
- * When `packageRoot` is omitted this resolves relative to the package
- * that owns the currently executing module. Callers that already know a
- * specific packaged CLI root should pass it explicitly so the packaged
- * bundle root follows that CLI, not the source checkout that happens to
- * be running the current process.
- */
-export function packagedWorkflowBundleRoot(packageRoot?: string): string {
-  return resolve(packageRoot ?? currentTychonicPackageRoot(), "dist", "workflow-bundles");
-}
 
 export async function resolveTychonicPackageRootFromCli(cliPath: string): Promise<string> {
   let dir = dirname(resolve(cliPath));
@@ -64,11 +41,12 @@ export async function resolveTychonicPackageRootFromCli(cliPath: string): Promis
 /**
  * Install a workflow bundle directory under
  * `<state>/workflows/modules/<name>/`. The source must be a directory
- * containing exactly `workflow.mjs` + `config.yaml` and optionally
- * `README.md` (see SPEC §Workflow Modules → Install-time validation).
+ * containing `workflow.mjs` and may also be a standard package directory
+ * with separately installed dependencies (see SPEC §Workflow Modules →
+ * Install-time validation).
  *
- * Validation runs fully before any copy: file shape, config schema,
- * workflow exports, requires cross-check, and cross-bundle export
+ * Validation runs fully before any copy: file shape, exported workflow
+ * function name, `defaultProfile` schema parse, and cross-bundle export
  * conflicts. The copy is done to a sibling `<name>.incoming` directory
  * and then swapped into place so a worker-triggered reload never sees a
  * half-copied bundle.
@@ -94,15 +72,10 @@ export async function installRuntimeWorkflowModule(options: {
   const entries = await readdir(sourcePath);
   validateBundleFileShape(entries);
 
-  const configSourcePath = join(sourcePath, BUNDLE_CONFIG_FILE);
   const workflowSourcePath = join(sourcePath, BUNDLE_WORKFLOW_FILE);
 
-  const configText = await readFile(configSourcePath, "utf8");
-  const config = parseBundleConfigYaml(configText);
-
   const inspection = await inspectWorkflowModuleExports({ name, workflowPath: workflowSourcePath });
-  assertBundleExportsWorkflowFunctionNamed(name, inspection.exportNames);
-  validateBundleRequires({ requires: inspection.requires, config });
+  assertBundleExportsWorkflowFunctionNamed(name, inspection.workflowFunctionNames);
 
   const installedBundles = (await listRuntimeWorkflowModules()).filter((bundle) => bundle.name !== name);
   const installedWorkflowNames = new Set(installedBundles.map((bundle) => bundle.name));
@@ -115,7 +88,7 @@ export async function installRuntimeWorkflowModule(options: {
       );
     }
   }
-  for (const exportName of inspection.exportNames) {
+  for (const exportName of inspection.workflowFunctionNames) {
     if (installedWorkflowNames.has(exportName) && exportName !== name) {
       throw new Error(
         `workflow export name conflict: bundle ${JSON.stringify(name)} exports ${JSON.stringify(exportName)} but an installed bundle already owns that workflow name. ` +
@@ -142,8 +115,7 @@ export async function installRuntimeWorkflowModule(options: {
   return {
     name,
     path: targetDir,
-    workflowPath: join(targetDir, BUNDLE_WORKFLOW_FILE),
-    configPath: join(targetDir, BUNDLE_CONFIG_FILE)
+    workflowPath: join(targetDir, BUNDLE_WORKFLOW_FILE)
   };
 }
 
@@ -171,14 +143,12 @@ export async function listRuntimeWorkflowModules(): Promise<InstalledWorkflowMod
     if (safeName !== entry.name) continue;
     const bundleDir = join(dir, entry.name);
     const workflowPath = join(bundleDir, BUNDLE_WORKFLOW_FILE);
-    const configPath = join(bundleDir, BUNDLE_CONFIG_FILE);
     try {
       await access(workflowPath, fsConstants.R_OK);
-      await access(configPath, fsConstants.R_OK);
     } catch {
       continue;
     }
-    bundles.push({ name: entry.name, path: bundleDir, workflowPath, configPath });
+    bundles.push({ name: entry.name, path: bundleDir, workflowPath });
   }
   return bundles.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -201,8 +171,7 @@ export async function removeRuntimeWorkflowModule(name: string): Promise<Install
   return {
     name: safeName,
     path: bundleDir,
-    workflowPath: join(bundleDir, BUNDLE_WORKFLOW_FILE),
-    configPath: join(bundleDir, BUNDLE_CONFIG_FILE)
+    workflowPath: join(bundleDir, BUNDLE_WORKFLOW_FILE)
   };
 }
 
@@ -214,13 +183,10 @@ export function workflowModuleFileUrl(path: string): string {
   return pathToFileURL(resolve(path)).href;
 }
 
-export async function loadBundleConfigFromDisk(bundleDir: string): Promise<TychonicConfig> {
-  const configText = await readFile(join(bundleDir, BUNDLE_CONFIG_FILE), "utf8");
-  return parseBundleConfigYaml(configText);
-}
-
 export async function inspectBundle(bundle: { name: string; workflowPath: string }): Promise<WorkflowBundleInspection> {
-  return inspectWorkflowModuleExports(bundle);
+  const inspection = await inspectWorkflowModuleExports(bundle);
+  assertBundleExportsWorkflowFunctionNamed(bundle.name, inspection.workflowFunctionNames);
+  return inspection;
 }
 
 /**
@@ -228,7 +194,7 @@ export async function inspectBundle(bundle: { name: string; workflowPath: string
  * exported workflow function name. The invariant "bundle directory name
  * equals the single exported workflow function name" keeps this check to
  * the workflow-function exports only: bundle-private exports like
- * `requires` or helper utilities do not participate.
+ * `defaultProfile` or helper utilities do not participate.
  *
  * Directory names are unique on the filesystem so two bundles cannot
  * share a name through that axis; the remaining failure mode is a bundle
@@ -241,18 +207,18 @@ export async function assertNoInstalledWorkflowExportConflicts(
   installedBundles?: InstalledWorkflowModule[]
 ): Promise<void> {
   const bundles = installedBundles ?? (await listRuntimeWorkflowModules());
-  const inspections: Array<{ bundle: InstalledWorkflowModule; exportNames: string[] }> = [];
+  const inspections: Array<{ bundle: InstalledWorkflowModule; workflowFunctionNames: string[] }> = [];
   for (const bundle of bundles) {
     const inspection = await inspectWorkflowModuleExports({
       name: bundle.name,
       workflowPath: bundle.workflowPath
     });
-    inspections.push({ bundle, exportNames: inspection.exportNames });
+    inspections.push({ bundle, workflowFunctionNames: inspection.workflowFunctionNames });
   }
   const workflowNames = new Set(bundles.map((bundle) => bundle.name));
   const exportOwners = new Map<string, string[]>();
   for (const entry of inspections) {
-    for (const exportName of entry.exportNames) {
+    for (const exportName of entry.workflowFunctionNames) {
       if (!workflowNames.has(exportName)) continue;
       const owners = exportOwners.get(exportName) ?? [];
       owners.push(entry.bundle.name);
@@ -272,29 +238,24 @@ export async function assertNoInstalledWorkflowExportConflicts(
   );
 }
 
-function currentTychonicPackageRoot(): string {
-  const here = fileURLToPath(import.meta.url);
-  return resolve(dirname(here), "..", "..");
-}
-
 function basename(path: string): string {
   const resolved = resolve(path);
   const idx = Math.max(resolved.lastIndexOf("/"), resolved.lastIndexOf("\\"));
   return idx < 0 ? resolved : resolved.slice(idx + 1);
 }
 
-function assertBundleExportsWorkflowFunctionNamed(bundleName: string, exportNames: string[]): void {
-  if (!exportNames.includes(bundleName)) {
+function assertBundleExportsWorkflowFunctionNamed(bundleName: string, workflowFunctionNames: string[]): void {
+  if (!workflowFunctionNames.includes(bundleName)) {
     throw new Error(
       `bundle directory name ${JSON.stringify(bundleName)} does not match any exported workflow function in workflow.mjs. ` +
-        "The bundle's directory name must equal the exported workflow function name."
+       "The bundle's directory name must equal the exported workflow function name."
     );
   }
 }
 
 /**
- * Extract exported names and the `requires` value from `workflow.mjs` by
- * parsing it as an ES module AST — no staging directory, no
+ * Extract exported names and the `defaultProfile` value from `workflow.mjs`
+ * by parsing it as an ES module AST — no staging directory, no
  * `node_modules` symlink, no child-process `import()`. This satisfies
  * AGENTS.md §16 by using a standard JavaScript parser instead of
  * imitating a deployed environment just to inspect static metadata.
@@ -304,10 +265,11 @@ function assertBundleExportsWorkflowFunctionNamed(bundleName: string, exportName
  *    `export class`, `export const|let|var <id>`, or `export { ... }`.
  *  - `export default` is ignored (bundles must export a named function
  *    whose name matches the bundle directory).
- *  - `requires` must be an object literal with JSON-like values
+ *  - `defaultProfile` must be an object literal with JSON-like values
  *    (object / array / string / number / boolean / null /
  *    non-interpolated template literals). Any expression requiring
- *    runtime evaluation is rejected with a clear error.
+ *    runtime evaluation is rejected with a clear error. The extracted
+ *    object is then validated through `TychonicConfigSchema.parse()`.
  */
 async function inspectWorkflowModuleExports(bundle: {
   name: string;
@@ -330,8 +292,11 @@ async function inspectWorkflowModuleExports(bundle: {
   }
 
   const names = new Set<string>();
-  let requiresRaw: unknown;
-  let requiresFound = false;
+  const workflowFunctionNames = new Set<string>();
+  const topLevelInitializers = new Map<string, any>();
+  const topLevelFunctionNames = new Set<string>();
+  let defaultProfileRaw: unknown;
+  let defaultProfileFound = false;
 
   // acorn ast.body is Node[]. We use `any` locally for the walker —
   // acorn's TS types use generic estree unions that require extra casts
@@ -340,19 +305,36 @@ async function inspectWorkflowModuleExports(bundle: {
   const body = ((ast as unknown) as { body: any[] }).body;
   for (const node of body) {
     if (!node || typeof node !== "object") continue;
+    if (node.type === "FunctionDeclaration" && node.id?.name) {
+      topLevelFunctionNames.add(node.id.name);
+      continue;
+    }
+    if (node.type === "VariableDeclaration") {
+      for (const v of node.declarations ?? []) {
+        if (v.id && v.id.type === "Identifier" && v.init) {
+          topLevelInitializers.set(v.id.name, v.init);
+        }
+      }
+    }
+  }
+  for (const node of body) {
+    if (!node || typeof node !== "object") continue;
     if (node.type === "ExportDefaultDeclaration") continue;
     if (node.type !== "ExportNamedDeclaration") continue;
     if (node.declaration && node.declaration.type) {
       const decl = node.declaration;
       if ((decl.type === "FunctionDeclaration" || decl.type === "ClassDeclaration") && decl.id) {
         names.add(decl.id.name);
+        if (decl.type === "FunctionDeclaration") {
+          workflowFunctionNames.add(decl.id.name);
+        }
       } else if (decl.type === "VariableDeclaration") {
         for (const v of decl.declarations ?? []) {
           if (v.id && v.id.type === "Identifier") {
             names.add(v.id.name);
-            if (v.id.name === "requires" && v.init) {
-              requiresRaw = evalBundleStaticExpression(v.init, bundle);
-              requiresFound = true;
+            if (v.id.name === "defaultProfile" && v.init) {
+              defaultProfileRaw = evalBundleStaticExpression(v.init, bundle);
+              defaultProfileFound = true;
             }
           }
         }
@@ -360,35 +342,58 @@ async function inspectWorkflowModuleExports(bundle: {
     }
     if (Array.isArray(node.specifiers)) {
       for (const spec of node.specifiers) {
-        if (spec.type === "ExportSpecifier" && spec.exported) {
-          const exportedName =
-            spec.exported.type === "Identifier"
-              ? spec.exported.name
-              : spec.exported.type === "Literal"
-                ? String(spec.exported.value)
-                : "";
+        if (spec.type === "ExportSpecifier" && spec.exported && spec.local) {
+          const exportedName = exportSpecifierName(spec.exported);
+          const localName = exportSpecifierName(spec.local);
           if (exportedName) names.add(exportedName);
+          if (exportedName && localName && topLevelFunctionNames.has(localName)) {
+            workflowFunctionNames.add(exportedName);
+          }
+          if (exportedName === "defaultProfile" && localName) {
+            const init = topLevelInitializers.get(localName);
+            if (init) {
+              defaultProfileRaw = evalBundleStaticExpression(init, bundle);
+              defaultProfileFound = true;
+            }
+          }
         }
       }
     }
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  if (!requiresFound) {
+  if (!defaultProfileFound) {
     throw new Error(
-      `bundle ${JSON.stringify(bundle.name)} does not export a 'requires' object. Declare it in workflow.mjs per SPEC §Required state declaration.`
+      `bundle ${JSON.stringify(bundle.name)} does not export a 'defaultProfile' object. Declare it in workflow.mjs per SPEC §Workflow Modules → Workflow-default profile.`
     );
   }
-  const requires = normalizeBundleRequires(requiresRaw);
+  const parsed = TychonicConfigSchema.safeParse(defaultProfileRaw);
+  if (!parsed.success) {
+    throw new Error(
+      `bundle ${JSON.stringify(bundle.name)} defaultProfile failed schema validation: ${parsed.error.message}`
+    );
+  }
+  const defaultProfile = parsed.data;
   const exportNames = [...names].sort((left, right) => left.localeCompare(right));
-  return { exportNames, requires };
+  return {
+    exportNames,
+    workflowFunctionNames: [...workflowFunctionNames].sort((left, right) => left.localeCompare(right)),
+    defaultProfile
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function exportSpecifierName(node: any): string {
+  if (node.type === "Identifier") return node.name;
+  if (node.type === "Literal") return String(node.value);
+  return "";
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function evalBundleStaticExpression(node: any, bundle: { name: string; workflowPath: string }): unknown {
   const fail = (reason: string): never => {
     throw new Error(
-      `bundle ${JSON.stringify(bundle.name)} at ${bundle.workflowPath}: requires must be a JSON-literal object; ${reason}`
+      `bundle ${JSON.stringify(bundle.name)} at ${bundle.workflowPath}: defaultProfile must be a JSON-literal object; ${reason}`
     );
   };
   if (!node || typeof node !== "object" || !node.type) fail("missing expression node");
@@ -446,6 +451,5 @@ function isNotFoundError(error: unknown): boolean {
 
 export const BUNDLE_FILE_NAMES = {
   workflow: BUNDLE_WORKFLOW_FILE,
-  config: BUNDLE_CONFIG_FILE,
   readme: BUNDLE_README_FILE
 } as const;

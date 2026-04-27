@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseBundleConfigYaml } from "./loadProfile.js";
 import type { TychonicConfig } from "./types.js";
+import { inspectBundle } from "../temporal/workflowModules.js";
 
 export type BundleConfigSource = "bundle" | { override: string };
 
@@ -11,20 +12,23 @@ export interface EffectiveBundleConfig {
 }
 
 /**
- * Load the bundle's `config.yaml` from disk and parse it with
- * `TychonicConfigSchema`. This is the only path product code uses to read
- * a bundle's configuration. No merge, no fallback, no discovery.
+ * Load the bundle's `defaultProfile` export from its `workflow.mjs` and
+ * validate it through `TychonicConfigSchema`. This is the only path
+ * product code uses to read a bundle's configuration. No merge, no
+ * fallback, no discovery.
  */
-export async function loadBundleConfig(bundleDir: string): Promise<TychonicConfig> {
-  const raw = await readFile(join(bundleDir, "config.yaml"), "utf8");
-  return parseBundleConfigYaml(raw);
+export async function loadBundleDefaultProfile(bundleDir: string): Promise<TychonicConfig> {
+  const workflowPath = join(bundleDir, "workflow.mjs");
+  const inspection = await inspectBundle({ name: bundleDirName(bundleDir), workflowPath });
+  return inspection.defaultProfile;
 }
 
 /**
  * Resolve the effective `TychonicConfig` for one workflow invocation.
  *
- * - Without `overridePath`, the result is the bundle's own `config.yaml`.
- * - With `overridePath`, the override file replaces the bundle's config
+ * - Without `overridePath`, the result is the bundle's own
+ *   `defaultProfile` export.
+ * - With `overridePath`, the override file replaces the bundle's profile
  *   as a single whole object for this one invocation. There is no merge.
  *
  * The returned `source` labels which file backed the profile so callers
@@ -43,7 +47,13 @@ export async function resolveEffectiveBundleConfig(options: {
     };
   }
   return {
-    profile: await loadBundleConfig(options.bundleDir),
+    profile: await loadBundleDefaultProfile(options.bundleDir),
     source: "bundle"
   };
+}
+
+function bundleDirName(bundleDir: string): string {
+  const trimmed = bundleDir.replace(/[\\/]+$/, "");
+  const idx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return idx < 0 ? trimmed : trimmed.slice(idx + 1);
 }

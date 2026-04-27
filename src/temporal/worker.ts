@@ -1,7 +1,5 @@
 import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { bundleWorkflowCode, NativeConnection, Worker } from "@temporalio/worker";
 import * as activities from "../activities/index.js";
 import { normalizeTemporalConfig, tychonicRuntimeDirs, type TemporalConfig } from "./manager.js";
@@ -26,12 +24,13 @@ export interface RunTemporalWorkerOptions extends TemporalConfig {
   shutdownSignals?: boolean;
   shutdownGraceTime?: string | number;
   shutdownForceTime?: string | number;
+  workflowBundle?: { code: string };
 }
 
 export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}): Promise<void> {
   const config = normalizeTemporalConfig(options);
   const connection = await NativeConnection.connect({ address: config.address });
-  const workflowBundle = await buildWorkflowBundle();
+  const workflowBundle = options.workflowBundle ?? (await buildWorkflowBundle());
   const worker = await Worker.create({
     connection,
     namespace: config.namespace,
@@ -83,25 +82,30 @@ export async function resolveWorkflowModulePath(): Promise<string> {
       throw new Error(
         `no workflow bundles installed in instance '${activeInstance}'. ` +
           `Install a bundle with \`tychonic workflows install <directory> --instance ${activeInstance}\` ` +
-          "(for example, `workflows install dist/workflow-bundles/simpleWorkflow`), " +
+          "(for example, `workflows install ./examples/workflows/simpleWorkflow`), " +
           `then restart with \`tychonic runtime up --instance ${activeInstance}\`.`
       );
     }
     throw new Error(
-      "no workflow bundles installed. Reinstall the Tychonic service with " +
-        "`tychonic service install` to restore the packaged workflow bundles, " +
-        "or add an operator-supplied bundle with `tychonic workflows install <directory>`."
+      "no workflow bundles installed. Add an operator-supplied bundle with " +
+        "`tychonic workflows install <directory>` (for example, " +
+        "`tychonic workflows install ./examples/workflows/simpleWorkflow`)."
     );
   }
   await assertNoInstalledWorkflowExportConflicts(installedBundles);
 
-  const generatedDir = join(tychonicRuntimeDirs().stateDir, "workflows");
+  // The Temporal bundler's generated entrypoint imports
+  // `@temporalio/workflow` relative to `workflowsPath`. Keep that path inside
+  // a real installed bundle package so standard package resolution can find
+  // the bundle's own dependencies. Do not inject Tychonic's node_modules.
+  const generatedDir = join(dirname(installedBundles[0]!.workflowPath), ".tychonic");
   await mkdir(generatedDir, { recursive: true });
   const combinedPath = join(await realpath(generatedDir), "combined-workflows.mjs");
   // Each bundle's directory name equals the single workflow function it
-  // exports (see SPEC §Workflow Modules → Required state declaration).
+  // exports (see SPEC §Workflow Modules → Workflow-default profile).
   // Re-export only that named function so bundle-private exports like
-  // `requires` or helper functions do not collide in the combined module.
+  // `defaultProfile` or helper functions do not collide in the combined
+  // module.
   const lines = installedBundles.map((bundle) => {
     const url = workflowModuleFileUrl(bundle.workflowPath);
     return `export { ${bundle.name} } from ${JSON.stringify(url)};`;
@@ -114,45 +118,7 @@ export async function resolveWorkflowModulePath(): Promise<string> {
   return combinedPath;
 }
 
-/**
- * Bundle every installed workflow module with a webpack `resolve.modules`
- * extension that points at the Tychonic package's own `node_modules`.
- * Every module in `~/Library/Application Support/Tychonic/workflows/modules/`
- * — packaged or operator-installed — goes through the same path; the
- * worker draws no distinction. Webpack's default upward `node_modules`
- * walk finds nothing under that directory, so adding the Tychonic
- * package's `node_modules` to the resolver lets workflow authors write
- * plain `import { proxyActivities } from "@temporalio/workflow"`
- * without any install-time symlink or packaging step. SPEC §Plugin
- * Composition Path.
- */
 export async function buildWorkflowBundle(): Promise<{ code: string }> {
   const workflowsPath = await resolveWorkflowModulePath();
-  const extraResolveDirs = tychonicWebpackResolveDirs();
-  return bundleWorkflowCode({
-    workflowsPath,
-    webpackConfigHook: (config) => {
-      config.resolve = config.resolve ?? {};
-      const existing = config.resolve.modules ?? [];
-      config.resolve.modules = [...extraResolveDirs, ...existing];
-      return config;
-    }
-  });
-}
-
-function tychonicWebpackResolveDirs(): string[] {
-  const require = createRequire(import.meta.url);
-  const dirs = new Set<string>();
-  // Walk up from the compiled worker.js to find the nearest node_modules; that's
-  // the tychonic package's own install. Works whether the package is installed
-  // under a user prefix (npm -g, launchd `~/Library/Application Support`) or
-  // resolved out of the source checkout during development.
-  try {
-    const workflowPkg = require.resolve("@temporalio/workflow/package.json");
-    dirs.add(dirname(dirname(dirname(workflowPkg))));
-  } catch {
-    // fall through to the structural guess below
-  }
-  dirs.add(resolve(fileURLToPath(import.meta.url), "..", "..", "..", "node_modules"));
-  return [...dirs];
+  return bundleWorkflowCode({ workflowsPath });
 }

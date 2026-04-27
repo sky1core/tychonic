@@ -21,19 +21,11 @@ import {
 import {
   describeTychonicTemporalWorkflow,
   listTychonicTemporalWorkflows,
-  signalSimpleWorkflowContinuation,
-  signalSimpleWorkflowInboxDismiss,
-  signalSimpleWorkflowRegisterSession,
-  signalSimpleWorkflowResumeSession,
-  type SignalSimpleWorkflowSignalResult,
   type TychonicTemporalWorkflowList,
   type TychonicTemporalWorkflowStatus
 } from "../temporal/client.js";
 import type { TemporalConfig } from "../temporal/manager.js";
-import type { AgentCandidateInput } from "../temporal/types.js";
-import type { AgentSessionRecord } from "../domain/types.js";
 import { assertLoopbackHost, isLoopbackHost } from "../net/loopback.js";
-import { assertNoInlineSecrets } from "../security/inlineSecrets.js";
 
 export interface WebServerOptions extends TemporalConfig {
   cwd: string;
@@ -51,50 +43,6 @@ export interface WebTemporalClient {
     runId?: string;
     includeResult?: boolean;
   }) => Promise<TychonicTemporalWorkflowStatus>;
-  signalInboxContinuation: (options: {
-    workflowId: string;
-    runId?: string;
-    inboxItemId: string;
-    command?: string;
-    agent?: string;
-    resumeCommand?: string;
-    workerCandidates?: AgentCandidateInput[];
-    goal?: string;
-    verifyCommand: string;
-    reviewCommand?: string;
-    reviewAgent?: string;
-    reviewCandidates?: AgentCandidateInput[];
-    commandTimeoutMs?: number;
-  }) => Promise<SignalSimpleWorkflowSignalResult>;
-  signalInboxDismiss: (options: {
-    workflowId: string;
-    runId?: string;
-    inboxItemId: string;
-    reason?: string;
-  }) => Promise<SignalSimpleWorkflowSignalResult>;
-  signalSessionRegistration: (options: {
-    workflowId: string;
-    runId?: string;
-    id: string;
-    agent: string;
-    role: AgentSessionRecord["role"];
-    cwd: string;
-    status?: AgentSessionRecord["status"];
-    externalSessionId?: string;
-    resumeCommand?: string;
-    startedAt: string;
-  }) => Promise<SignalSimpleWorkflowSignalResult>;
-  signalSessionResume: (options: {
-    workflowId: string;
-    runId?: string;
-    sessionId: string;
-    prompt: string;
-    verifyCommand: string;
-    reviewCommand?: string;
-    reviewAgent?: string;
-    reviewCandidates?: AgentCandidateInput[];
-    commandTimeoutMs?: number;
-  }) => Promise<SignalSimpleWorkflowSignalResult>;
 }
 
 export interface StartedWebServer {
@@ -277,80 +225,6 @@ async function handleRequest(
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/inbox/execute") {
-      const body = await readJSONBody(request);
-      const verifyCommand = requiredBodyString(body, "verify_command", "verifyCommand");
-      assertNoInlineSecrets(verifyCommand, "verify command");
-      const result = await temporalClient.signalInboxContinuation({
-        workflowId: requiredBodyString(body, "workflow_id", "workflowId"),
-        ...optionalRunId(body),
-        inboxItemId: requiredBodyString(body, "inbox_item_id", "inboxItemId"),
-        ...optionalWorkerFields(body),
-        verifyCommand,
-        ...optionalReviewFields(body)
-      });
-      sendJSON(response, 200, { ok: true, mode: "temporal", ...result });
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/inbox/dismiss") {
-      const body = await readJSONBody(request);
-      const reason = optionalBodyString(body, "reason");
-      const result = await temporalClient.signalInboxDismiss({
-        workflowId: requiredBodyString(body, "workflow_id", "workflowId"),
-        ...optionalRunId(body),
-        inboxItemId: requiredBodyString(body, "inbox_item_id", "inboxItemId"),
-        ...(reason ? { reason } : {})
-      });
-      sendJSON(response, 200, { ok: true, mode: "temporal", ...result });
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/sessions/register") {
-      const body = await readJSONBody(request);
-      const role = optionalBodyString(body, "role") ?? "worker";
-      const status = optionalBodyString(body, "status") ?? "unknown";
-      const externalSessionId = optionalBodyString(body, "external_session_id", "externalSessionId");
-      const resumeCommand = optionalBodyString(body, "resume_command", "resumeCommand");
-      assertOptionalInlineSecretFree(resumeCommand, "registered resume command");
-      if (!["worker", "reviewer", "verifier"].includes(role)) {
-        throw new Error("role must be one of worker, reviewer, verifier");
-      }
-      if (!["running", "succeeded", "failed", "timed_out", "unknown"].includes(status)) {
-        throw new Error("status must be one of running, succeeded, failed, timed_out, unknown");
-      }
-      const result = await temporalClient.signalSessionRegistration({
-        workflowId: requiredBodyString(body, "workflow_id", "workflowId"),
-        ...optionalRunId(body),
-        id: requiredBodyString(body, "id", "session_id", "sessionId"),
-        agent: requiredBodyString(body, "agent"),
-        role: role as AgentSessionRecord["role"],
-        cwd: requiredBodyString(body, "session_cwd", "sessionCwd", "cwd"),
-        status: status as AgentSessionRecord["status"],
-        ...(externalSessionId ? { externalSessionId } : {}),
-        ...(resumeCommand ? { resumeCommand } : {}),
-        startedAt: optionalBodyString(body, "started_at", "startedAt") ?? new Date().toISOString()
-      });
-      sendJSON(response, 200, { ok: true, mode: "temporal", ...result });
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/resume") {
-      const body = await readJSONBody(request);
-      const verifyCommand = requiredBodyString(body, "verify_command", "verifyCommand");
-      assertNoInlineSecrets(verifyCommand, "verify command");
-      const result = await temporalClient.signalSessionResume({
-        workflowId: requiredBodyString(body, "workflow_id", "workflowId"),
-        ...optionalRunId(body),
-        sessionId: requiredBodyString(body, "session_id", "sessionId"),
-        prompt: requiredBodyString(body, "prompt"),
-        verifyCommand,
-        ...optionalReviewFields(body)
-      });
-      sendJSON(response, 200, { ok: true, mode: "temporal", ...result });
-      return;
-    }
-
     if (request.method !== "GET" && request.method !== "POST") {
       sendJSON(response, 405, { ok: false, error: "method not allowed" });
       return;
@@ -488,26 +362,6 @@ function defaultTemporalClient(config: TemporalConfig): WebTemporalClient {
       describeTychonicTemporalWorkflow({
         ...config,
         ...options
-      }),
-    signalInboxContinuation: (options) =>
-      signalSimpleWorkflowContinuation({
-        ...config,
-        ...options
-      }),
-    signalInboxDismiss: (options) =>
-      signalSimpleWorkflowInboxDismiss({
-        ...config,
-        ...options
-      }),
-    signalSessionRegistration: (options) =>
-      signalSimpleWorkflowRegisterSession({
-        ...config,
-        ...options
-      }),
-    signalSessionResume: (options) =>
-      signalSimpleWorkflowResumeSession({
-        ...config,
-        ...options
       })
   };
 }
@@ -559,170 +413,3 @@ function boolQuery(url: URL, name: string): boolean {
   return value === "1" || value === "true";
 }
 
-async function readJSONBody(request: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8").trim();
-  if (!raw) {
-    return {};
-  }
-  const parsed = JSON.parse(raw) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("JSON body must be an object");
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function optionalRunId(body: Record<string, unknown>): { runId?: string } {
-  const runId = optionalBodyString(body, "run_id", "runId");
-  return runId ? { runId } : {};
-}
-
-function optionalReviewFields(body: Record<string, unknown>): {
-  reviewCommand?: string;
-  reviewAgent?: string;
-  reviewCandidates?: AgentCandidateInput[];
-  commandTimeoutMs?: number;
-} {
-  const reviewCommand = optionalBodyString(body, "review_command", "reviewCommand");
-  const reviewAgent = optionalBodyString(body, "review_agent", "reviewAgent");
-  const reviewCandidates = optionalAgentCandidates(body, "review_candidates", "reviewCandidates");
-  const commandTimeoutMs = optionalBodyNumber(body, "command_timeout_ms", "commandTimeoutMs");
-  assertOptionalInlineSecretFree(reviewCommand, "review command");
-  assertAgentCandidatesInlineSecretFree(reviewCandidates, "review candidate");
-  assertReviewCandidatesDoNotResume(reviewCandidates);
-  return {
-    ...(reviewCommand ? { reviewCommand } : {}),
-    ...(reviewAgent ? { reviewAgent } : {}),
-    ...(reviewCandidates ? { reviewCandidates } : {}),
-    ...(commandTimeoutMs !== undefined ? { commandTimeoutMs } : {})
-  };
-}
-
-function optionalWorkerFields(body: Record<string, unknown>): {
-  command?: string;
-  agent?: string;
-  resumeCommand?: string;
-  workerCandidates?: AgentCandidateInput[];
-  goal?: string;
-} {
-  const command = optionalBodyString(body, "command");
-  const agent = optionalBodyString(body, "agent");
-  const resumeCommand = optionalBodyString(body, "resume_command", "resumeCommand");
-  const workerCandidates = optionalAgentCandidates(body, "worker_candidates", "workerCandidates");
-  const goal = optionalBodyString(body, "goal");
-  assertOptionalInlineSecretFree(command, "worker command");
-  assertOptionalInlineSecretFree(resumeCommand, "worker resume command");
-  assertAgentCandidatesInlineSecretFree(workerCandidates, "worker candidate");
-  return {
-    ...(command ? { command } : {}),
-    ...(agent ? { agent } : {}),
-    ...(resumeCommand ? { resumeCommand } : {}),
-    ...(workerCandidates ? { workerCandidates } : {}),
-    ...(goal ? { goal } : {})
-  };
-}
-
-function optionalAgentCandidates(body: Record<string, unknown>, ...names: string[]): AgentCandidateInput[] | undefined {
-  for (const name of names) {
-    const value = body[name];
-    if (value === undefined || value === null) {
-      continue;
-    }
-    if (!Array.isArray(value)) {
-      throw new Error(`${name} must be an array`);
-    }
-    return value.map((item, index) => agentCandidateFromBody(item, `${name}[${index}]`));
-  }
-  return undefined;
-}
-
-function agentCandidateFromBody(value: unknown, name: string): AgentCandidateInput {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${name} must be an object`);
-  }
-  const body = value as Record<string, unknown>;
-  const agent = requiredBodyString(body, "agent");
-  const command = optionalBodyString(body, "command");
-  const resumeCommand = optionalBodyString(body, "resume_command", "resumeCommand");
-  assertOptionalInlineSecretFree(command, `${name} command`);
-  assertOptionalInlineSecretFree(resumeCommand, `${name} resume command`);
-  return {
-    agent,
-    ...(command ? { command } : {}),
-    ...(resumeCommand ? { resumeCommand } : {})
-  };
-}
-
-function assertOptionalInlineSecretFree(command: string | undefined, label: string): void {
-  if (command) {
-    assertNoInlineSecrets(command, label);
-  }
-}
-
-function assertAgentCandidatesInlineSecretFree(candidates: AgentCandidateInput[] | undefined, label: string): void {
-  for (const candidate of candidates ?? []) {
-    assertOptionalInlineSecretFree(candidate.command, `${label} ${candidate.agent} command`);
-    assertOptionalInlineSecretFree(candidate.resumeCommand, `${label} ${candidate.agent} resume command`);
-  }
-}
-
-function assertReviewCandidatesDoNotResume(candidates: AgentCandidateInput[] | undefined): void {
-  for (const candidate of candidates ?? []) {
-    if (candidate.resumeCommand) {
-      throw new Error(`review candidate ${candidate.agent} must not set resumeCommand`);
-    }
-  }
-}
-
-function requiredBodyString(body: Record<string, unknown>, ...names: string[]): string {
-  const value = optionalBodyString(body, ...names);
-  if (!value) {
-    throw new Error(`missing required body field: ${names[0]}`);
-  }
-  return value;
-}
-
-function optionalBodyString(body: Record<string, unknown>, ...names: string[]): string | undefined {
-  for (const name of names) {
-    const value = body[name];
-    if (value === undefined || value === null) {
-      continue;
-    }
-    if (typeof value !== "string" || value.length === 0) {
-      throw new Error(`${name} must be a non-empty string`);
-    }
-    return value;
-  }
-  return undefined;
-}
-
-function optionalBodyBoolean(body: Record<string, unknown>, ...names: string[]): boolean | undefined {
-  for (const name of names) {
-    const value = body[name];
-    if (value === undefined || value === null) {
-      continue;
-    }
-    if (typeof value !== "boolean") {
-      throw new Error(`${name} must be a boolean`);
-    }
-    return value;
-  }
-  return undefined;
-}
-
-function optionalBodyNumber(body: Record<string, unknown>, ...names: string[]): number | undefined {
-  for (const name of names) {
-    const value = body[name];
-    if (value === undefined || value === null) {
-      continue;
-    }
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw new Error(`${name} must be a finite number`);
-    }
-    return value;
-  }
-  return undefined;
-}

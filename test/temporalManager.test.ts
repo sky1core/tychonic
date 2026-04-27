@@ -23,7 +23,7 @@ describe("normalizeTemporalConfig", () => {
 
     expect(cfg.mode).toBe("managed-local");
     expect(cfg.address).toBe("127.0.0.1:7233");
-    expect(cfg.uiPort).toBe(8233);
+    expect(cfg.devUiPort).toBe(8233);
     expect(cfg.dbFilename).toBe(join(tychonicRuntimeDirs().stateDir, "temporal", "temporal.db"));
     expect(cfg.logFile).toBe(join(tychonicRuntimeDirs().logDir, "temporal.log"));
     expect(cfg.pidFile).toBe(join(tychonicRuntimeDirs().stateDir, "temporal", "temporal.pid"));
@@ -42,8 +42,8 @@ describe("normalizeTemporalConfig", () => {
   it("builds temporal start-dev arguments", () => {
     const cfg = normalizeTemporalConfig({
       host: "127.0.0.2",
-      frontendPort: 17233,
-      uiPort: 18233,
+      apiPort: 17233,
+      devUiPort: 18233,
       namespace: "work",
       dbFilename: "state/temporal.db"
     });
@@ -105,8 +105,8 @@ describe("tychonicRuntimeDirs / normalizeTemporalConfig with active instance", (
     setActiveInstance("p2net");
     const cfg = normalizeTemporalConfig({});
     const port = deriveInstancePort("p2net");
-    expect(cfg.frontendPort).toBe(port);
-    expect(cfg.uiPort).toBe(port + 1);
+    expect(cfg.apiPort).toBe(port);
+    expect(cfg.devUiPort).toBe(port + 1);
     expect(cfg.address).toBe(`127.0.0.1:${port}`);
     expect(cfg.taskQueue).toBe("tychonic-p2net");
     // Namespace stays default — instance does not change it.
@@ -116,8 +116,8 @@ describe("tychonicRuntimeDirs / normalizeTemporalConfig with active instance", (
   it("normalizeTemporalConfig with instance unset keeps legacy defaults byte-identical", () => {
     // No setActiveInstance call; active instance is undefined.
     const cfg = normalizeTemporalConfig({});
-    expect(cfg.frontendPort).toBe(7233);
-    expect(cfg.uiPort).toBe(8233);
+    expect(cfg.apiPort).toBe(7233);
+    expect(cfg.devUiPort).toBe(8233);
     expect(cfg.address).toBe("127.0.0.1:7233");
     expect(cfg.taskQueue).toBe("tychonic");
     expect(cfg.namespace).toBe("default");
@@ -125,7 +125,7 @@ describe("tychonicRuntimeDirs / normalizeTemporalConfig with active instance", (
 });
 
 describe("TemporalManager", () => {
-  it("reports stopped when the frontend port is closed", async () => {
+  it("reports stopped when the Temporal API port is closed", async () => {
     const manager = managerWith({
       lookup: async () => "/bin/temporal",
       dial: async () => {
@@ -160,6 +160,43 @@ describe("TemporalManager", () => {
     expect(started?.dbFilename).toBeTruthy();
   });
 
+  it("forwards inheritProcessGroup=true to the start dep", async () => {
+    let receivedOpts: { inheritProcessGroup?: boolean } | undefined;
+    const manager = managerWith({
+      lookup: async () => "/bin/temporal",
+      dial: async () => {
+        throw new Error("connection refused");
+      },
+      start: async (_cfg, _cli, opts) => {
+        receivedOpts = opts;
+        return 12345;
+      }
+    });
+
+    await manager.start({ inheritProcessGroup: true });
+    expect(receivedOpts).toEqual({ inheritProcessGroup: true });
+  });
+
+  it("defaults inheritProcessGroup to undefined when start() is called without options", async () => {
+    let receivedOpts: { inheritProcessGroup?: boolean } | undefined;
+    const manager = managerWith({
+      lookup: async () => "/bin/temporal",
+      dial: async () => {
+        throw new Error("connection refused");
+      },
+      start: async (_cfg, _cli, opts) => {
+        receivedOpts = opts;
+        return 22222;
+      }
+    });
+
+    await manager.start();
+    // The dep is invoked with the default `{}` so the start helper
+    // sees the absence of `inheritProcessGroup` and falls back to the
+    // daemon-style `detached: true` spawn.
+    expect(receivedOpts).toEqual({});
+  });
+
   it("refuses unmanaged occupied ports", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-unmanaged-"));
     const manager = managerWith(
@@ -175,7 +212,7 @@ describe("TemporalManager", () => {
     await expect(manager.start()).rejects.toThrow(/already occupied/);
   });
 
-  it("refuses an occupied managed-local UI port before starting Temporal", async () => {
+  it("refuses an occupied managed-local start-dev side port before starting Temporal", async () => {
     let started = false;
     const manager = managerWith(
       {
@@ -192,16 +229,18 @@ describe("TemporalManager", () => {
         }
       },
       {
-        frontendPort: 17233,
-        uiPort: 18233
+        apiPort: 17233,
+        devUiPort: 18233
       }
     );
 
-    await expect(manager.start()).rejects.toThrow(/UI port 127\.0\.0\.1:18233 is already occupied/);
+    await expect(manager.start()).rejects.toThrow(
+      /managed-local Temporal start-dev side port 127\.0\.0\.1:18233 is already occupied/
+    );
     expect(started).toBe(false);
   });
 
-  it("reports occupied managed-local UI port in doctor", async () => {
+  it("reports occupied managed-local start-dev side port in doctor", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-ui-doctor-"));
     const manager = managerWith(
       {
@@ -214,8 +253,8 @@ describe("TemporalManager", () => {
         }
       },
       {
-        frontendPort: 17233,
-        uiPort: 18233,
+        apiPort: 17233,
+        devUiPort: 18233,
         dbFilename: join(dir, "temporal.db"),
         logFile: join(dir, "temporal.log"),
         pidFile: join(dir, "temporal.pid")
@@ -225,11 +264,11 @@ describe("TemporalManager", () => {
     const report = await manager.doctor();
     expect(report.overall).toBe("fail");
     expect(report.checks).toContainEqual(
-      expect.objectContaining({ name: "ui_port", status: "fail" })
+      expect.objectContaining({ name: "start_dev_side_port", status: "fail" })
     );
   });
 
-  it("accepts an open UI port when the managed Temporal PID is live", async () => {
+  it("does not expose the start-dev side port when the managed Temporal PID is live", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-ui-managed-"));
     const pidFile = join(dir, "temporal.pid");
     await writeFile(pidFile, "2468\n", "utf8");
@@ -249,10 +288,10 @@ describe("TemporalManager", () => {
 
     const report = await manager.doctor();
     expect(report.checks).toContainEqual(
-      expect.objectContaining({ name: "frontend_port", status: "ok" })
+      expect.objectContaining({ name: "api_port", status: "ok" })
     );
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({ name: "ui_port", status: "ok" })
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ name: "start_dev_side_port" })
     );
   });
 
@@ -281,10 +320,10 @@ describe("TemporalManager", () => {
     const report = await manager.doctor();
     expect(report.overall).toBe("ok");
     expect(report.checks).toContainEqual(
-      expect.objectContaining({ name: "frontend_port", status: "ok" })
+      expect.objectContaining({ name: "api_port", status: "ok" })
     );
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({ name: "ui_port", status: "ok" })
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ name: "start_dev_side_port" })
     );
 
     await expect(manager.start()).resolves.toMatchObject({

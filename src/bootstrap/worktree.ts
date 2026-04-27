@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { cp, lstat, mkdir, readlink, readdir, symlink } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { cp, lstat, mkdir, readlink, symlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -10,8 +10,6 @@ export interface IsolatedWorktree {
   mode: "git_worktree" | "directory_copy_no_head";
   reason: string;
 }
-
-const EXCLUDED_DIRS = new Set([".git", ".tychonic", "node_modules", "dist", "coverage"]);
 
 export async function createIsolatedWorktree(input: {
   cwd: string;
@@ -25,7 +23,6 @@ export async function createIsolatedWorktree(input: {
   if (hasHead) {
     await execFileAsync("git", ["worktree", "add", "--detach", target, "HEAD"], { cwd: input.cwd });
     await copyWorkingTreeSnapshot(input.cwd, target);
-    await prepareWritableToolAnchors(target);
     return {
       path: target,
       mode: "git_worktree",
@@ -34,21 +31,7 @@ export async function createIsolatedWorktree(input: {
   }
 
   await mkdir(target, { recursive: true });
-  const entries = await readdir(input.cwd);
-  for (const entry of entries) {
-    if (EXCLUDED_DIRS.has(entry)) {
-      continue;
-    }
-
-    await cp(join(input.cwd, entry), join(target, entry), {
-      recursive: true,
-      filter: (source) => {
-        const rel = relative(input.cwd, source);
-        const first = rel.split(/[\\/]/)[0];
-        return !EXCLUDED_DIRS.has(first ?? "");
-      }
-    });
-  }
+  await copyNoHeadWorkingTreeSnapshot(input.cwd, target);
   await execFileAsync("git", ["init"], { cwd: target });
   await execFileAsync("git", ["add", "."], { cwd: target });
   try {
@@ -68,18 +51,12 @@ export async function createIsolatedWorktree(input: {
   } catch {
     // Empty isolated copies have no baseline to commit.
   }
-  await prepareWritableToolAnchors(target);
-
   return {
     path: target,
     mode: "directory_copy_no_head",
     reason:
       "repository has no HEAD; copied working files into an isolated directory with a local baseline commit"
   };
-}
-
-async function prepareWritableToolAnchors(worktreePath: string): Promise<void> {
-  await mkdir(join(worktreePath, "node_modules"), { recursive: true });
 }
 
 async function copyWorkingTreeSnapshot(repo: string, target: string): Promise<void> {
@@ -92,6 +69,17 @@ async function copyWorkingTreeSnapshot(repo: string, target: string): Promise<vo
   for (const raw of untracked.split("\0")) {
     const rel = raw.replaceAll("\\", "/");
     if (!rel || rel.startsWith(".tychonic/")) {
+      continue;
+    }
+    await copySnapshotPath(join(repo, rel), join(target, rel));
+  }
+}
+
+async function copyNoHeadWorkingTreeSnapshot(repo: string, target: string): Promise<void> {
+  const visible = await gitOutput(repo, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
+  for (const raw of visible.split("\0")) {
+    const rel = raw.replaceAll("\\", "/");
+    if (!rel) {
       continue;
     }
     await copySnapshotPath(join(repo, rel), join(target, rel));

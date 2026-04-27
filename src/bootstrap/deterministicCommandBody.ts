@@ -33,8 +33,8 @@ export interface RunDeterministicCommandBodyOptions<T extends DeterministicComma
 /**
  * Shared body for deterministic-command activities (`lint`, `unit_test`,
  * `integration`, `verify`). Runs one command, records one attempt, writes
- * one output artifact. Does not mutate `input.run` (SPEC §File I/O vs run
- * mutation). Produces exactly one state (SPEC §One state per body call).
+ * one output artifact. Does not mutate `input.run` and produces exactly one
+ * state (SPEC §Activity Result And Evidence Invariants).
  *
  * Skip conditions (autonomy, facts, policy modes, missing config) live in
  * the caller. This body is called only when the caller has already decided

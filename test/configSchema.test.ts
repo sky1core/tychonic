@@ -7,8 +7,7 @@ import {
   activityTimeoutMs,
   defaultActivityTimeoutMs,
   optionalStateConfig,
-  requiredActivity,
-  resolveActivityCommand
+  requiredActivity
 } from "../src/catalog/types.js";
 
 describe("activity-centric config schema", () => {
@@ -30,13 +29,11 @@ describe("activity-centric config schema", () => {
       version: "tychonic.config.v1",
       states: {
         lint: { type: "lint", command: "npm run lint", timeout: "10m" },
-        work: { type: "work", agent: "worker", command: "node worker.js" },
-        verify: { type: "verify", command: "npm test" },
+        work: { type: "work", agent: "claude" },
+        verify: { type: "verify", command: "npm run verify:worker" },
         review: {
           type: "review",
-          agent: "reviewer",
-          command: "node review.js",
-          emits: ["tychonic.review.v1"]
+          command: "node review.js"
         }
       },
       policies: {
@@ -46,8 +43,30 @@ describe("activity-centric config schema", () => {
       }
     });
 
-    expect(requiredActivity(config, "work", "work").agent).toBe("worker");
+    expect(requiredActivity(config, "work", "work").agent).toBe("claude");
     expect(optionalStateConfig(config, "missing", "lint")).toBeUndefined();
+  });
+
+  it("treats policies as an opaque record so workflow-defined keys round-trip unchanged", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      policies: {
+        bogus_key: { foo: 1 },
+        loop: {
+          auto_continue: false,
+          max_resume_iterations: 9,
+          max_review_iterations: 3
+        }
+      }
+    });
+    expect(config.policies).toEqual({
+      bogus_key: { foo: 1 },
+      loop: {
+        auto_continue: false,
+        max_resume_iterations: 9,
+        max_review_iterations: 3
+      }
+    });
   });
 
   it("defines per-type default activity timeouts in one table", () => {
@@ -125,23 +144,27 @@ describe("activity-centric config schema", () => {
       })
     ).toThrow(/agent is not allowed for type lint/);
 
+    // work activity requires at least one of command/agent. A block with
+    // neither must be rejected; a block with only `agent` (built-in or
+    // operator-supplied) is accepted at the schema layer because the
+    // adapter dispatch path resolves the actual command at run time.
     expect(() =>
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
-          work: { type: "work", agent: "worker" }
+          work: { type: "work" }
         }
       })
-    ).toThrow(/command is required/);
+    ).toThrow(/requires one of: command, agent/);
 
-    expect(() =>
+    expect(
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
           review: { type: "review", command: "node review.js" }
         }
-      })
-    ).toThrow(/custom reviewer command must declare emits/);
+      }).states?.review?.command
+    ).toBe("node review.js");
 
     expect(() =>
       TychonicConfigSchema.parse({
@@ -153,32 +176,19 @@ describe("activity-centric config schema", () => {
     ).toThrow(/agent is not allowed for type lint/);
   });
 
-  it("treats agent as optional metadata on explicit command activities", () => {
-    const config = TychonicConfigSchema.parse({
-      version: "tychonic.config.v1",
-      states: {
-        work: {
-          type: "work",
-          agent: "worker",
-          command: "node worker.js"
-        },
-        review: {
-          type: "review",
-          agent: "reviewer",
-          command: "node review.js",
-          emits: ["tychonic.review.v1"]
+  it("rejects agent and command together", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: {
+            type: "work",
+            agent: "claude",
+            command: "node worker.js"
+          }
         }
-      }
-    });
-
-    expect(resolveActivityCommand(config.states?.work)).toMatchObject({
-      agent: "worker",
-      command: "node worker.js"
-    });
-    expect(resolveActivityCommand(config.states?.review)).toMatchObject({
-      agent: "reviewer",
-      command: "node review.js"
-    });
+      })
+    ).toThrow(/must set only one execution selector: agent or command/);
   });
 
   it("accepts Tychonic orchestration fields on state config blocks", () => {
@@ -187,8 +197,7 @@ describe("activity-centric config schema", () => {
       states: {
         work: {
           type: "work",
-          agent: "worker",
-          command: "node worker.js",
+          agent: "claude",
           sandbox: "workspace-write",
           approval: "never",
           permission_mode: "plan",
@@ -221,7 +230,7 @@ describe("activity-centric config schema", () => {
     }
   });
 
-  it("rejects emits on non-review state config blocks", () => {
+  it("rejects emits anywhere in state config blocks", () => {
     expect(() =>
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
@@ -233,6 +242,269 @@ describe("activity-centric config schema", () => {
           }
         }
       })
-    ).toThrow(/emits is not allowed for type lint/);
+    ).toThrow(/Unrecognized key/);
+  });
+
+});
+
+// Step 6: schema tighten. The state block's `resume_command` slot is gone;
+// `agent` must be a built-in adapter; `resume` is a plain numeric workflow
+// budget with no TYPE/NAME/command-path inference.
+describe("Step 6 schema tighten", () => {
+  it("rejects resume_command anywhere in a state block", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: {
+            type: "work",
+            agent: "claude",
+            resume_command: "claude --continue"
+          }
+        }
+      })
+    ).toThrow(/Unrecognized key/);
+  });
+
+  it("rejects an unknown agent name on a work state", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: {
+            type: "work",
+            agent: "fakebot"
+          }
+        }
+      })
+    ).toThrow(/'fakebot' is not a built-in adapter; must be one of: claude, codex, gemini, kiro/);
+  });
+
+  it("rejects an unknown agent name on a review state", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            agent: "claud"
+          }
+        }
+      })
+    ).toThrow(/'claud' is not a built-in adapter/);
+  });
+
+  it("rejects an unknown agent name on an auto_continue state", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          loop: {
+            type: "auto_continue",
+            agent: "geminii"
+          }
+        }
+      })
+    ).toThrow(/'geminii' is not a built-in adapter/);
+  });
+
+  it("accepts each of the four built-in adapter names", () => {
+    for (const name of ["claude", "codex", "gemini", "kiro"]) {
+      const config = TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work", agent: name }
+        }
+      });
+      expect(config.states?.work?.agent).toBe(name);
+    }
+  });
+
+  it("accepts resume on a command block", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        work: {
+          type: "work",
+          command: "node worker.js",
+          resume: 3
+        }
+      }
+    });
+    expect(config.states?.work?.resume).toBe(3);
+  });
+
+  it("rejects resume blocks that set both command and agent", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: {
+            type: "work",
+            agent: "claude",
+            command: "node worker.js",
+            resume: 2
+          }
+        }
+      })
+    ).toThrow(/must set only one execution selector: agent or command/);
+  });
+
+  it("accepts resume on deterministic command activity blocks", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        verify: {
+          type: "verify",
+          command: "npm run verify:worker",
+          resume: 2
+        }
+      }
+    });
+    expect(config.states?.verify?.resume).toBe(2);
+  });
+
+  it("accepts resume: 0 (disables in-session resume) on adapter blocks", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        work: { type: "work", agent: "claude", resume: 0 }
+      }
+    });
+    expect(config.states?.work?.resume).toBe(0);
+  });
+
+  it("rejects negative resume", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work", agent: "claude", resume: -1 }
+        }
+      })
+    ).toThrow();
+  });
+
+  it("rejects non-integer resume", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work", agent: "claude", resume: 1.5 }
+        }
+      })
+    ).toThrow();
+  });
+
+  it("rejects a work state with neither agent nor command", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work" }
+        }
+      })
+    ).toThrow(/requires one of: command, agent/);
+  });
+
+  it("rejects an auto_continue state with neither agent nor command", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          loop: { type: "auto_continue" }
+        }
+      })
+    ).toThrow(/requires one of: command, agent/);
+  });
+
+  it("rejects a review state with neither agent nor command", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: { type: "review" }
+        }
+      })
+    ).toThrow(/requires one of: command, agent/);
+  });
+
+});
+
+// Reviewer role coverage. `gemini` and `kiro` lack the structured
+// `tychonic.review.v1` output the host requires from a reviewer, so the
+// host schema rejects them on `type: "review"` at install time. The
+// runtime adapter throw is the second line of defense.
+describe("review-state agent restrictions", () => {
+  it("rejects agent: \"gemini\" on a review state", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            agent: "gemini"
+          }
+        }
+      })
+    ).toThrow(
+      /agent gemini does not support the reviewer role; only claude or codex may serve as a review-state agent/
+    );
+  });
+
+  it("rejects agent: \"kiro\" on a review state", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            agent: "kiro"
+          }
+        }
+      })
+    ).toThrow(
+      /agent kiro does not support the reviewer role; only claude or codex may serve as a review-state agent/
+    );
+  });
+
+  it("accepts agent: \"claude\" on a review state", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        review: {
+          type: "review",
+          agent: "claude"
+        }
+      }
+    });
+    expect(config.states?.review?.agent).toBe("claude");
+  });
+
+  it("accepts agent: \"codex\" on a review state", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        review: {
+          type: "review",
+          agent: "codex"
+        }
+      }
+    });
+    expect(config.states?.review?.agent).toBe("codex");
+  });
+
+  it("still accepts gemini and kiro on work and auto_continue states", () => {
+    for (const name of ["gemini", "kiro"]) {
+      const config = TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work", agent: name },
+          loop: { type: "auto_continue", agent: name }
+        }
+      });
+      expect(config.states?.work?.agent).toBe(name);
+      expect(config.states?.loop?.agent).toBe(name);
+    }
   });
 });

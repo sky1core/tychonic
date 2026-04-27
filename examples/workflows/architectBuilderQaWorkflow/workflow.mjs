@@ -32,6 +32,7 @@
 //
 // Install (from the project that will host the run):
 //
+//   (cd examples/workflows/architectBuilderQaWorkflow && npm install)
 //   tychonic workflows install ./examples/workflows/architectBuilderQaWorkflow
 
 import {
@@ -63,15 +64,139 @@ const {
   finalizeRunActivity
 } = act;
 
-export const requires = {
-  states: [
-    { name: "architect", type: "work" },
-    { name: "builder", type: "work" },
-    { name: "qa", type: "review" }
-  ]
+export const defaultProfile = {
+  version: "tychonic.config.v1",
+  states: {
+    architect: {
+      type: "work",
+      agent: "claude",
+      resume: 0,
+      timeout: "30m",
+      permission_mode: "plan"
+    },
+    builder: {
+      type: "work",
+      agent: "codex",
+      resume: 2,
+      timeout: "60m",
+      sandbox: "workspace-write",
+      approval: "never"
+    },
+    qa: {
+      type: "review",
+      agent: "claude",
+      permission_mode: "plan",
+      timeout: "30m"
+    }
+  },
+  policies: {
+    interaction: { mode: "interactive", max_reject_iterations: 5 }
+  }
 };
 
+/**
+ * Validate the bundle-owned `policies.interaction` block. The host
+ * config schema treats `policies` as opaque; this workflow validates
+ * the keys it actually consumes.
+ *
+ * Rules:
+ *  - unknown keys under `policies.interaction` are rejected
+ *  - `mode` must be 'auto' or 'interactive'
+ *  - `max_reject_iterations` is a positive integer, only allowed when
+ *    `mode` is 'interactive'
+ */
+export function validateInteractionPolicy(policies) {
+  if (!policies || policies.interaction === undefined) return;
+  const block = policies.interaction;
+  if (typeof block !== "object" || block === null || Array.isArray(block)) {
+    throw new Error("policies.interaction must be an object");
+  }
+  const allowedKeys = new Set(["mode", "max_reject_iterations"]);
+  for (const key of Object.keys(block)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(
+        `policies.interaction.${key} is not a recognised key for architectBuilderQaWorkflow`
+      );
+    }
+  }
+  if (block.mode === undefined) {
+    throw new Error("policies.interaction.mode is required when the block is present");
+  }
+  if (block.mode !== "auto" && block.mode !== "interactive") {
+    throw new Error(
+      `policies.interaction.mode must be 'auto' or 'interactive'; got ${JSON.stringify(block.mode)}`
+    );
+  }
+  if (block.max_reject_iterations !== undefined) {
+    if (
+      !Number.isInteger(block.max_reject_iterations) ||
+      block.max_reject_iterations <= 0
+    ) {
+      throw new Error(
+        "policies.interaction.max_reject_iterations must be a positive integer"
+      );
+    }
+    if (block.mode === "auto") {
+      throw new Error(
+        "policies.interaction.max_reject_iterations is only allowed when mode is 'interactive'"
+      );
+    }
+  }
+}
+
+/**
+ * Validate the bundle-owned `policies.loop` block as consumed by this
+ * workflow. Only `max_review_iterations` is read; other knobs are
+ * rejected so a typo never silently regresses the auto-mode loop cap.
+ */
+export function validateLoopPolicy(policies) {
+  if (!policies || policies.loop === undefined) return;
+  const block = policies.loop;
+  if (typeof block !== "object" || block === null || Array.isArray(block)) {
+    throw new Error("policies.loop must be an object");
+  }
+  const allowedKeys = new Set(["max_review_iterations"]);
+  for (const key of Object.keys(block)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(
+        `policies.loop.${key} is not a recognised key for architectBuilderQaWorkflow`
+      );
+    }
+  }
+  if (block.max_review_iterations !== undefined) {
+    if (
+      !Number.isInteger(block.max_review_iterations) ||
+      block.max_review_iterations <= 0
+    ) {
+      throw new Error(
+        "policies.loop.max_review_iterations must be a positive integer"
+      );
+    }
+  }
+}
+
+const ARCHITECT_BUILDER_QA_INPUT_FIELDS = new Set([
+  "cwd",
+  "profile",
+  "goal",
+  "architectPrompt",
+  "builderPrompt",
+  "qaPrompt"
+]);
+
+function rejectUnknownInputFields(input) {
+  if (!input || typeof input !== "object") return;
+  for (const field of Object.keys(input)) {
+    if (!ARCHITECT_BUILDER_QA_INPUT_FIELDS.has(field)) {
+      throw new Error(`unsupported input field: ${field}`);
+    }
+  }
+}
+
 export async function architectBuilderQaWorkflow(input) {
+  rejectUnknownInputFields(input);
+  validateInteractionPolicy(input.profile?.policies);
+  validateLoopPolicy(input.profile?.policies);
   const signalQueue = [];
   let pendingStateName;
 
@@ -128,8 +253,8 @@ export async function architectBuilderQaWorkflow(input) {
   let run = await startRunActivity({
     template: "architect_builder_qa",
     cwd: input.cwd,
-    goal: input.goal,
-    ...(input.runId ? { runId: input.runId } : {})
+    ...(input.profile ? { profile: input.profile } : {}),
+    goal: input.goal
   });
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
@@ -152,8 +277,8 @@ export async function architectBuilderQaWorkflow(input) {
   //   `rejectState` on that same stage, so we run builder + qa exactly once
   //   here; when qa is approved the workflow exits.
   // - Auto mode (no external gating): if qa reports `fail` (state.status =
-  //   "failed" per SPEC §Review state terminal status), loop back to builder
-  //   with the qa reason threaded into the next prompt. Capped by
+  //   "failed" per SPEC §Activity Result And Evidence Invariants), loop
+  //   back to builder with the qa reason threaded into the next prompt. Capped by
   //   `policies.loop.max_review_iterations` (default 3). At the cap the run
   //   enters `waiting_user` with an inbox item so an operator (or external
   //   agent via one-shot signals) can decide the next step.
@@ -250,7 +375,8 @@ async function runStage({
       run,
       cwd: input.cwd,
       profile: input.profile,
-      extras: { worktreePath, prompt }
+      worktreePath,
+      prompt
     });
     run = apply(run, result);
 

@@ -18,8 +18,7 @@ describe("runLintActivity", () => {
       stateName: ACTIVITY_NAME,
       run,
       cwd,
-      profile: profileWith("node -e \"console.log('lint ok')\""),
-      extras: {}
+      profile: profileWith("node -e \"console.log('lint ok')\"")
     });
 
     expect(run).toEqual(runBefore);
@@ -40,8 +39,7 @@ describe("runLintActivity", () => {
       stateName: ACTIVITY_NAME,
       run,
       cwd,
-      profile: profileWith("node -e \"process.stderr.write('boom'); process.exit(1)\""),
-      extras: {}
+      profile: profileWith("node -e \"process.stderr.write('boom'); process.exit(1)\"")
     });
 
     expect(result.delta.states[0]?.status).toBe("failed");
@@ -55,13 +53,12 @@ describe("runLintActivity", () => {
         stateName: "does_not_exist",
         run: baseRun("run_lint_missing"),
         cwd,
-        profile: { version: "tychonic.config.v1" },
-        extras: {}
+        profile: { version: "tychonic.config.v1" }
       })
     ).rejects.toThrow(/does_not_exist/);
   });
 
-  it("throws ApplicationFailure when command is not configured anywhere", async () => {
+  it("rejects an unvalidated lint profile block before command execution", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-lint-no-cmd-"));
     await expect(
       runLintActivity({
@@ -71,13 +68,12 @@ describe("runLintActivity", () => {
         profile: {
           version: "tychonic.config.v1",
           states: { [ACTIVITY_NAME]: { type: "lint" } }
-        },
-        extras: {}
+        }
       })
-    ).rejects.toThrow(/requires a command/);
+    ).rejects.toThrow(/profile\.states\.lint_alt failed schema validation/);
   });
 
-  it("runs in extras.worktreePath while keeping artifacts under the project root", async () => {
+  it("runs in worktreePath while keeping artifacts under the project root", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-lint-root-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-lint-worktree-"));
     const run = baseRun("run_lint_worktree");
@@ -87,7 +83,7 @@ describe("runLintActivity", () => {
       run,
       cwd,
       profile: profileWith("node -e \"require('node:fs').writeFileSync('lint-cwd.txt', process.cwd())\""),
-      extras: { worktreePath }
+      worktreePath
     });
     const canonicalWorktreePath = await realpath(worktreePath);
 

@@ -5,10 +5,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   installRuntimeWorkflowModule,
   listRuntimeWorkflowModules,
-  packagedWorkflowBundleRoot,
   removeRuntimeWorkflowModule,
   runtimeWorkflowModulesDir
 } from "../src/temporal/workflowModules.js";
+
+const DEFAULT_PROFILE_LITERAL = [
+  "export const defaultProfile = {",
+  "  version: 'tychonic.config.v1',",
+  "  states: { verify: { type: 'verify', command: 'echo ok' } }",
+  "};"
+].join("\n");
 
 describe("workflow bundle install", () => {
   let stateRoot: string;
@@ -32,7 +38,7 @@ describe("workflow bundle install", () => {
     const bundleDir = await makeFixtureBundle({
       name: "exampleWorkflow",
       workflowSource: [
-        "export const requires = { states: [ { name: 'verify', type: 'verify' } ] };",
+        DEFAULT_PROFILE_LITERAL,
         "export async function exampleWorkflow() { return 'ok'; }"
       ].join("\n")
     });
@@ -41,10 +47,9 @@ describe("workflow bundle install", () => {
     expect(installed.name).toBe("exampleWorkflow");
     expect(installed.path).toBe(join(runtimeWorkflowModulesDir(), "exampleWorkflow"));
     expect(installed.workflowPath).toBe(join(installed.path, "workflow.mjs"));
-    expect(installed.configPath).toBe(join(installed.path, "config.yaml"));
 
     const entries = await readdir(installed.path);
-    expect(new Set(entries)).toEqual(new Set(["workflow.mjs", "config.yaml", "README.md"]));
+    expect(new Set(entries)).toEqual(new Set(["workflow.mjs", "README.md"]));
 
     const list = await listRuntimeWorkflowModules();
     expect(list.map((entry) => entry.name)).toEqual(["exampleWorkflow"]);
@@ -55,62 +60,125 @@ describe("workflow bundle install", () => {
     expect(after.map((entry) => entry.name)).toEqual([]);
   });
 
+  it("installs a bundle whose defaultProfile is exported through an export list", async () => {
+    const bundleDir = await makeFixtureBundle({
+      name: "bundledWorkflow",
+      workflowSource: [
+        "var defaultProfile = {",
+        "  version: 'tychonic.config.v1',",
+        "  states: { verify: { type: 'verify', command: 'echo ok' } }",
+        "};",
+        "async function bundledWorkflow() { return 'ok'; }",
+        "export { bundledWorkflow, defaultProfile };"
+      ].join("\n")
+    });
+
+    const installed = await installRuntimeWorkflowModule({ sourcePath: bundleDir });
+
+    expect(installed.name).toBe("bundledWorkflow");
+    expect((await listRuntimeWorkflowModules()).map((entry) => entry.name)).toEqual(["bundledWorkflow"]);
+  });
+
+  it("installs a bundle without a README.md", async () => {
+    const bundleDir = await makeFixtureBundle({
+      name: "noReadmeWorkflow",
+      workflowSource: [
+        DEFAULT_PROFILE_LITERAL,
+        "export async function noReadmeWorkflow() { return 'ok'; }"
+      ].join("\n"),
+      omitReadme: true
+    });
+    const installed = await installRuntimeWorkflowModule({ sourcePath: bundleDir });
+    expect(installed.name).toBe("noReadmeWorkflow");
+    const entries = await readdir(installed.path);
+    expect(new Set(entries)).toEqual(new Set(["workflow.mjs"]));
+  });
+
   it("rejects a bundle whose directory name differs from the exported workflow function name", async () => {
     const bundleDir = await makeFixtureBundle({
       name: "wrongName",
       workflowSource: [
-        "export const requires = { states: [ { name: 'verify', type: 'verify' } ] };",
+        DEFAULT_PROFILE_LITERAL,
         "export async function exampleWorkflow() { return 'ok'; }"
-      ].join("\n"),
-      config: "version: tychonic.config.v1\nstates:\n  verify:\n    type: verify\n    command: echo ok\n"
+      ].join("\n")
     });
     await expect(installRuntimeWorkflowModule({ sourcePath: bundleDir })).rejects.toThrow(
       /does not match any exported workflow function/
     );
   });
 
-  it("rejects a bundle with unexpected extra files", async () => {
+  it("installs a standard package-shaped bundle directory verbatim", async () => {
     const bundleDir = await makeFixtureBundle({
       name: "exampleWorkflow",
       workflowSource: [
-        "export const requires = { states: [ { name: 'verify', type: 'verify' } ] };",
+        DEFAULT_PROFILE_LITERAL,
         "export async function exampleWorkflow() { return 'ok'; }"
       ].join("\n")
     });
-    await writeFile(join(bundleDir, "extra.json"), "{}", "utf8");
-    await expect(installRuntimeWorkflowModule({ sourcePath: bundleDir })).rejects.toThrow(/extra\.json/);
+    await writeFile(
+      join(bundleDir, "package.json"),
+      JSON.stringify({ name: "exampleWorkflow", private: true, type: "module" }),
+      "utf8"
+    );
+    await writeFile(join(bundleDir, "package-lock.json"), "{}", "utf8");
+    await writeFile(join(bundleDir, "helper.mjs"), "export const helper = true;\n", "utf8");
+    await mkdir(join(bundleDir, "node_modules", "local-helper"), { recursive: true });
+    await writeFile(
+      join(bundleDir, "node_modules", "local-helper", "package.json"),
+      JSON.stringify({ name: "local-helper", type: "module" }),
+      "utf8"
+    );
+
+    const installed = await installRuntimeWorkflowModule({ sourcePath: bundleDir });
+    const entries = await readdir(installed.path);
+    expect(new Set(entries)).toEqual(
+      new Set(["workflow.mjs", "README.md", "package.json", "package-lock.json", "helper.mjs", "node_modules"])
+    );
   });
 
-  it("rejects a bundle whose config.yaml is missing a required state block", async () => {
+  it("rejects a bundle that does not export a defaultProfile object", async () => {
     const bundleDir = await makeFixtureBundle({
       name: "exampleWorkflow",
       workflowSource: [
-        "export const requires = { states: [ { name: 'verify', type: 'verify' } ] };",
         "export async function exampleWorkflow() { return 'ok'; }"
-      ].join("\n"),
-      config: "version: tychonic.config.v1\nstates: {}\n"
+      ].join("\n")
     });
-    await expect(installRuntimeWorkflowModule({ sourcePath: bundleDir })).rejects.toThrow(/no matching states\.verify block/);
+    await expect(installRuntimeWorkflowModule({ sourcePath: bundleDir })).rejects.toThrow(
+      /does not export a 'defaultProfile' object/
+    );
   });
 
-  it("packagedWorkflowBundleRoot points at dist/workflow-bundles", () => {
-    const root = packagedWorkflowBundleRoot("/tmp/pkg");
-    expect(root).toBe("/tmp/pkg/dist/workflow-bundles");
+  it("rejects a bundle whose defaultProfile fails schema validation", async () => {
+    const bundleDir = await makeFixtureBundle({
+      name: "exampleWorkflow",
+      workflowSource: [
+        // Wrong activity type for `verify` — schema must reject.
+        "export const defaultProfile = {",
+        "  version: 'tychonic.config.v1',",
+        "  states: { verify: { type: 'bogus_type', command: 'echo ok' } }",
+        "};",
+        "export async function exampleWorkflow() { return 'ok'; }"
+      ].join("\n")
+    });
+    await expect(installRuntimeWorkflowModule({ sourcePath: bundleDir })).rejects.toThrow(
+      /defaultProfile failed schema validation/
+    );
   });
+
 });
 
 async function makeFixtureBundle(options: {
   name: string;
   workflowSource: string;
-  config?: string;
   readme?: string;
+  omitReadme?: boolean;
 }): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), `tychonic-bundle-src-${options.name}-`));
   const bundleDir = join(root, options.name);
   await mkdir(bundleDir, { recursive: true });
   await writeFile(join(bundleDir, "workflow.mjs"), options.workflowSource, "utf8");
-  const defaultConfig = "version: tychonic.config.v1\nstates:\n  verify:\n    type: verify\n    command: echo ok\n";
-  await writeFile(join(bundleDir, "config.yaml"), options.config ?? defaultConfig, "utf8");
-  await writeFile(join(bundleDir, "README.md"), options.readme ?? "# fixture\n", "utf8");
+  if (!options.omitReadme) {
+    await writeFile(join(bundleDir, "README.md"), options.readme ?? "# fixture\n", "utf8");
+  }
   return bundleDir;
 }

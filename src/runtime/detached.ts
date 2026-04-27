@@ -17,7 +17,7 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface SpawnDetachedRuntimeOptions {
@@ -103,6 +103,23 @@ export async function readPidFile(pidFile: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+export async function writePidFile(pidFile: string, pid: number): Promise<void> {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error(`pid must be a positive integer: ${pid}`);
+  }
+  await mkdir(dirname(pidFile), { recursive: true });
+  await writeFile(pidFile, `${pid}\n`, "utf8");
+}
+
+export async function removePidFileIfOwned(pidFile: string, pid: number): Promise<boolean> {
+  const current = await readPidFile(pidFile);
+  if (current !== pid) {
+    return false;
+  }
+  await rm(pidFile, { force: true });
+  return true;
 }
 
 /**

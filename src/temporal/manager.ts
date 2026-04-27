@@ -21,8 +21,8 @@ export type TemporalMode = (typeof temporalModes)[number];
 export interface TemporalConfig {
   mode?: TemporalMode;
   host?: string;
-  frontendPort?: number;
-  uiPort?: number;
+  apiPort?: number;
+  devUiPort?: number;
   address?: string;
   namespace?: string;
   taskQueue?: string;
@@ -34,8 +34,8 @@ export interface TemporalConfig {
 export interface NormalizedTemporalConfig {
   mode: TemporalMode;
   host: string;
-  frontendPort: number;
-  uiPort: number;
+  apiPort: number;
+  devUiPort: number;
   address: string;
   namespace: string;
   taskQueue: string;
@@ -50,7 +50,6 @@ export interface TemporalStatus {
   namespace: string;
   taskQueue: string;
   portOpen: boolean;
-  uiPortOpen?: boolean;
   cliPath?: string;
   health: "stopped" | "unknown" | "port-open" | "starting";
   message?: string;
@@ -82,10 +81,34 @@ export interface TemporalDoctorReport {
   checks: Array<{ name: string; status: "ok" | "warn" | "fail"; detail: string }>;
 }
 
+/**
+ * Optional knobs for `TemporalManager.start()`. The runtime-parent
+ * (`runtime up`) passes `inheritProcessGroup: true` so the spawned
+ * Temporal child shares the parent's pgid; `runtime reset` then kills
+ * the entire group with `kill(-pgid)` and the child cannot orphan.
+ *
+ * Standalone callers (`tychonic temporal start`) leave the option
+ * unset — the default, daemon-style spawn (own pgid via `setsid`) is
+ * what they need to survive the CLI exit.
+ */
+export interface TemporalStartOptions {
+  /**
+   * When true, the spawned Temporal child inherits the parent's
+   * process group (Node default for `spawn` without `detached: true`)
+   * so that a process-group kill on the parent reaches the child.
+   * Default false (daemon-style detached spawn).
+   */
+  inheritProcessGroup?: boolean;
+}
+
 export interface TemporalManagerDeps {
   lookup?: (name: string) => Promise<string | undefined>;
   dial?: (address: string) => Promise<void>;
-  start?: (cfg: NormalizedTemporalConfig, cli: string) => Promise<number>;
+  start?: (
+    cfg: NormalizedTemporalConfig,
+    cli: string,
+    opts?: TemporalStartOptions
+  ) => Promise<number>;
   processAlive?: (pid: number) => Promise<boolean>;
   processCommand?: (pid: number) => Promise<string>;
   portListeningPids?: (port: number) => Promise<number[]>;
@@ -134,10 +157,6 @@ export class TemporalManager {
       status.cliPath = cliPath;
     }
 
-    if (this.config.mode === "managed-local") {
-      status.uiPortOpen = await this.portOpen(managedUiAddress(this.config));
-    }
-
     try {
       await this.deps.dial(this.config.address);
     } catch (error) {
@@ -148,7 +167,7 @@ export class TemporalManager {
 
     status.portOpen = true;
     if (this.config.mode === "managed-local" && !status.pid) {
-      const pid = await this.managedTemporalPIDForPort(this.config.frontendPort);
+      const pid = await this.managedTemporalPIDForPort(this.config.apiPort);
       if (pid) {
         status.pid = pid;
       }
@@ -195,40 +214,37 @@ export class TemporalManager {
     if (this.config.mode === "external") {
       addCheck(
         report,
-        "frontend_port",
+        "api_port",
         status.portOpen ? "ok" : "fail",
         status.portOpen
-          ? `External Temporal frontend is reachable at ${this.config.address}`
-          : `External Temporal frontend is not reachable: ${status.message ?? "unknown error"}`
+          ? `External Temporal API is reachable at ${this.config.address}`
+          : `External Temporal API is not reachable: ${status.message ?? "unknown error"}`
       );
     } else if (!status.portOpen) {
-      addCheck(report, "frontend_port", "ok", `Managed-local frontend port is free at ${this.config.address}`);
+      addCheck(report, "api_port", "ok", `Managed-local Temporal API port is free at ${this.config.address}`);
     } else if (status.pid && (await this.managedTemporalPID(status.pid))) {
       managedLocalRunning = true;
-      addCheck(report, "frontend_port", "ok", `Tychonic-managed Temporal appears reachable with pid ${status.pid}`);
+      addCheck(report, "api_port", "ok", `Tychonic-managed Temporal appears reachable with pid ${status.pid}`);
     } else if (status.pid) {
       addCheck(report, "pid_file", "warn", `PID file exists but process ${status.pid} is not a live Temporal process`);
-      addCheck(report, "frontend_port", "warn", "Temporal frontend port is open but managed PID is stale or not Temporal");
+      addCheck(report, "api_port", "warn", "Temporal API port is open but managed PID is stale or not Temporal");
     } else {
-      addCheck(report, "frontend_port", "fail", `Temporal frontend port is occupied by an unmanaged process at ${this.config.address}`);
+      addCheck(report, "api_port", "fail", `Temporal API port is occupied by an unmanaged process at ${this.config.address}`);
+    }
+
+    if (this.config.mode === "managed-local" && !managedLocalRunning) {
+      const startSideAddress = managedDevUiAddress(this.config);
+      if (await this.portOpen(startSideAddress)) {
+        addCheck(
+          report,
+          "start_dev_side_port",
+          "fail",
+          `Managed-local Temporal start-dev side port is occupied at ${startSideAddress}; choose a different --temporal-port or use external mode`
+        );
+      }
     }
 
     if (this.config.mode === "managed-local") {
-      const uiAddress = managedUiAddress(this.config);
-      const uiPortOpen = await this.portOpen(uiAddress);
-      const uiStatus = managedLocalRunning ? (uiPortOpen ? "ok" : "warn") : uiPortOpen ? "fail" : "ok";
-      addCheck(
-        report,
-        "ui_port",
-        uiStatus,
-        managedLocalRunning
-          ? uiPortOpen
-            ? `Tychonic-managed Temporal UI appears reachable at ${uiAddress}`
-            : `Tychonic-managed Temporal process is live, but UI port is not reachable at ${uiAddress}`
-          : uiPortOpen
-            ? `Managed-local Temporal UI port is occupied at ${uiAddress}`
-          : `Managed-local Temporal UI port is free at ${uiAddress}`
-      );
       for (const [name, path] of [
         ["db_path", this.config.dbFilename],
         ["log_path", this.config.logFile],
@@ -335,7 +351,7 @@ export class TemporalManager {
     };
   }
 
-  async start(): Promise<TemporalStatus> {
+  async start(opts: TemporalStartOptions = {}): Promise<TemporalStatus> {
     const status = await this.status();
     if (this.config.mode === "external") {
       if (status.portOpen) {
@@ -350,24 +366,26 @@ export class TemporalManager {
       }
       if (status.pid) {
         throw new Error(
-          `Temporal frontend port ${this.config.address} is open, but PID file ${this.config.pidFile} does not point to a live Temporal process`
+          `Temporal API port ${this.config.address} is open, but PID file ${this.config.pidFile} does not point to a live Temporal process`
         );
       }
       throw new Error(
-        `Temporal frontend port ${this.config.address} is already occupied; configure another port or use external mode`
+        `Temporal API port ${this.config.address} is already occupied; use external mode`
       );
     }
 
-    const uiAddress = managedUiAddress(this.config);
-    if (await this.portOpen(uiAddress)) {
-      throw new Error(`Temporal UI port ${uiAddress} is already occupied; configure another UI port or use external mode`);
+    const startSideAddress = managedDevUiAddress(this.config);
+    if (await this.portOpen(startSideAddress)) {
+      throw new Error(
+        `managed-local Temporal start-dev side port ${startSideAddress} is already occupied; choose a different --temporal-port or use external mode`
+      );
     }
 
     const cli = await this.deps.lookup("temporal");
     if (!cli) {
       throw new Error("temporal CLI is not installed; install it or use external mode");
     }
-    const pid = await this.deps.start(this.config, cli);
+    const pid = await this.deps.start(this.config, cli, opts);
     return {
       ...status,
       cliPath: cli,
@@ -427,7 +445,7 @@ export function normalizeTemporalConfig(config: TemporalConfig): NormalizedTempo
   const host = config.host ?? "127.0.0.1";
   const dirs = tychonicRuntimeDirs();
 
-  // Delegate instance-aware derivation of address / frontendPort / uiPort /
+  // Delegate instance-aware derivation of address / apiPort / devUiPort /
   // taskQueue to `resolveInstanceRuntime`. This keeps the field-level
   // explicit-override precedence (§9) in exactly one place. When no
   // instance is active, the resolver reproduces the historical defaults
@@ -436,8 +454,8 @@ export function normalizeTemporalConfig(config: TemporalConfig): NormalizedTempo
   const instance = getActiveInstance();
   const explicit: ResolveInstanceRuntimeExplicit = {};
   if (config.address !== undefined) explicit.address = config.address;
-  if (config.frontendPort !== undefined) explicit.frontendPort = config.frontendPort;
-  if (config.uiPort !== undefined) explicit.uiPort = config.uiPort;
+  if (config.apiPort !== undefined) explicit.apiPort = config.apiPort;
+  if (config.devUiPort !== undefined) explicit.devUiPort = config.devUiPort;
   if (config.namespace !== undefined) explicit.namespace = config.namespace;
   if (config.taskQueue !== undefined) explicit.taskQueue = config.taskQueue;
   const resolvedOptions: ResolveInstanceRuntimeOptions = {
@@ -451,8 +469,8 @@ export function normalizeTemporalConfig(config: TemporalConfig): NormalizedTempo
   return {
     mode,
     host,
-    frontendPort: resolved.temporal.frontendPort,
-    uiPort: resolved.temporal.uiPort,
+    apiPort: resolved.temporal.apiPort,
+    devUiPort: resolved.temporal.devUiPort,
     address: resolved.temporal.address,
     namespace: resolved.temporal.namespace,
     taskQueue: resolved.temporal.taskQueue,
@@ -528,9 +546,9 @@ export function temporalStartArgs(config: NormalizedTemporalConfig): string[] {
     "--ip",
     config.host,
     "--port",
-    String(config.frontendPort),
+    String(config.apiPort),
     "--ui-port",
-    String(config.uiPort),
+    String(config.devUiPort),
     "--namespace",
     config.namespace,
     "--db-filename",
@@ -538,18 +556,32 @@ export function temporalStartArgs(config: NormalizedTemporalConfig): string[] {
   ];
 }
 
-async function startTemporal(config: NormalizedTemporalConfig, cli: string): Promise<number> {
+async function startTemporal(
+  config: NormalizedTemporalConfig,
+  cli: string,
+  opts: TemporalStartOptions = {}
+): Promise<number> {
   for (const path of [config.dbFilename, config.logFile, config.pidFile]) {
     if (path) {
       await mkdir(dirname(path), { recursive: true });
     }
   }
   const logFd = openSync(config.logFile, "a");
+  // `detached: true` makes the child its own process-group/session leader
+  // (POSIX `setsid`). Standalone `tychonic temporal start` wants that —
+  // the daemon must outlive the CLI invocation. The runtime-parent path
+  // (`runtime up`) wants the opposite: the temporal child must inherit
+  // the parent's pgid so `runtime reset`'s `kill(-pgid)` cascade reaches
+  // it. Callers signal that via `inheritProcessGroup: true`.
+  const detached = opts.inheritProcessGroup !== true;
   const child = spawn(cli, temporalStartArgs(config), {
-    detached: true,
+    detached,
     stdio: ["ignore", logFd, logFd]
   });
   closeSync(logFd);
+  // unref() lets the parent event loop drain even when the child is in
+  // the same process group. The pgid relationship is independent of
+  // libuv's child-handle reference.
   child.unref();
   const pid = child.pid;
   if (!pid) {
@@ -701,8 +733,8 @@ function splitHostPort(address: string): [string, string] {
   return [address.slice(0, index), address.slice(index + 1)];
 }
 
-function managedUiAddress(config: NormalizedTemporalConfig): string {
-  return `${config.host}:${config.uiPort}`;
+function managedDevUiAddress(config: NormalizedTemporalConfig): string {
+  return `${config.host}:${config.devUiPort}`;
 }
 
 function addCheck(

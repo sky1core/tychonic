@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,14 +14,22 @@ describe("runResumeWorkActivity", () => {
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-resume-wt-"));
     const run = baseRunWithSession("run_resume_pass", "sess_1");
     const runBefore = structuredClone(run);
+    const restorePath = await installFakeCodex();
 
-    const result = await runResumeWorkActivity({
-      stateName: ACTIVITY_NAME,
-      run,
-      cwd,
-      profile: profileWith(),
-      extras: { worktreePath, prompt: "continue please", sessionId: "sess_1" }
-    });
+    let result;
+    try {
+      result = await runResumeWorkActivity({
+        stateName: ACTIVITY_NAME,
+        run,
+        cwd,
+        profile: profileWith(),
+        worktreePath,
+        prompt: "continue please",
+        sessionId: "sess_1"
+      });
+    } finally {
+      restorePath();
+    }
 
     expect(run).toEqual(runBefore);
     expect(result.delta.states?.[0]?.status).toBe("succeeded");
@@ -32,10 +40,10 @@ describe("runResumeWorkActivity", () => {
     expect(result.workerOutcome.agentSessions).toHaveLength(0);
   });
 
-  it("throws ApplicationFailure when the referenced session has no resume_command", async () => {
+  it("throws ApplicationFailure when the referenced session is not resumable", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-resume-nores-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-resume-wt2-"));
-    const run = baseRunWithSession("run_resume_nores", "sess_nores", { omitResumeCommand: true });
+    const run = baseRunWithSession("run_resume_nores", "sess_nores", { resumable: false });
 
     await expect(
       runResumeWorkActivity({
@@ -43,9 +51,10 @@ describe("runResumeWorkActivity", () => {
         run,
         cwd,
         profile: profileWith(),
-        extras: { worktreePath, sessionId: "sess_nores" }
+        worktreePath,
+        sessionId: "sess_nores"
       })
-    ).rejects.toThrow(/resume_command/);
+    ).rejects.toThrow(/not resumable/);
   });
 
   it("throws ApplicationFailure when the session id is not in run.agent_sessions", async () => {
@@ -58,7 +67,8 @@ describe("runResumeWorkActivity", () => {
         run: baseRunWithSession("run_resume_404", "sess_other"),
         cwd,
         profile: profileWith(),
-        extras: { worktreePath, sessionId: "sess_missing" }
+        worktreePath,
+        sessionId: "sess_missing"
       })
     ).rejects.toThrow(/sess_missing/);
   });
@@ -79,7 +89,7 @@ function profileWith(): TychonicConfig {
 function baseRunWithSession(
   id: string,
   sessionId: string,
-  options: { omitResumeCommand?: boolean } = {}
+  options: { resumable?: boolean } = {}
 ): WorkflowRunRecord {
   return {
     schema_version: "tychonic.run.v1",
@@ -98,9 +108,7 @@ function baseRunWithSession(
         role: "worker",
         cwd: "/ignored",
         status: "succeeded",
-        ...(options.omitResumeCommand
-          ? {}
-          : { resume_command: "node -e \"console.log('resumed ok')\"" }),
+        ...(options.resumable === false ? {} : { resumable: true }),
         started_at: "2026-04-19T00:00:00.000Z",
         finished_at: "2026-04-19T00:00:10.000Z"
       }
@@ -108,5 +116,21 @@ function baseRunWithSession(
     artifacts: [],
     findings: [],
     inbox: []
+  };
+}
+
+async function installFakeCodex(): Promise<() => void> {
+  const binDir = await mkdtemp(join(tmpdir(), "tychonic-fake-codex-"));
+  const binPath = join(binDir, "codex");
+  await writeFile(binPath, "#!/bin/sh\necho '{\"session_id\":\"external-session-1\"}'\n", "utf8");
+  await chmod(binPath, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+  return () => {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
   };
 }

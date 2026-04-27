@@ -6,6 +6,7 @@ import {
 } from "../bootstrap/reviewActivityBody.js";
 import { activityTimeoutMs, defaultActivityTimeoutMs, optionalStateConfig } from "../catalog/types.js";
 import type { WorkflowRunRecord, WorkflowStateRecord } from "../domain/types.js";
+import { AdapterUnsupported } from "../adapters/types.js";
 import { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import { heartbeatActivity } from "./heartbeat.js";
@@ -14,16 +15,16 @@ import { heartbeatActivity } from "./heartbeat.js";
  * Temporal activity entry-point for `review` TYPE activities. Resolves the
  * NAMEd review block, builds the shared resources, and delegates to
  * `runReviewActivityBody`. The activity does not mutate `input.run` and
- * returns a `WorkflowRunDelta` through `ActivityResult` (SPEC §File I/O vs
- * run mutation).
+ * returns a `WorkflowRunDelta` through `ActivityResult` (SPEC §Activity
+ * Result And Evidence Invariants).
  */
 export type RunReviewActivityInput = ActivityInput<"review">;
 export type RunReviewActivityResult = ActivityResult;
 
 export async function runReviewActivity(input: RunReviewActivityInput): Promise<RunReviewActivityResult> {
-  if (!input.extras.prompt || input.extras.prompt.trim() === "") {
+  if (!input.prompt || input.prompt.trim() === "") {
     throw ApplicationFailure.nonRetryable(
-      `review activity '${input.stateName}' requires extras.prompt`,
+      `review activity '${input.stateName}' requires prompt`,
       "review_activity_missing_prompt"
     );
   }
@@ -38,12 +39,25 @@ export async function runReviewActivity(input: RunReviewActivityInput): Promise<
   const env = process.env;
   const now = (): Date => new Date();
 
-  const reviewOptions = await resolveNamedReviewOptions({
-    profile: input.profile,
-    name: input.stateName,
-    expectedType: "review",
-    env
-  });
+  let reviewOptions;
+  try {
+    reviewOptions = await resolveNamedReviewOptions({
+      profile: input.profile,
+      name: input.stateName,
+      expectedType: "review",
+      env,
+      worktreeCwd: input.worktreePath ?? input.cwd,
+      prompt: input.prompt ?? ""
+    });
+  } catch (err) {
+    if (err instanceof AdapterUnsupported) {
+      throw ApplicationFailure.nonRetryable(
+        `review activity '${input.stateName}': ${err.message}`,
+        "AdapterUnsupported"
+      );
+    }
+    throw err;
+  }
   if (!reviewOptions) {
     return missingBlockResult(input.run, input.stateName, now);
   }

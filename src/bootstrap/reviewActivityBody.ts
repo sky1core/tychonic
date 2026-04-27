@@ -1,8 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
-  optionalStateConfig,
-  resolveActivityCommand
+  optionalStateConfig
 } from "../catalog/types.js";
 import type { TychonicConfig } from "../catalog/types.js";
 import type {
@@ -11,6 +10,7 @@ import type {
   ArtifactRecord,
   WorkflowStateRecord
 } from "../domain/types.js";
+import { resolveCommand } from "../adapters/resolveAdapter.js";
 import { parseReviewOutput } from "../review/parse.js";
 import type { ReviewActivityOutcome } from "../review/outcome.js";
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
@@ -45,14 +45,13 @@ export interface RunReviewActivityBodyOptions {
 }
 
 /**
- * Single-candidate review body. Produces exactly one `WorkflowStateRecord`
- * and one `ActivityAttemptRecord` (SPEC §One state per body call). Does
- * not mutate `input.run` (SPEC §File I/O vs run mutation) — files are
- * written directly with `node:fs` and the resulting records are returned
- * through the delta and `reviewOutcome` for the caller to append.
+ * Single review body. Produces exactly one `WorkflowStateRecord`
+ * and one `ActivityAttemptRecord` (SPEC §Activity Result And Evidence
+ * Invariants). Does not mutate `input.run` — files are written directly
+ * with `node:fs` and the resulting records are returned through the delta
+ * and `reviewOutcome` for the caller to append.
  *
- * The caller drives candidate fallback and multi-iteration loops (SPEC
- * §Finding and inbox routing); each iteration calls this body once.
+ * The caller drives multi-iteration loops; each iteration calls this body once.
  */
 export async function runReviewActivityBody(
   options: RunReviewActivityBodyOptions
@@ -60,8 +59,8 @@ export async function runReviewActivityBody(
   const { input, resources, reviewOptions, timeoutMs, stateReason } = options;
   const { store, env, now, nextId, heartbeat } = resources;
   const run = input.run;
-  const prompt = input.extras.prompt as string;
-  const executionCwd = input.extras.worktreePath ?? input.cwd;
+  const prompt = input.prompt as string;
+  const executionCwd = input.worktreePath ?? input.cwd;
   const command = reviewOptions.command;
 
   const stateStartedAt = now().toISOString();
@@ -226,30 +225,44 @@ export async function runReviewActivityBody(
 }
 
 /**
- * NAME-driven review options lookup. Used by callers that resolve the
- * reviewer command from `profile.states[name]`. Returns `undefined`
- * when the activity block is missing or the command is absent.
+ * NAME-driven review options lookup. Used by callers that resolve reviewer
+ * execution from `profile.states[name]`. The validated state block declares
+ * exactly one execution selector: `command` for verbatim command, or `agent`
+ * for built-in adapter dispatch.
+ *
+ * The reviewer never resumes a previous session, so `runResume` does
+ * not enter the picture here.
  */
 export async function resolveNamedReviewOptions(options: {
   profile: TychonicConfig | undefined;
   name: string;
   expectedType: "review";
   env: NodeJS.ProcessEnv;
+  worktreeCwd: string;
+  prompt: string;
 }): Promise<ResolvedReviewOptions | undefined> {
   const review = optionalStateConfig(options.profile, options.name, options.expectedType);
   if (!review) {
     return undefined;
   }
 
-  const agentCommand = resolveActivityCommand(review);
-  const command = review.command ?? agentCommand?.command;
-  if (!command) {
+  const resolved = resolveCommand({
+    block: review,
+    worktreeCwd: options.worktreeCwd,
+    prompt: options.prompt,
+    role: "review"
+  });
+  if (!resolved) {
     return undefined;
   }
 
+  const agentLabel =
+    resolved.kind === "adapter"
+      ? resolved.agentName
+      : review.agent ?? resolved.agentLabel ?? "review";
   return {
-    command,
-    agent: review.agent ?? "review"
+    command: resolved.command,
+    agent: agentLabel
   };
 }
 

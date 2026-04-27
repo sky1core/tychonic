@@ -3,22 +3,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  loadBundleConfig,
+  loadBundleDefaultProfile,
   resolveEffectiveBundleConfig
 } from "../src/catalog/bundleConfig.js";
 
-const VALID_BUNDLE_CONFIG = `version: tychonic.config.v1
-states:
-  verify:
-    type: verify
-    command: echo ok
+const VALID_BUNDLE_WORKFLOW = `
+export const defaultProfile = {
+  version: "tychonic.config.v1",
+  states: {
+    verify: { type: "verify", command: "echo ok" }
+  }
+};
+export async function bundle() { return "ok"; }
 `;
 
 const OVERRIDE_CONFIG = `version: tychonic.config.v1
 states:
   verify:
     type: verify
-    command: npm test
+    command: npm run verify:worker
 policies:
   integration:
     mode: disabled
@@ -26,41 +29,51 @@ policies:
 `;
 
 describe("bundleConfig loader", () => {
-  it("loadBundleConfig reads and parses the bundle's config.yaml", async () => {
-    const bundleDir = await makeBundleDir(VALID_BUNDLE_CONFIG);
-    const config = await loadBundleConfig(bundleDir);
+  it("loadBundleDefaultProfile reads the bundle's defaultProfile export", async () => {
+    const bundleDir = await makeBundleDir(VALID_BUNDLE_WORKFLOW);
+    const config = await loadBundleDefaultProfile(bundleDir);
     expect(config.states?.verify).toMatchObject({ type: "verify", command: "echo ok" });
   });
 
-  it("resolveEffectiveBundleConfig returns the bundle file when no override is passed", async () => {
-    const bundleDir = await makeBundleDir(VALID_BUNDLE_CONFIG);
+  it("resolveEffectiveBundleConfig returns the bundle's defaultProfile when no override is passed", async () => {
+    const bundleDir = await makeBundleDir(VALID_BUNDLE_WORKFLOW);
     const resolved = await resolveEffectiveBundleConfig({ bundleDir });
     expect(resolved.source).toBe("bundle");
     expect(resolved.profile.states?.verify?.command).toBe("echo ok");
   });
 
   it("resolveEffectiveBundleConfig replaces the whole config with the override", async () => {
-    const bundleDir = await makeBundleDir(VALID_BUNDLE_CONFIG);
+    const bundleDir = await makeBundleDir(VALID_BUNDLE_WORKFLOW);
     const overridePath = await writeTempFile("override.yaml", OVERRIDE_CONFIG);
     const resolved = await resolveEffectiveBundleConfig({ bundleDir, overridePath });
     expect(resolved.source).toEqual({ override: overridePath });
-    expect(resolved.profile.states?.verify?.command).toBe("npm test");
+    expect(resolved.profile.states?.verify?.command).toBe("npm run verify:worker");
     expect(resolved.profile.policies?.integration).toMatchObject({ mode: "disabled" });
   });
 
-  it("rejects a bundle config that declares a pass-through vendor field", async () => {
-    const bundleDir = await makeBundleDir(
-      "version: tychonic.config.v1\nstates:\n  review:\n    type: review\n    agent: claude\n    command: claude --print\n    model: claude-opus-4\n    emits:\n      - tychonic.review.v1\n"
-    );
-    await expect(loadBundleConfig(bundleDir)).rejects.toThrow();
+  it("rejects a bundle defaultProfile that declares a pass-through vendor field", async () => {
+    const bundleDir = await makeBundleDir(`
+export const defaultProfile = {
+  version: "tychonic.config.v1",
+  states: {
+    review: {
+      type: "review",
+      agent: "claude",
+      model: "claude-opus-4"
+    }
+  }
+};
+export async function bundle() { return "ok"; }
+`);
+    await expect(loadBundleDefaultProfile(bundleDir)).rejects.toThrow();
   });
 });
 
-async function makeBundleDir(configContent: string): Promise<string> {
+async function makeBundleDir(workflowSource: string): Promise<string> {
   const parent = await mkdtemp(join(tmpdir(), "tychonic-bundle-config-"));
   const bundleDir = join(parent, "bundle");
   await mkdir(bundleDir, { recursive: true });
-  await writeFile(join(bundleDir, "config.yaml"), configContent, "utf8");
+  await writeFile(join(bundleDir, "workflow.mjs"), workflowSource, "utf8");
   return bundleDir;
 }
 

@@ -18,8 +18,7 @@ describe("runUnitTestActivity", () => {
       stateName: ACTIVITY_NAME,
       run,
       cwd,
-      profile: profileWith("node -e \"console.log('unit ok')\""),
-      extras: {}
+      profile: profileWith("node -e \"console.log('unit ok')\"")
     });
 
     expect(run).toEqual(runBefore);
@@ -35,8 +34,7 @@ describe("runUnitTestActivity", () => {
         stateName: "missing",
         run: baseRun("run_unit_test_missing"),
         cwd,
-        profile: { version: "tychonic.config.v1" },
-        extras: {}
+        profile: { version: "tychonic.config.v1" }
       })
     ).rejects.toThrow(/missing/);
   });

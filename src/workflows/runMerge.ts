@@ -11,9 +11,8 @@ const TERMINAL_STATE_STATUSES: readonly WorkflowStateStatus[] = [
 ] as const;
 
 /**
- * Pure helpers the Stage 5 workflow code uses to merge activity results
- * into its local `WorkflowRunRecord`. None of these mutates the input
- * record.
+ * Pure helpers workflow code uses to merge activity results into its local
+ * `WorkflowRunRecord`. None of these mutates the input record.
  *
  * An activity call returns:
  * - `result.delta` — changes to `states`, `activity_attempts`, `facts`,
@@ -21,8 +20,8 @@ const TERMINAL_STATE_STATUSES: readonly WorkflowStateStatus[] = [
  * - `result.reviewOutcome`, `result.commandOutcome`, `result.workerOutcome`
  *   — TYPE-specific payloads carrying `ArtifactRecord` / `AgentSessionRecord`
  *   that the caller appends to `run.artifacts` / `run.agent_sessions`. The
- *   body never pushes into `input.run` itself (SPEC §File I/O vs run
- *   mutation).
+ *   body never pushes into `input.run` itself (SPEC §Activity Result And
+ *   Evidence Invariants).
  *
  * `applyActivityResult` applies both halves in one step.
  */

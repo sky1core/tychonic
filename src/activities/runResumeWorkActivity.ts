@@ -8,7 +8,7 @@ export type RunResumeWorkActivityResult = ActivityResult;
  * Compatibility wrapper for explicit resume calls. The product surface no
  * longer models `resume_work` as a distinct activity type; callers that
  * already know which session to continue can route through `work` with
- * `extras.sessionId`.
+ * `sessionId`.
  */
 export async function runResumeWorkActivity(
   input: RunResumeWorkActivityInput

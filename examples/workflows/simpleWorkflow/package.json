@@ -1,0 +1,8 @@
+{
+  "name": "@tychonic/example-simple-workflow",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@temporalio/workflow": "1.16.0"
+  }
+}

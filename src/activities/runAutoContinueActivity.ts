@@ -4,9 +4,13 @@ import {
   runWorkerActivityBody,
   type WorkerActivityResources
 } from "../bootstrap/workerActivityBody.js";
-import { activityTimeoutMs, defaultActivityTimeoutMs, optionalStateConfig } from "../catalog/types.js";
+import { activityTimeoutMs, defaultActivityTimeoutMs, optionalStateConfig, type ActivityBlock } from "../catalog/types.js";
+import { resolveCommand, resolveResumeCommand, type AdapterDispatch } from "../adapters/resolveAdapter.js";
+import { AdapterUnsupported } from "../adapters/types.js";
 import { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
+import type { AgentSessionRecord } from "../domain/types.js";
+import { applyParsedAdapterSession } from "./adapterSession.js";
 import { heartbeatActivity } from "./heartbeat.js";
 
 export type RunAutoContinueActivityInput = ActivityInput<"auto_continue">;
@@ -14,15 +18,10 @@ export type RunAutoContinueActivityResult = ActivityResult;
 
 /**
  * Dispatcher activity. Delegates to `runWorkerActivityBody` in either
- * resume mode (`extras.sessionId` present) or fresh mode (`extras.command`
- * present). Inbox grouping, finding resolution, and multi-iteration loop
- * control live in the caller (Stage 5 workflow). This activity runs one
- * session; it does not know about inbox items.
- *
- * If Stage 5 decides to replace `auto_continue` with direct calls to
- * `runWorkerActivity` / `runResumeWorkActivity` from workflow code (Stage
- * 4 design doc §6.3 and §11 Q7), this file gets deleted alongside the
- * TYPE.
+ * resume mode (`sessionId` present) or fresh mode (state config command/agent).
+ * Inbox grouping, finding resolution, and multi-iteration loop control live
+ * in the calling workflow. This activity runs one session; it does not know
+ * about inbox items.
  */
 export async function runAutoContinueActivity(
   input: RunAutoContinueActivityInput
@@ -36,16 +35,16 @@ export async function runAutoContinueActivity(
     });
   }
 
-  const worktreePath = input.extras.worktreePath;
+  const worktreePath = input.worktreePath;
   if (!worktreePath) {
     throw ApplicationFailure.create({
-      message: `auto_continue activity '${input.stateName}' requires extras.worktreePath`,
+      message: `auto_continue activity '${input.stateName}' requires worktreePath`,
       type: "WorktreePathMissing",
       nonRetryable: true
     });
   }
 
-  const prompt = input.extras.prompt ?? "";
+  const prompt = input.prompt ?? "";
   const store = new RunArtifactStore(join(input.cwd, ".tychonic"));
   const resources: WorkerActivityResources = {
     store,
@@ -60,58 +59,126 @@ export async function runAutoContinueActivity(
     defaultActivityTimeoutMs("auto_continue")
   );
 
-  if (input.extras.sessionId) {
-    const existing = input.run.agent_sessions.find((session) => session.id === input.extras.sessionId);
+  if (input.sessionId) {
+    const existing = input.run.agent_sessions.find((session) => session.id === input.sessionId);
     if (!existing) {
       throw ApplicationFailure.create({
-        message: `auto_continue activity '${input.stateName}': session id '${input.extras.sessionId}' is not in run.agent_sessions`,
+        message: `auto_continue activity '${input.stateName}': session id '${input.sessionId}' is not in run.agent_sessions`,
         type: "ResumeSessionNotFound",
         nonRetryable: true
       });
     }
-    if (!existing.resume_command) {
-      throw ApplicationFailure.create({
-        message: `auto_continue activity '${input.stateName}': session '${input.extras.sessionId}' has no resume_command`,
-        type: "ResumeCommandMissing",
-        nonRetryable: true
-      });
-    }
+    const resumeDispatch = resolveAutoContinueResumeDispatch({
+      input,
+      block,
+      session: existing,
+      worktreePath,
+      prompt
+    });
     return runWorkerActivityBody({
       input,
       expectedType: "auto_continue",
       resources,
-      command: existing.resume_command,
+      command: resumeDispatch.command,
       timeoutMs,
       executionCwd: worktreePath,
       prompt,
-      agent: existing.agent,
-      stateReason: `auto_continue ${input.stateName} (resume session ${input.extras.sessionId})`,
-      resumeSessionId: input.extras.sessionId,
+      agent: resumeDispatch.agentName,
+      stateReason: `auto_continue ${input.stateName} (resume session ${input.sessionId})`,
+      resumeSessionId: input.sessionId,
       attemptKind: "resume_work"
     });
   }
 
-  const command = input.extras.command ?? block.command;
-  if (!command) {
+  let resolved;
+  try {
+    resolved = resolveCommand({
+      block,
+      worktreeCwd: worktreePath,
+      prompt,
+      role: "auto_continue"
+    });
+  } catch (err) {
+    if (err instanceof AdapterUnsupported) {
+      throw ApplicationFailure.create({
+        message: `auto_continue activity '${input.stateName}': ${err.message}`,
+        type: "AdapterUnsupported",
+        nonRetryable: true
+      });
+    }
+    throw err;
+  }
+  if (!resolved) {
     throw ApplicationFailure.create({
-      message: `auto_continue activity '${input.stateName}' requires either extras.sessionId (resume) or a command (fresh)`,
+      message: `auto_continue activity '${input.stateName}' requires either sessionId (resume) or profile.states.${input.stateName}.command/built-in agent (fresh)`,
       type: "CommandMissing",
       nonRetryable: true
     });
   }
 
-  const agent = input.extras.agent ?? block.agent ?? "custom";
-  return runWorkerActivityBody({
+  const agent = resolved.kind === "adapter" ? resolved.agentName : resolved.agentLabel;
+  const result = await runWorkerActivityBody({
     input,
     expectedType: "auto_continue",
     resources,
-    command,
+    command: resolved.command,
     timeoutMs,
     executionCwd: worktreePath,
     prompt,
     agent,
     stateReason: `auto_continue ${input.stateName} (fresh)`
   });
+  return resolved.kind === "adapter" ? applyParsedAdapterSession(result, resolved) : result;
+}
+
+function resolveAutoContinueResumeDispatch(args: {
+  input: RunAutoContinueActivityInput;
+  block: ActivityBlock;
+  session: AgentSessionRecord;
+  worktreePath: string;
+  prompt: string;
+}): AdapterDispatch {
+  const { input, block, session, worktreePath, prompt } = args;
+  if (!session.resumable) {
+    throw ApplicationFailure.create({
+      message: `auto_continue activity '${input.stateName}': session '${session.id}' is not resumable`,
+      type: "ResumeSessionNotResumable",
+      nonRetryable: true
+    });
+  }
+
+  let dispatch;
+  try {
+    dispatch = resolveResumeCommand({
+      block: blockForSessionAgent(block, session.agent),
+      sessionId: session.id,
+      worktreeCwd: worktreePath,
+      prompt,
+      role: "auto_continue"
+    });
+  } catch (err) {
+    if (err instanceof AdapterUnsupported) {
+      throw ApplicationFailure.create({
+        message: `auto_continue activity '${input.stateName}': ${err.message}`,
+        type: "AdapterUnsupported",
+        nonRetryable: true
+      });
+    }
+    throw err;
+  }
+  if (!dispatch) {
+    throw ApplicationFailure.create({
+      message: `auto_continue activity '${input.stateName}': session '${session.id}' has no built-in adapter resume path`,
+      type: "ResumeSessionNotResumable",
+      nonRetryable: true
+    });
+  }
+  return dispatch;
+}
+
+function blockForSessionAgent(block: ActivityBlock, agent: string): ActivityBlock {
+  const { command: _command, ...rest } = block;
+  return { ...rest, agent };
 }
 
 function nextIdFromRun(run: RunAutoContinueActivityInput["run"]): (prefix: string) => string {

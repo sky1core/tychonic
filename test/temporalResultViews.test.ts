@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   artifactContentPath,
-  listCandidateExecutionRows,
   listAgentSessions,
   listArtifacts,
   listInboxItems,
@@ -29,22 +28,6 @@ describe("Temporal result views", () => {
     expect(listLiveOutputAttempts(result).map((attempt) => attempt.id)).toEqual(["attempt_1"]);
     expect(listInboxItems(result).map((item) => item.id)).toEqual(["inbox_1"]);
     expect(listAgentSessions(result, 1).map((session) => session.id)).toEqual(["session_1"]);
-    expect(listCandidateExecutionRows(result)).toEqual([
-      {
-        state_id: "state_1",
-        state_name: "work",
-        state_status: "succeeded",
-        attempt_id: "attempt_1",
-        attempt_kind: "work",
-        attempt_status: "succeeded",
-        exit_code: 0,
-        session_id: "session_1",
-        agent: "codex",
-        role: "worker",
-        cwd,
-        command: "codex exec --json"
-      }
-    ]);
     expect(artifactContentPath(result, "artifact_1")).toBe(
       join(cwd, ".tychonic", "runs", "run_temporal_view", "artifacts", "worker-output.txt")
     );
@@ -85,7 +68,7 @@ function fakeResult(cwd: string): TychonicWorkflowResult {
           id: "state_1",
           name: "work",
           status: "succeeded",
-          reason: "worker candidate succeeded",
+          reason: "worker succeeded",
           activity_attempt_ids: ["attempt_1", "attempt_2"],
           artifact_ids: ["artifact_1"],
           finding_ids: [],

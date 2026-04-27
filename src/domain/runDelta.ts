@@ -10,17 +10,17 @@ import type {
  * Change set a single activity call returns. The caller merges the delta
  * into its `WorkflowRunRecord` via `applyRunDelta`.
  *
- * Stage 1 supports exactly five fields. Run-level id lists
+ * The delta supports exactly five fields. Run-level id lists
  * (`artifact_ids`, `finding_ids`, `inbox_item_ids`, `agent_session_ids`)
  * are deliberately not part of this delta because `WorkflowRunRecord`
- * has no matching run-level slots — those lives on individual steps or
+ * has no matching run-level slots — those live on individual states or
  * on the record's object arrays (`run.artifacts`, `run.findings`, etc.).
  * Activities that produce those records must return them through their
  * own TYPE-specific result shape (e.g. `reviewOutcome` for review
  * activities) and the caller merges them into the appropriate
  * object arrays directly.
  *
- * @field steps             New `WorkflowStateRecord`s to append to
+ * @field states            New `WorkflowStateRecord`s to append to
  *                          `run.states`. Each state must carry its own
  *                          lifecycle (`started_at` + `finished_at` on
  *                          both success and failure; never handed off in

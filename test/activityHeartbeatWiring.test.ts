@@ -27,7 +27,7 @@ describe("activity heartbeat wiring", () => {
       run: baseRun("run_worker_heartbeat"),
       cwd: await mkdtemp(join(tmpdir(), "tychonic-worker-heartbeat-")),
       profile: profileWith("work_alt", "work"),
-      extras: { worktreePath: await mkdtemp(join(tmpdir(), "tychonic-worker-heartbeat-wt-")) }
+      worktreePath: await mkdtemp(join(tmpdir(), "tychonic-worker-heartbeat-wt-"))
     });
 
     expect(captured.heartbeat).toEqual(expect.any(Function));
@@ -46,15 +46,12 @@ describe("activity heartbeat wiring", () => {
     await runResumeWorkActivity({
       stateName: "resume_alt",
       run: baseRun("run_resume_heartbeat", {
-        sessionId: "sess_1",
-        resumeCommand: "node -e \"console.log('resume ok')\""
+        sessionId: "sess_1"
       }),
       cwd: await mkdtemp(join(tmpdir(), "tychonic-resume-heartbeat-")),
       profile: profileWith("resume_alt", "work"),
-      extras: {
-        worktreePath: await mkdtemp(join(tmpdir(), "tychonic-resume-heartbeat-wt-")),
-        sessionId: "sess_1"
-      }
+      worktreePath: await mkdtemp(join(tmpdir(), "tychonic-resume-heartbeat-wt-")),
+      sessionId: "sess_1"
     });
 
     expect(captured.heartbeat).toEqual(expect.any(Function));
@@ -77,21 +74,18 @@ describe("activity heartbeat wiring", () => {
       run: baseRun("run_auto_fresh_heartbeat"),
       cwd,
       profile: profileWith("auto_alt", "auto_continue"),
-      extras: { worktreePath: await mkdtemp(join(tmpdir(), "tychonic-auto-heartbeat-wt1-")), command: "echo hi" }
+      worktreePath: await mkdtemp(join(tmpdir(), "tychonic-auto-heartbeat-wt1-"))
     });
 
     await runAutoContinueActivity({
       stateName: "auto_alt",
       run: baseRun("run_auto_resume_heartbeat", {
-        sessionId: "sess_auto",
-        resumeCommand: "node -e \"console.log('resume ok')\""
+        sessionId: "sess_auto"
       }),
       cwd,
       profile: profileWith("auto_alt", "auto_continue"),
-      extras: {
-        worktreePath: await mkdtemp(join(tmpdir(), "tychonic-auto-heartbeat-wt2-")),
-        sessionId: "sess_auto"
-      }
+      worktreePath: await mkdtemp(join(tmpdir(), "tychonic-auto-heartbeat-wt2-")),
+      sessionId: "sess_auto"
     });
 
     expect(captured).toHaveLength(2);
@@ -106,7 +100,6 @@ function profileWith(name: string, type: "work" | "auto_continue"): TychonicConf
     states: {
       [name]: {
         type,
-        agent: "codex",
         command: "node -e \"console.log('ok')\""
       }
     }
@@ -117,7 +110,6 @@ function baseRun(
   id: string,
   session?: {
     sessionId: string;
-    resumeCommand: string;
   }
 ): WorkflowRunRecord {
   return {
@@ -138,7 +130,7 @@ function baseRun(
             role: "worker",
             cwd: "/ignored",
             status: "succeeded",
-            resume_command: session.resumeCommand,
+            resumable: true,
             started_at: "2026-04-19T00:00:00.000Z",
             finished_at: "2026-04-19T00:00:10.000Z"
           }

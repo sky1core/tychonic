@@ -1,7 +1,7 @@
 import { parseReviewResult, type ReviewResult } from "./schema.js";
 
 export function parseReviewOutput(output: string): ReviewResult | undefined {
-  const candidates = collectReviewCandidates(output);
+  const candidates = collectReviewCandidates(output.trim());
   for (let i = candidates.length - 1; i >= 0; i--) {
     const candidate = candidates[i];
     if (candidate === undefined) continue;
@@ -11,104 +11,80 @@ export function parseReviewOutput(output: string): ReviewResult | undefined {
   return undefined;
 }
 
-const MAX_VISIT_DEPTH = 8;
-const FENCED_BLOCK_PATTERN = /```(?:[A-Za-z0-9_+-]+)?\s*\n([\s\S]*?)\n```/g;
-
 function collectReviewCandidates(output: string): string[] {
+  if (output.length === 0) {
+    return [];
+  }
+
+  const wholeObject = parseJsonObjectLine(output);
+  if (wholeObject !== undefined) {
+    return [output, ...extractDocumentedEnvelopeCandidates(wholeObject)];
+  }
+
+  const lines = output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  if (lines.length === 1) {
+    return candidatesFromJsonLine(lines[0] ?? "");
+  }
+
+  const parsedLines: Array<{ line: string; parsed: Record<string, unknown> }> = [];
+  let sawNonJsonLine = false;
+  for (const line of lines) {
+    const parsed = parseJsonObjectLine(line);
+    if (parsed === undefined) {
+      sawNonJsonLine = true;
+      continue;
+    }
+    parsedLines.push({ line, parsed });
+  }
+  if (parsedLines.length === 0) return [];
+
   const candidates: string[] = [];
-  visit(output, 0, candidates);
+  for (const { line, parsed } of parsedLines) {
+    if (!sawNonJsonLine) {
+      candidates.push(line);
+    }
+
+    candidates.push(...extractDocumentedEnvelopeCandidates(parsed));
+  }
   return candidates;
 }
 
-function visit(text: string, depth: number, out: string[]): void {
-  if (depth > MAX_VISIT_DEPTH) return;
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return;
-
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    out.push(trimmed);
-    // Whole-output object may itself be an envelope (e.g., Gemini's
-    // `{ response: "<stringified review JSON>", ... }`). Unwrap known
-    // envelope text fields and recurse so the caller still sees the
-    // inner review candidate.
-    let parsedWhole: unknown;
-    try {
-      parsedWhole = JSON.parse(trimmed);
-    } catch {
-      parsedWhole = undefined;
-    }
-    if (parsedWhole !== undefined) {
-      for (const inner of extractEnvelopeText(parsedWhole)) {
-        visit(inner, depth + 1, out);
-      }
-    }
-  }
-
-  for (const match of text.matchAll(FENCED_BLOCK_PATTERN)) {
-    const inner = match[1]?.trim();
-    if (inner && inner.startsWith("{") && inner.endsWith("}")) {
-      out.push(inner);
-    }
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    const substring = trimmed.slice(firstBrace, lastBrace + 1);
-    if (substring !== trimmed) out.push(substring);
-  }
-
-  for (const line of text.split("\n")) {
-    const trimmedLine = line.trim();
-    if (!trimmedLine.startsWith("{") || !trimmedLine.endsWith("}")) continue;
-    out.push(trimmedLine);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmedLine);
-    } catch {
-      continue;
-    }
-    for (const inner of extractEnvelopeText(parsed)) {
-      visit(inner, depth + 1, out);
-    }
-  }
+function candidatesFromJsonLine(line: string): string[] {
+  const parsed = parseJsonObjectLine(line);
+  if (parsed === undefined) return [];
+  return [line, ...extractDocumentedEnvelopeCandidates(parsed)];
 }
 
-function extractEnvelopeText(value: unknown): string[] {
+function parseJsonObjectLine(line: string): Record<string, unknown> | undefined {
+  if (!line.startsWith("{") || !line.endsWith("}")) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  return parsed as Record<string, unknown>;
+}
+
+function extractDocumentedEnvelopeCandidates(value: Record<string, unknown>): string[] {
   const out: string[] = [];
-  if (!value || typeof value !== "object") return out;
   const obj = value as Record<string, unknown>;
 
   // Codex exec --json stream: { type:"item.completed", item:{ type:"agent_message", text:"..." } }
-  const item = obj.item;
-  if (item && typeof item === "object") {
-    const text = (item as Record<string, unknown>).text;
-    if (typeof text === "string") out.push(text);
-  }
-
-  // Claude --output-format stream-json terminal line: { type:"result", result:"..." }
-  if (typeof obj.result === "string") {
-    out.push(obj.result);
-  }
-
-  // Claude --output-format stream-json assistant line:
-  // { type:"assistant", message:{ content:[{ type:"text", text:"..." }, ...] } }
-  const message = obj.message;
-  if (message && typeof message === "object") {
-    const content = (message as Record<string, unknown>).content;
-    if (Array.isArray(content)) {
-      for (const entry of content) {
-        if (entry && typeof entry === "object") {
-          const text = (entry as Record<string, unknown>).text;
-          if (typeof text === "string") out.push(text);
-        }
-      }
+  if (obj.type === "item.completed") {
+    const item = obj.item;
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const itemObj = item as Record<string, unknown>;
+      const text = itemObj.text;
+      if (itemObj.type === "agent_message" && typeof text === "string") out.push(text.trim());
     }
   }
 
-  // Generic fallback for single-object envelopes that carry { text: "..." }.
-  if (typeof obj.text === "string") {
-    out.push(obj.text);
+  // Claude --output-format stream-json terminal line: { type:"result", result:"..." }
+  if (obj.type === "result") {
+    const text = obj.result;
+    if (typeof text === "string") out.push(text);
   }
 
   return out;

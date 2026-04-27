@@ -32,6 +32,11 @@ package and type system.
 
 Workflow behavior belongs in TypeScript Temporal workflow code.
 
+Tychonic core ships **zero first-party workflows**. The host package contains
+no built-in workflow modules. Workflows are user-supplied bundles installed via
+`tychonic workflows install`. Reference example bundles live under
+`examples/workflows/` and are explicitly opt-in installs, not host defaults.
+
 Configuration provides named activity instances and named policies for existing
 workflows. It does not define workflow graphs, ordering, branching, fan-out,
 joins, or loops.
@@ -53,31 +58,93 @@ similar) must stay optional; omission propagates to flag omission in the
 generated command.
 
 Configuration has one source per workflow: the installed bundle's
-`config.yaml` (see SPEC §Configuration Model).
+`defaultProfile` export from `workflow.mjs` (see SPEC §Configuration Model).
 
 A `--config <file>` override or a Temporal signal payload replaces the
-bundle's `config.yaml` as a single whole object for that one invocation. No
-deep merge, no array merge, no implicit inheritance, no presets that silently
-fill fields.
+bundle's `defaultProfile` as a single whole object for that one invocation.
+No deep merge, no array merge, no implicit inheritance, no presets that
+silently fill fields.
 
 Workflow behavior is TypeScript code. Configuration never defines workflow
-graphs, branching, candidate retry, or type-based orchestration.
+graphs, branching, retry, or type-based orchestration.
 Workflows reference activities by name and call each activity explicitly.
 
 ## Agent Principle
 
-Built-in worker agents must preserve resumability when the underlying CLI
-exposes a usable session key.
+Tychonic ships **built-in adapters for the four supported agent CLIs**:
+`claude`, `codex`, `gemini`, `kiro`. The host owns command synthesis, session
+resume where the adapter supports same-session resume, agent-specific flags,
+and session-id handling for these four. Users select an adapter by setting
+`agent: "<name>"` in workflow input — no need to hand-write the underlying CLI
+command, no need to know the agent's resume flag or session-id encoding.
 
-Agent-specific command details belong behind adapter boundaries and typed
-settings. Shared workflow code should depend on common activity contracts, not
-on provider-specific command strings.
+The `command` field is an **escape hatch for non-default scenarios** — a
+custom CLI not in the four-adapter set, an unusual flag combination, or a
+test stub. The default code path for ordinary users is the agent label,
+not a hand-written command.
+
+Reviewer command selection is part of the review state contract. Per-run task
+input must not create a second command-selection channel; task input describes
+the work, and state config describes the execution environment. If a run needs
+a different reviewer command, express it through the review state's config block
+or through a whole-profile `--config` replacement for that run.
+
+Built-in adapters preserve resumability — the host carries the worker
+session key forward across resumes. Adapter-specific command details stay
+behind adapter boundaries; shared workflow code depends on common activity
+contracts, not on provider-specific command strings.
+
+`gemini` is the exception for built-in automatic resume: its resume surface is
+not a stable session id. `kiro-cli` supports built-in worker resume only through
+the adapter's same-process `/chat save` capture path: the fresh run must export
+its own `conversation_id`, and Tychonic must not infer identity from
+`kiro-cli chat --list-sessions` before/after diffs.
+
+Retry and multi-attempt behavior belong in workflow code with explicit state
+NAMEs. The host must not model attempts as an ordered data list of agents or
+commands that it advances through implicitly, because that hides orchestration
+inside configuration and violates the workflow/configuration boundary.
+If a workflow needs multiple attempts, the workflow code must call explicit
+states by NAME and expose the behavior as that workflow's own contract.
 
 Permissions must match the role and execution boundary: coding work needs enough
 permission to edit and test inside an isolated worktree, while review work
 should stay constrained.
 
 Structured reviewers must emit the documented review contract.
+
+## Spec Authority Principle
+
+`SPEC.md` is the user-controlled product contract. Every line of SPEC reflects
+a decision the user has explicitly made. Builder agents may sync SPEC prose to
+match user-approved contract changes, but **agents must not introduce new
+contracts, design rules, or policy statements into SPEC without an explicit
+user decision for that specific contract**. "The user authorized this larger
+refactor" is not authorization for individual SPEC clauses. When in doubt,
+draft the change, surface it for user approval, and only then commit.
+
+The same rule binds the rest of the source-of-truth surface: AGENTS.md,
+SKILL.md, workflow-module-contract.md, and any bundle README that documents
+authoritative contract.
+
+## Usability Principle
+
+A capability that the user cannot easily reach is a liability, not a feature.
+Each user-facing input field, CLI flag, signal name, or recovery command must
+fall into exactly one of:
+
+- **Required** — workflow / command cannot run without it.
+- **Optional with sensible default** — user may omit; the system supplies a
+  reasonable value.
+- **Advanced** — power-user knob; documented separately from the main surface.
+
+Fields that are pure logging tags, runtime-ignored placeholders, or duplicates
+of existing knobs are dead surface and must be removed, not tiered.
+
+The author / user split is part of usability: workflow authors own
+`defaultProfile` and the workflow contract; users own per-run input that is
+specific to their task. Users must not be required to re-state values the
+author already pinned.
 
 ## Public Surface Principle
 
@@ -163,17 +230,17 @@ having a slightly different presentation.
 State the user-facing contract first: inputs, outputs, invariants, error
 modes, and layer semantics. The implementation exists to satisfy that
 contract. When the contract changes, update the documented contract (SPEC,
-AGENTS, README, guardrails) before changing code, and commit the contract
-change separately when practical.
+AGENTS, GUARDRAILS, README, bundle docs) before changing code, and commit the
+contract change separately when practical.
 
 ### 9. Replace, do not merge, across sources.
 
 When a CLI `--config <file>` override or Temporal signal payload replaces
-a bundle's `config.yaml` for a single invocation, the override replaces
+a bundle's `defaultProfile` for a single invocation, the override replaces
 each top-level block as a whole. Field-level merge, array concatenation,
 form transitions, and special-case "mutual exclusion" handling are all
-banned. A reader must be able to open one file and know what that file
-does without running a merge tool.
+banned. A reader must be able to open one source and know what that
+source does without running a merge tool.
 
 ### 10. Leave obvious escape hatches for mistakes.
 
@@ -273,7 +340,7 @@ mechanisms that already exist in the ecosystem:
 - `package.json` `exports`, `main`, `bin`, `type`
 - `npm install` and the resulting `node_modules` layout
 - OS `PATH`, documented environment variables, launchd plists
-- `.gitignore` / `.jjignore` standard globs
+- `.gitignore` standard globs
 - Temporal SDK APIs, webpack resolver extension points documented by the SDK
 
 It is a design error to make a validator, inspector, or build step "imitate" a
@@ -309,3 +376,102 @@ Concrete rules:
 If the standard mechanism cannot express the requirement, that is feedback
 against the design, not a license for a staging workaround. Update the
 contract (principles 6, 8, 13) or record the limitation (principle 10).
+
+### 17. OS permission systems are not the product's business.
+
+OS-level permission systems — macOS notification/camera/microphone/
+accessibility/full-disk authorization, Linux `polkit`, Windows UAC — belong
+to the OS, not to Tychonic. The product's job ends at three things:
+
+- read the current permission state through the OS's documented API
+- show that state to the user
+- reflect whatever decision the user makes inside the OS's own settings UI
+
+Everything beyond that is out of scope and is banned. Do not attempt:
+
+- direct manipulation of permission stores: `tccutil reset`/`insert`/`delete`,
+  reading or writing `~/Library/Preferences/com.apple.ncprefs.plist`, the TCC
+  database under `/Library/Application Support/com.apple.TCC/`, or any
+  equivalent on other OSes
+- forcing permission/notification/Focus state via `defaults write` or similar
+- separate diagnostic tasks that "manually verify" how a system permission
+  dialog behaves, or scripts that try to reproduce/instrument that dialog
+- AppleScript / `osascript` / accessibility automation used to dismiss,
+  approve, or impersonate a permission prompt
+- code that re-requests a permission the user has already denied, by
+  rotating bundle identifiers, swizzling main bundle metadata, or any
+  similar trick
+
+When the product detects that a permission is denied or not yet granted,
+the only correct next action is to **point the user at the OS's standard
+settings page** (for macOS notifications: `open
+"x-apple.systempreferences:com.apple.preference.notifications"`) and let
+them decide. Anything else is wasted work — every OS update breaks it,
+and it fights the user-consent model the OS is built around.
+
+The same boundary applies during diagnosis. When notifications, camera
+access, or any other permission-gated path doesn't work, do not start
+grepping permission plists, parsing TCC tables, or streaming OS logs to
+infer hidden state. The standard OS API call (e.g.
+`UNUserNotificationCenter.getNotificationSettings`) is the only supported
+read path, and its answer is the only evidence the product is allowed to
+act on.
+
+### 18. State NAME is workflow-only. Activities, helpers, and schemas stay NAME-agnostic and TYPE-blind.
+
+State NAME is a workflow-defined contract. The workflow function that
+owns a fix loop knows its own state NAMEs because it wrote them, and may
+pass those NAME literals to its activity call sites. Every other layer
+is NAME-agnostic and TYPE-blind.
+
+- **Activity source code never hardcodes a state NAME.** Activities
+  accept NAME as a parameter and run for any state of the matching
+  TYPE — `runReviewActivity` runs for any `type: review` state
+  regardless of NAME.
+- **Shared helpers and utilities that read a `WorkflowRunRecord`** take
+  NAMEs as parameters from the calling workflow, never as literals in
+  source. A helper that summarises attempts or filters findings
+  receives the relevant state NAMEs from its caller.
+- **Schema layers** (`tychonic.review.v1`, `tychonic.run.v1`, config
+  validators) carry no NAME-specific fields and impose no NAME-specific
+  shape.
+- **Workflow code never branches, retries, or aggregates by TYPE.**
+  SPEC: *"A workflow never branches, retries, or aggregates based on
+  TYPE."* TYPE exists only for schema validation and activity binding.
+  Runtime decisions go through NAME literals the workflow itself
+  defined, not through `state.type === "review"` style comparisons.
+
+The exception is the workflow function that owns the loop. A workflow
+defining a fix loop with NAMEs `work` / `verify` / `review` /
+`auto_continue` may use those literals because they are its own
+contract with its own config. The literal must not leak past the
+workflow function — into an activity, a shared helper, or a schema —
+without being passed as a parameter.
+
+This is the rule that lets a workflow rename its `review` state to
+`ai_judgement`, or run three review states with three different NAMEs,
+without changing any activity or shared helper.
+
+### 19. Runtime data and execution selection are different contracts.
+
+Do not hide different categories of input inside a generic bucket such as
+`extras`, `options`, `params`, `data`, or another name that says nothing
+about the contract. A name that can hold anything communicates nothing; it
+lets unrelated concepts accumulate until the call site becomes a second
+configuration channel.
+
+Activity call inputs carry runtime data produced by the workflow at that
+moment: prompt text, worktree path, session id, verification command evidence,
+or similarly concrete values. They do not select which agent or command runs.
+
+Execution selection belongs to the state config block. If a state runs a
+built-in agent, the state block declares `agent`. If it runs a literal command,
+the state block declares `command`. Workflow call sites must not reopen that
+choice through alternate fields, wrapper objects, fallbacks, or override
+channels.
+
+When two values differ by category, split them at the type and name level.
+Do not rely on prose comments to explain that one property inside a bucket is
+"runtime data" while another property in the same bucket is "configuration."
+That confusion is the design failure. Fix the shape so the distinction is
+forced at every call site.

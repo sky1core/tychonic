@@ -4,11 +4,19 @@ import {
   defineSignal,
   setHandler
 } from "@temporalio/workflow";
-import type {
-  PolicyInteraction
-} from "../catalog/types.js";
 import { INTERACTION_DEFAULT_MAX_REJECT_ITERATIONS } from "./interactionDefaults.js";
 import type { DecisionInboxItemRecord, WorkflowRunRecord } from "../domain/types.js";
+
+/**
+ * Workflow-runtime shape of a `policies.interaction` block as consumed by
+ * this hook. The host config schema treats `policies` as opaque; each
+ * workflow validates the keys it reads at workflow start. This local
+ * type captures the fields the hook itself depends on.
+ */
+export interface PolicyInteraction {
+  mode: "auto" | "interactive";
+  max_reject_iterations?: number;
+}
 import {
   interactionApproveStateSignalName,
   interactionModifyStateSignalName,

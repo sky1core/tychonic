@@ -20,10 +20,9 @@ describe("runReviewActivity", () => {
       cwd,
       profile: profileWith({
         command:
-          "node -e \"console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\"",
-        agent: "test-reviewer"
+          "node -e \"console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
       }),
-      extras: { prompt: "please review" }
+      prompt: "please review"
     });
 
     expect(run).toEqual(runBefore);
@@ -52,10 +51,9 @@ describe("runReviewActivity", () => {
       cwd,
       profile: profileWith({
         command:
-          "node -e \"console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'fail',summary:'needs fix',findings:[{title:'x',severity:'high',detail:'d',target:'src/a.ts'}]}))\"",
-        agent: "test-reviewer"
+          "node -e \"console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'fail',summary:'needs fix',findings:[{title:'x',severity:'high',detail:'d',target:'src/a.ts'}]}))\""
       }),
-      extras: { prompt: "please review" }
+      prompt: "please review"
     });
 
     expect(result.reviewOutcome?.kind).toBe("parsed");
@@ -74,10 +72,9 @@ describe("runReviewActivity", () => {
       run,
       cwd,
       profile: profileWith({
-        command: "node -e \"console.log('not a tychonic.review.v1 payload')\"",
-        agent: "test-reviewer"
+        command: "node -e \"console.log('not a tychonic.review.v1 payload')\""
       }),
-      extras: { prompt: "please review" }
+      prompt: "please review"
     });
 
     expect(result.reviewOutcome?.kind).toBe("unparseable");
@@ -99,10 +96,9 @@ describe("runReviewActivity", () => {
       run,
       cwd,
       profile: profileWith({
-        command: "node -e \"process.exit(9)\"",
-        agent: "broken-reviewer"
+        command: "node -e \"process.exit(9)\""
       }),
-      extras: { prompt: "please review" }
+      prompt: "please review"
     });
 
     expect(result.reviewOutcome?.kind).toBe("command_failed");
@@ -120,14 +116,14 @@ describe("runReviewActivity", () => {
       run,
       cwd,
       profile: { version: "tychonic.config.v1" },
-      extras: { prompt: "please review" }
+      prompt: "please review"
     });
 
     expect(result.reviewOutcome?.kind).toBe("skipped");
     expect(result.delta.states?.[0]?.status).toBe("skipped");
   });
 
-  it("throws ApplicationFailure when extras.prompt is empty", async () => {
+  it("throws ApplicationFailure when prompt is empty", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-noprompt-"));
     const run = baseRun("run_review_noprompt");
 
@@ -137,15 +133,14 @@ describe("runReviewActivity", () => {
         run,
         cwd,
         profile: profileWith({
-          command: "node -e \"console.log('ignored')\"",
-          agent: "test-reviewer"
+          command: "node -e \"console.log('ignored')\""
         }),
-        extras: { prompt: "" }
+        prompt: ""
       })
-    ).rejects.toThrow(/requires extras\.prompt/);
+    ).rejects.toThrow(/requires prompt/);
   });
 
-  it("runs in extras.worktreePath while keeping review artifacts under the project root", async () => {
+  it("runs in worktreePath while keeping review artifacts under the project root", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-root-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-review-worktree-"));
     const run = baseRun("run_review_worktree");
@@ -156,10 +151,10 @@ describe("runReviewActivity", () => {
       cwd,
       profile: profileWith({
         command:
-          "node -e \"require('node:fs').writeFileSync('review-cwd.txt', process.cwd()); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\"",
-        agent: "test-reviewer"
+          "node -e \"require('node:fs').writeFileSync('review-cwd.txt', process.cwd()); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
       }),
-      extras: { prompt: "please review", worktreePath }
+      prompt: "please review",
+      worktreePath
     });
     const canonicalWorktreePath = await realpath(worktreePath);
 
@@ -175,13 +170,12 @@ describe("runReviewActivity", () => {
   });
 });
 
-function profileWith(block: { command: string; agent: string }): TychonicConfig {
+function profileWith(block: { command: string }): TychonicConfig {
   return {
     version: "tychonic.config.v1",
     states: {
       [ACTIVITY_NAME]: {
         type: "review",
-        agent: block.agent,
         command: block.command
       }
     }

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -7,11 +7,6 @@ import { assertLoopbackHost } from "../net/loopback.js";
 import { getActiveInstance } from "../runtime/instance.js";
 import { buildExecutablePathValue, findExecutable, TYCHONIC_AGENT_PATH_ENV } from "../system/executables.js";
 import { normalizeTemporalConfig, temporalStartArgs, tychonicRuntimeDirs } from "../temporal/manager.js";
-import {
-  installRuntimeWorkflowModule,
-  packagedWorkflowBundleRoot,
-  resolveTychonicPackageRootFromCli
-} from "../temporal/workflowModules.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,11 +29,10 @@ export const serviceNames = ["temporal", "worker", "web"] as const;
 export type TychonicServiceName = (typeof serviceNames)[number];
 
 export interface LaunchdServiceInstallOptions {
-  projectCwd: string;
+  projectDir: string;
   webHost?: string;
   webPort?: number;
-  frontendPort?: number;
-  uiPort?: number;
+  temporalPort?: number;
   nodePath?: string;
   cliPath?: string;
   temporalCliPath?: string;
@@ -52,7 +46,7 @@ export interface LaunchdServiceInstallOptions {
 export interface LaunchdServiceInstallResult {
   stateDir: string;
   logDir: string;
-  projectCwd: string;
+  projectDir: string;
   cliPath: string;
   nodePath: string;
   temporalCliPath: string;
@@ -109,37 +103,23 @@ export async function installLaunchdServices(
   const nodePath = await resolveExecutable(options.nodePath ?? process.execPath, "node");
   const cliPath = await resolveCliPath(options.cliPath ?? process.argv[1], options.allowSourceCli === true);
   const temporalCliPath = await resolveExecutable(options.temporalCliPath, "temporal");
-  const projectCwd = resolve(options.projectCwd);
+  const projectDir = resolve(options.projectDir);
 
   await mkdir(launchAgentDir, { recursive: true });
   await mkdir(stateDir, { recursive: true });
   await mkdir(logDir, { recursive: true });
-  const packageRoot = await resolveTychonicPackageRootFromCli(cliPath);
-  const bundleRoot = packagedWorkflowBundleRoot(packageRoot);
-  const bundleEntries = await readdir(bundleRoot, { withFileTypes: true });
-  const bundleDirs = bundleEntries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(bundleRoot, entry.name))
-    .sort();
-  if (bundleDirs.length === 0) {
-    throw new Error(`no packaged workflow bundles found under ${bundleRoot}`);
-  }
-  for (const bundleDir of bundleDirs) {
-    await installRuntimeWorkflowModule({ sourcePath: bundleDir });
-  }
 
   const definitions = serviceDefinitions({
     stateDir,
     logDir,
-    projectCwd,
+    projectDir,
     nodePath,
     cliPath,
     temporalCliPath,
     ...(options.workerShutdownGraceTime ? { workerShutdownGraceTime: options.workerShutdownGraceTime } : {}),
     webHost: options.webHost ?? "127.0.0.1",
     webPort: options.webPort ?? 8765,
-    ...(options.frontendPort ? { frontendPort: options.frontendPort } : {}),
-    ...(options.uiPort ? { uiPort: options.uiPort } : {}),
+    ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {}),
     allowNetworkBind: options.allowNetworkBind === true
   });
   const plists = {} as Record<TychonicServiceName, string>;
@@ -158,7 +138,7 @@ export async function installLaunchdServices(
     }
   }
 
-  return { stateDir, logDir, projectCwd, cliPath, nodePath, temporalCliPath, plists, loaded: options.load !== false };
+  return { stateDir, logDir, projectDir, cliPath, nodePath, temporalCliPath, plists, loaded: options.load !== false };
 }
 
 export async function statusLaunchdServices(): Promise<LaunchdServiceStatus[]> {
@@ -270,22 +250,20 @@ interface ServiceDefinition {
 interface ServiceDefinitionInput {
   stateDir: string;
   logDir: string;
-  projectCwd: string;
+  projectDir: string;
   nodePath: string;
   cliPath: string;
   temporalCliPath: string;
   workerShutdownGraceTime?: string;
   webHost: string;
   webPort: number;
-  frontendPort?: number;
-  uiPort?: number;
+  temporalPort?: number;
   allowNetworkBind: boolean;
 }
 
 function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServiceName, ServiceDefinition> {
   const temporalConfig = normalizeTemporalConfig({
-    ...(input.frontendPort ? { frontendPort: input.frontendPort } : {}),
-    ...(input.uiPort ? { uiPort: input.uiPort } : {})
+    ...(input.temporalPort !== undefined ? { apiPort: input.temporalPort } : {})
   });
   const temporalArgs = temporalStartArgs(temporalConfig);
   const environmentVariables = serviceEnvironmentVariables();
@@ -305,10 +283,9 @@ function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServi
         input.cliPath,
         "temporal",
         "worker",
-        "--mode",
+        "--temporal-mode",
         "managed-local",
-        ...(input.frontendPort ? ["--frontend-port", String(input.frontendPort)] : []),
-        ...(input.uiPort ? ["--ui-port", String(input.uiPort)] : []),
+        ...(input.temporalPort !== undefined ? ["--temporal-port", String(input.temporalPort)] : []),
         ...(input.workerShutdownGraceTime ? ["--shutdown-grace-time", input.workerShutdownGraceTime] : [])
       ],
       workingDirectory: input.stateDir,
@@ -322,17 +299,16 @@ function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServi
         input.nodePath,
         input.cliPath,
         "web",
-        "--mode",
+        "--temporal-mode",
         "managed-local",
-        ...(input.frontendPort ? ["--frontend-port", String(input.frontendPort)] : []),
-        ...(input.uiPort ? ["--ui-port", String(input.uiPort)] : []),
+        ...(input.temporalPort !== undefined ? ["--temporal-port", String(input.temporalPort)] : []),
         "--host",
         input.webHost,
         "--port",
         String(input.webPort),
         ...(input.allowNetworkBind ? ["--allow-network-bind"] : []),
-        "--cwd",
-        input.projectCwd
+        "--project-dir",
+        input.projectDir
       ],
       workingDirectory: input.stateDir,
       stdoutPath: join(input.logDir, "web.out.log"),

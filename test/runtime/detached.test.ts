@@ -12,14 +12,16 @@
 
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   spawnDetachedRuntime,
   readPidFile,
-  isProcessAlive
+  isProcessAlive,
+  writePidFile,
+  removePidFileIfOwned
 } from "../../src/runtime/detached.js";
 
 const execFileAsync = promisify(execFile);
@@ -28,13 +30,19 @@ async function makeTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "tychonic-detached-"));
 }
 
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
+async function readUntilContains(file: string, expected: string): Promise<string> {
+  const deadline = Date.now() + 2000;
+  let lastContent = "";
+  while (Date.now() < deadline) {
+    try {
+      lastContent = await readFile(file, "utf8");
+      if (lastContent.includes(expected)) return lastContent;
+    } catch {
+      // The detached child may not have opened the log file yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
+  return lastContent;
 }
 
 describe("spawnDetachedRuntime", () => {
@@ -68,11 +76,7 @@ describe("spawnDetachedRuntime", () => {
     const storedPid = await readPidFile(pidFile);
     expect(storedPid).toBe(result.pid);
 
-    // Give the child a moment to finish so stdout is fully flushed.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    expect(await pathExists(logFile)).toBe(true);
-    const logContent = await readFile(logFile, "utf8");
+    const logContent = await readUntilContains(logFile, "hello from detached child");
     expect(logContent).toContain("hello from detached child");
   });
 
@@ -96,8 +100,7 @@ describe("spawnDetachedRuntime", () => {
       pidFile
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    const logContent = await readFile(logFile, "utf8");
+    const logContent = await readUntilContains(logFile, "run-2");
     expect(logContent).toContain("previous-session");
     expect(logContent).toContain("run-2");
   });
@@ -121,6 +124,22 @@ describe("readPidFile", () => {
     const file = join(dir, "pid");
     await writeFile(file, "12345\n", "utf8");
     expect(await readPidFile(file)).toBe(12345);
+  });
+});
+
+describe("writePidFile/removePidFileIfOwned", () => {
+  it("writes a pid file and removes it only when the stored pid matches", async () => {
+    const dir = await makeTempDir();
+    const file = join(dir, "runtime.pid");
+
+    await writePidFile(file, 123);
+    expect(await readPidFile(file)).toBe(123);
+
+    expect(await removePidFileIfOwned(file, 456)).toBe(false);
+    expect(await readPidFile(file)).toBe(123);
+
+    expect(await removePidFileIfOwned(file, 123)).toBe(true);
+    expect(await readPidFile(file)).toBe(0);
   });
 });
 

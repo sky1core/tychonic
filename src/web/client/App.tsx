@@ -8,11 +8,10 @@ import {
   RadioTower,
   RefreshCw,
   Search,
-  Send,
   UserRoundCog
 } from "lucide-react";
-import type { FormEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type WorkflowSummary = {
   workflowId: string;
@@ -49,8 +48,7 @@ type SessionItem = {
   role: string;
   status: string;
   cwd?: string;
-  external_session_id?: string;
-  resume_command?: string;
+  resumable?: boolean;
 };
 
 type ArtifactItem = {
@@ -61,7 +59,7 @@ type ArtifactItem = {
 
 type AttemptItem = {
   id: string;
-  type: string;
+  kind: string;
   status: string;
   live_output_path?: string;
 };
@@ -95,8 +93,6 @@ type WorkflowResponse = {
   };
 };
 
-const defaultVerifyCommand = "npm run typecheck && npm test && npm run build";
-
 export function App() {
   const [catalog, setCatalog] = useState<CatalogResponse>({ ok: false });
   const [runs, setRuns] = useState<WorkflowSummary[]>([]);
@@ -110,7 +106,6 @@ export function App() {
   const [preview, setPreview] = useState("Choose an artifact or live log.");
   const [events, setEvents] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const inboxFormRef = useRef<HTMLFormElement>(null);
 
   const steps = workflow?.result?.run?.steps ?? [];
   const openInbox = inbox.filter((item) => item.status === "open");
@@ -215,98 +210,6 @@ export function App() {
         throw new Error(body);
       }
       setPreview(body ? body : "(empty)");
-    } catch (error) {
-      log(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function executeInbox(itemId: string) {
-    try {
-      const form = inboxFormRef.current;
-      const values = form ? new FormData(form) : new FormData();
-      const payload: Record<string, unknown> = {
-        workflow_id: selectedWorkflowId,
-        inbox_item_id: itemId,
-        verify_command: formString(values, "verify_command", defaultVerifyCommand)
-      };
-      addString(payload, values, "command");
-      addString(payload, values, "agent");
-      addString(payload, values, "goal");
-      addString(payload, values, "resume_command");
-      addString(payload, values, "review_command");
-      addString(payload, values, "review_agent");
-      addNumber(payload, values, "command_timeout_ms");
-      addJSON(payload, values, "worker_candidates");
-      addJSON(payload, values, "review_candidates");
-
-      const body = await requestJSON("/inbox/execute", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      log("Sent inbox continuation signal", body);
-    } catch (error) {
-      log(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function dismissInbox(itemId: string) {
-    try {
-      const form = inboxFormRef.current;
-      const values = form ? new FormData(form) : new FormData();
-      const body = await requestJSON("/inbox/dismiss", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          workflow_id: selectedWorkflowId,
-          inbox_item_id: itemId,
-          reason: formString(values, "dismiss_reason")
-        })
-      });
-      log("Sent inbox dismiss signal", body);
-    } catch (error) {
-      log(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function registerSession(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      const values = new FormData(event.currentTarget);
-      const body = await requestJSON("/sessions/register", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          workflow_id: selectedWorkflowId,
-          id: formString(values, "session_id"),
-          agent: formString(values, "agent", "codex"),
-          role: "worker",
-          cwd: formString(values, "session_cwd"),
-          status: "running",
-          resume_command: formString(values, "resume_command")
-        })
-      });
-      log("Sent register signal", body);
-    } catch (error) {
-      log(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function resumeSession(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      const values = new FormData(event.currentTarget);
-      const body = await requestJSON("/resume", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          workflow_id: selectedWorkflowId,
-          session_id: formString(values, "session_id"),
-          prompt: formString(values, "prompt"),
-          verify_command: formString(values, "verify_command", defaultVerifyCommand)
-        })
-      });
-      log("Sent resume signal", body);
     } catch (error) {
       log(error instanceof Error ? error.message : String(error));
     }
@@ -460,33 +363,10 @@ export function App() {
                     <p>{item.detail ?? item.action?.reason ?? "No detail recorded."}</p>
                     <small>{item.status} · {item.action?.kind ?? "triage"}</small>
                   </div>
-                  <div className="button-row">
-                    <button disabled={!selectedWorkflowId || item.status !== "open"} onClick={() => void executeInbox(item.id)} type="button">
-                      <Send size={15} /> Continue
-                    </button>
-                    <button className="quiet-button" disabled={!selectedWorkflowId || item.status !== "open"} onClick={() => void dismissInbox(item.id)} type="button">
-                      Dismiss
-                    </button>
-                  </div>
+                  <StatusBadge status={item.status} />
                 </article>
               ))}
             </div>
-            <details className="control-drawer" open>
-              <summary>Worker and review controls</summary>
-              <form className="control-grid" ref={inboxFormRef}>
-                <label>Verify command<input defaultValue={defaultVerifyCommand} name="verify_command" /></label>
-                <label>Dismiss reason<input name="dismiss_reason" placeholder="Why this item does not need work" /></label>
-                <label>Worker command<input name="command" placeholder="Custom worker command" /></label>
-                <label>Worker agent<input name="agent" placeholder="codex, claude, custom" /></label>
-                <label>Worker goal<textarea name="goal" placeholder="Instruction for the next work attempt" /></label>
-                <label>Resume command<input name="resume_command" placeholder="Resume command" /></label>
-                <label>Worker candidates<textarea name="worker_candidates" placeholder='[{"agent":"codex","command":"codex exec --json"}]' /></label>
-                <label>Review command<input name="review_command" placeholder="Review command" /></label>
-                <label>Review agent<input name="review_agent" placeholder="Review agent" /></label>
-                <label>Review candidates<textarea name="review_candidates" placeholder='[{"agent":"codex","command":"codex exec --json"}]' /></label>
-                <label>Command timeout ms<input name="command_timeout_ms" placeholder="Command timeout ms" type="number" /></label>
-              </form>
-            </details>
           </section>
 
           <section className="inspector-section">
@@ -519,7 +399,7 @@ export function App() {
                     type="button"
                   >
                     <Activity size={15} />
-                    <span>{attempt.type} · {attempt.status}</span>
+                    <span>{attempt.kind} · {attempt.status}</span>
                   </button>
                 ))}
               </div>
@@ -540,31 +420,13 @@ export function App() {
               {sessions.map((session) => (
                 <article className="session-row" key={session.id}>
                   <strong>{session.id}</strong>
-                  <span>{session.agent} · {session.role} · {session.status}</span>
-                  {session.external_session_id ? <code>{session.external_session_id}</code> : null}
+                  <span>
+                    {session.agent} · {session.role} · {session.status}
+                    {session.resumable ? " · resumable" : ""}
+                  </span>
                 </article>
               ))}
             </div>
-            <details className="control-drawer">
-              <summary>Manual session signals</summary>
-              <div className="signal-forms">
-                <form onSubmit={(event) => void registerSession(event)}>
-                  <h4>Register session</h4>
-                  <input name="session_id" placeholder="Session id" />
-                  <input defaultValue="codex" name="agent" placeholder="Agent" />
-                  <input name="session_cwd" placeholder="Session cwd" />
-                  <input name="resume_command" placeholder="Resume command" />
-                  <button disabled={!selectedWorkflowId} type="submit">Send register signal</button>
-                </form>
-                <form onSubmit={(event) => void resumeSession(event)}>
-                  <h4>Resume session</h4>
-                  <input name="session_id" placeholder="Session id" />
-                  <textarea name="prompt" placeholder="Prompt" />
-                  <input defaultValue={defaultVerifyCommand} name="verify_command" placeholder="Verify command" />
-                  <button disabled={!selectedWorkflowId} type="submit">Send resume signal</button>
-                </form>
-              </div>
-            </details>
           </section>
         </aside>
       </main>
@@ -635,7 +497,7 @@ function actionForRun({
   }
   if (openInbox.length > 0) {
     return {
-      body: `${openInbox.length} review item needs continue or dismiss.`,
+      body: `${openInbox.length} review item needs an operator decision through the workflow's documented signal path.`,
       icon: <Inbox size={18} />,
       title: "Review decision waiting",
       tone: "attention"
@@ -657,26 +519,6 @@ function actionForRun({
   };
 }
 
-function addString(payload: Record<string, unknown>, values: FormData, key: string) {
-  const value = formString(values, key);
-  if (value) payload[key] = value;
-}
-
-function addNumber(payload: Record<string, unknown>, values: FormData, key: string) {
-  const raw = formString(values, key);
-  if (raw) payload[key] = Number(raw);
-}
-
-function addJSON(payload: Record<string, unknown>, values: FormData, key: string) {
-  const raw = formString(values, key);
-  if (raw) payload[key] = JSON.parse(raw);
-}
-
-function formString(values: FormData, key: string, defaultValue = ""): string {
-  const value = String(values.get(key) ?? "").trim();
-  return value ? value : defaultValue;
-}
-
 function toneForStatus(status: string): "good" | "attention" | "danger" | "neutral" {
   const normalized = status.toLowerCase();
   if (["completed", "succeeded", "success"].includes(normalized)) {
@@ -685,7 +527,7 @@ function toneForStatus(status: string): "good" | "attention" | "danger" | "neutr
   if (["failed", "blocked", "timed_out", "canceled", "terminated"].includes(normalized)) {
     return "danger";
   }
-  if (["running", "retrying", "waiting_user"].includes(normalized)) {
+  if (["running", "waiting_user"].includes(normalized)) {
     return "attention";
   }
   return "neutral";

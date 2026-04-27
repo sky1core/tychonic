@@ -13,9 +13,20 @@ const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 describe("run workflow dispatch", () => {
   it("uses the generic run path without local shipped-workflow preflight", async () => {
     const fixture = await createRunDispatchFixture();
-    const input = JSON.stringify({ cwd: fixture.repo, goal: "connect through Temporal only" });
+    // The user supplies input.profile explicitly, which short-circuits the
+    // installed-bundle defaultProfile lookup and lets the run command go
+    // straight to the Temporal client. The connection attempt to the
+    // unreachable address must be the first observable failure.
+    const input = JSON.stringify({
+      cwd: fixture.repo,
+      goal: "connect through Temporal only",
+      profile: {
+        version: "tychonic.config.v1",
+        states: { verify: { type: "verify", command: "echo ok" } }
+      }
+    });
 
-    const failure = await runCliExpectFailure(["run", "customWorkflow", "--input", input, "--address", "127.0.0.1:1"], fixture.env);
+    const failure = await runCliExpectFailure(["run", "customWorkflow", "--input", input, "--temporal-address", "127.0.0.1:1"], fixture.env);
 
     expect(failure.stderr).toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
     expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build|self_repair_workflow/i);

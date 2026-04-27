@@ -5,9 +5,6 @@ import {
   signalInteractionApproveState,
   signalInteractionModifyState,
   signalInteractionRejectState,
-  signalSimpleWorkflowContinuation,
-  signalSimpleWorkflowRegisterSession,
-  signalSimpleWorkflowResumeSession,
   summarizeTemporalWorkflowDescription,
   summarizeTemporalWorkflowInfo
 } from "../src/temporal/client.js";
@@ -18,48 +15,6 @@ describe("Temporal workflow status summaries", () => {
     vi.resetModules();
     vi.doUnmock("@temporalio/client");
     vi.doUnmock("../src/temporal/workflowModules.js");
-  });
-
-  it("rejects inline secrets in simple_workflow signals before opening Temporal connection", async () => {
-    await expect(
-      signalSimpleWorkflowContinuation({
-        workflowId: "wf",
-        inboxItemId: "inbox_1",
-        command: "node worker.js",
-        verifyCommand: "env API_TOKEN=literal npm test"
-      })
-    ).rejects.toThrow(/inline secret/);
-
-    await expect(
-      signalSimpleWorkflowRegisterSession({
-        workflowId: "wf",
-        id: "session_1",
-        agent: "codex",
-        role: "worker",
-        cwd: "/repo",
-        resumeCommand: "tool --token literal",
-        startedAt: "2026-04-20T00:00:00.000Z"
-      })
-    ).rejects.toThrow(/inline secret/);
-
-    await expect(
-      signalSimpleWorkflowResumeSession({
-        workflowId: "wf",
-        sessionId: "session_1",
-        prompt: "continue",
-        verifyCommand: "npm test",
-        reviewCommand: "review --api-key literal"
-      })
-    ).rejects.toThrow(/inline secret/);
-
-    await expect(
-      signalSimpleWorkflowContinuation({
-        workflowId: "wf",
-        inboxItemId: "inbox_1",
-        verifyCommand: "npm test",
-        reviewCandidates: [{ agent: "reviewer", command: "review --json", resumeCommand: "review --resume" }]
-      })
-    ).rejects.toThrow(/review candidate reviewer must not set resumeCommand/);
   });
 
   it("summarizes workflow visibility info without repo-local state", () => {

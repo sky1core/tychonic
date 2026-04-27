@@ -132,8 +132,8 @@ describe("resolveInstanceRuntime — operational (instance unset)", () => {
         address: "127.0.0.1:7233",
         namespace: "default",
         taskQueue: "tychonic",
-        frontendPort: 7233,
-        uiPort: 8233
+        apiPort: 7233,
+        devUiPort: 8233
       },
       webPort: 8765,
       warnings: []
@@ -157,9 +157,9 @@ describe("resolveInstanceRuntime — operational (instance unset)", () => {
     expect(resolved.temporal.address).toBe("127.0.0.1:9999");
     expect(resolved.temporal.taskQueue).toBe("tychonic-custom");
     expect(resolved.webPort).toBe(9000);
-    // frontend/ui stayed on operational defaults.
-    expect(resolved.temporal.frontendPort).toBe(7233);
-    expect(resolved.temporal.uiPort).toBe(8233);
+    // api/devUi stayed on operational defaults.
+    expect(resolved.temporal.apiPort).toBe(7233);
+    expect(resolved.temporal.devUiPort).toBe(8233);
     expect(resolved.warnings).toEqual([]);
   });
 });
@@ -175,8 +175,8 @@ describe("resolveInstanceRuntime — instance set, no explicit", () => {
     expect(resolved.stateDir).toBe(`${DEFAULT_STATE}/instances/abq-patch`);
     expect(resolved.logDir).toBe(`${DEFAULT_LOG}/instances/abq-patch`);
     // Locked deterministic values from fnv1a32("abq-patch") mod 1000 = 706.
-    expect(resolved.temporal.frontendPort).toBe(17706);
-    expect(resolved.temporal.uiPort).toBe(17707);
+    expect(resolved.temporal.apiPort).toBe(17706);
+    expect(resolved.temporal.devUiPort).toBe(17707);
     expect(resolved.temporal.address).toBe("127.0.0.1:17706");
     expect(resolved.temporal.namespace).toBe("default");
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");
@@ -196,7 +196,7 @@ describe("resolveInstanceRuntime — instance set, no explicit", () => {
 });
 
 describe("resolveInstanceRuntime — field-level explicit override", () => {
-  it("lets --address beat instance-derived address but leaves other fields derived", () => {
+  it("lets --temporal-address beat instance-derived address but leaves other fields derived", () => {
     const resolved = resolveInstanceRuntime({
       instance: "abq-patch",
       defaultStateDir: DEFAULT_STATE,
@@ -204,15 +204,15 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
       explicit: { address: "127.0.0.1:9999" }
     });
     expect(resolved.temporal.address).toBe("127.0.0.1:9999");
-    // frontend/ui remain derived — explicit.address is a separate field.
-    expect(resolved.temporal.frontendPort).toBe(17706);
-    expect(resolved.temporal.uiPort).toBe(17707);
+    // api/devUi remain derived — explicit.address is a separate field.
+    expect(resolved.temporal.apiPort).toBe(17706);
+    expect(resolved.temporal.devUiPort).toBe(17707);
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");
     expect(resolved.stateDir).toBe(`${DEFAULT_STATE}/instances/abq-patch`);
     expect(resolved.warnings).toEqual([]);
   });
 
-  it("lets --task-queue beat the derived queue without affecting other fields", () => {
+  it("lets --temporal-task-queue beat the derived queue without affecting other fields", () => {
     const resolved = resolveInstanceRuntime({
       instance: "abq-patch",
       defaultStateDir: DEFAULT_STATE,
@@ -220,13 +220,13 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
       explicit: { taskQueue: "tychonic-custom" }
     });
     expect(resolved.temporal.taskQueue).toBe("tychonic-custom");
-    expect(resolved.temporal.frontendPort).toBe(17706);
+    expect(resolved.temporal.apiPort).toBe(17706);
     expect(resolved.temporal.address).toBe("127.0.0.1:17706");
     expect(resolved.stateDir).toBe(`${DEFAULT_STATE}/instances/abq-patch`);
     expect(resolved.warnings).toEqual([]);
   });
 
-  it("lets --namespace beat the Temporal namespace without touching anything else", () => {
+  it("lets --temporal-namespace beat the Temporal namespace without touching anything else", () => {
     const resolved = resolveInstanceRuntime({
       instance: "abq-patch",
       defaultStateDir: DEFAULT_STATE,
@@ -281,32 +281,32 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
     expect(resolved.warnings).toEqual([]);
   });
 
-  it("uses explicit frontendPort and computes uiPort as frontendPort + 1 when uiPort is omitted", () => {
+  it("uses explicit apiPort and computes devUiPort as apiPort + 1 when devUiPort is omitted", () => {
     const resolved = resolveInstanceRuntime({
       instance: "abq-patch",
       defaultStateDir: DEFAULT_STATE,
       defaultLogDir: DEFAULT_LOG,
-      explicit: { frontendPort: 19000 }
+      explicit: { apiPort: 19000 }
     });
-    expect(resolved.temporal.frontendPort).toBe(19000);
-    expect(resolved.temporal.uiPort).toBe(19001);
-    // Address defaults to 127.0.0.1:<explicit frontendPort> when address
-    // is omitted but frontendPort is explicit.
+    expect(resolved.temporal.apiPort).toBe(19000);
+    expect(resolved.temporal.devUiPort).toBe(19001);
+    // Address defaults to 127.0.0.1:<explicit apiPort> when address
+    // is omitted but apiPort is explicit.
     expect(resolved.temporal.address).toBe("127.0.0.1:19000");
   });
 
-  it("lets explicit uiPort override the frontend+1 rule", () => {
+  it("lets explicit devUiPort override the API port + 1 rule", () => {
     const resolved = resolveInstanceRuntime({
       instance: "abq-patch",
       defaultStateDir: DEFAULT_STATE,
       defaultLogDir: DEFAULT_LOG,
-      explicit: { frontendPort: 19000, uiPort: 19500 }
+      explicit: { apiPort: 19000, devUiPort: 19500 }
     });
-    expect(resolved.temporal.uiPort).toBe(19500);
+    expect(resolved.temporal.devUiPort).toBe(19500);
   });
 
-  it("keeps explicit address independent of frontendPort resolution", () => {
-    // Even when frontendPort derives from the instance, an explicit
+  it("keeps explicit address independent of apiPort resolution", () => {
+    // Even when apiPort derives from the instance, an explicit
     // address wins for the address field alone.
     const resolved = resolveInstanceRuntime({
       instance: "dev",
@@ -315,8 +315,8 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
       explicit: { address: "example.invalid:1234" }
     });
     expect(resolved.temporal.address).toBe("example.invalid:1234");
-    expect(resolved.temporal.frontendPort).toBe(17556); // derived from "dev"
-    expect(resolved.temporal.uiPort).toBe(17557);
+    expect(resolved.temporal.apiPort).toBe(17556); // derived from "dev"
+    expect(resolved.temporal.devUiPort).toBe(17557);
   });
 });
 
@@ -328,8 +328,8 @@ describe("resolveInstanceRuntime — smoke reproduction (abq-patch)", () => {
       defaultLogDir: DEFAULT_LOG
     });
     expect(resolved.instance).toBe("abq-patch");
-    expect(resolved.temporal.frontendPort).toBe(17706);
-    expect(resolved.temporal.uiPort).toBe(17707);
+    expect(resolved.temporal.apiPort).toBe(17706);
+    expect(resolved.temporal.devUiPort).toBe(17707);
     expect(resolved.temporal.address).toBe("127.0.0.1:17706");
     expect(resolved.temporal.namespace).toBe("default");
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");

@@ -66,7 +66,6 @@ export class RunArtifactStore {
       ...(input.stateId ? { state_id: input.stateId } : {}),
       ...(input.activityAttemptId ? { activity_attempt_id: input.activityAttemptId } : {})
     };
-    input.run.artifacts.push(artifact);
     return artifact;
   }
 
@@ -84,13 +83,12 @@ export class RunArtifactStore {
       filename: "profile_snapshot.yaml",
       content: [
         "# Derived Tychonic workflow profile snapshot.",
-        "# This file records the immutable effective settings for this run; edit the bundle's config.yaml or pass --config <file> instead.",
+        "# This file records the immutable effective settings for this run; edit the bundle's defaultProfile or pass --config <file> instead.",
         stringify(input.profile)
       ].join("\n"),
       createdAt: input.createdAt,
       ...(input.stateId ? { stateId: input.stateId } : {})
     });
-    input.run.profile_snapshot_artifact_id = snapshot.id;
     return { snapshot };
   }
 

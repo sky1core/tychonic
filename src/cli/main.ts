@@ -2,11 +2,9 @@
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 import { stringify } from "yaml";
-import { checkOrApplyWorkerPatch } from "../bootstrap/patchRunner.js";
 import {
   assertTychonicWorkflowResult,
   artifactContentPath,
-  listCandidateExecutionRows,
   listAgentSessions,
   listArtifacts,
   listInboxItems,
@@ -15,14 +13,11 @@ import {
   workflowResultView,
   type TychonicWorkflowResult
 } from "./temporalResultViews.js";
-import { resolveSimpleWorkflowCliOptions } from "./simpleWorkflowCliOptions.js";
-import { parseAgentCandidatesJSON } from "./agentCandidateJson.js";
+import { applyConfigOrDefaultProfileToRunInput } from "./runWorkflowInput.js";
 import {
-  loadBundleConfig,
+  loadBundleDefaultProfile,
   resolveEffectiveBundleConfig
 } from "../catalog/bundleConfig.js";
-import { parseBundleConfigYaml } from "../catalog/loadProfile.js";
-import { checkProjectGuardrails } from "../guardrails/checker.js";
 import { productName } from "../index.js";
 import { assertLoopbackHost } from "../net/loopback.js";
 import {
@@ -34,9 +29,12 @@ import {
 import {
   spawnDetachedRuntime,
   readPidFile,
-  isProcessAlive
+  isProcessAlive,
+  writePidFile,
+  removePidFileIfOwned
 } from "../runtime/detached.js";
 import { killAndRemoveInstance } from "../runtime/reset.js";
+import { stopRuntimeParent } from "../runtime/stop.js";
 import {
   replaceLaunchdWorker,
   installLaunchdServices,
@@ -52,32 +50,23 @@ import {
   signalInteractionApproveState,
   signalInteractionModifyState,
   signalInteractionRejectState,
-  signalSimpleWorkflowContinuation,
-  signalSimpleWorkflowExtendIterations,
-  signalSimpleWorkflowInboxDismiss,
-  signalSimpleWorkflowRegisterSession,
-  signalSimpleWorkflowResumeSession,
+  signalNamedWorkflow,
   startNamedTemporalWorkflow
 } from "../temporal/client.js";
 import type { WorkflowStateRecord } from "../domain/types.js";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { TemporalManager, tychonicRuntimeDirs, type TemporalConfig } from "../temporal/manager.js";
-import type { SimpleWorkflowContinuationSignalInput, StateRecordPatch } from "../temporal/types.js";
-import { runTemporalWorker } from "../temporal/worker.js";
+import type { StateRecordPatch } from "../temporal/types.js";
+import { buildWorkflowBundle, runTemporalWorker } from "../temporal/worker.js";
 import { join as pathJoin } from "node:path";
 import {
   installRuntimeWorkflowModule,
   listRuntimeWorkflowModules,
   removeRuntimeWorkflowModule,
   runtimeWorkflowModulesDir,
-  inspectBundle,
-  loadBundleConfigFromDisk
+  inspectBundle
 } from "../temporal/workflowModules.js";
-import {
-  normalizeBundleRequires,
-  validateBundleFileShape,
-  validateBundleRequires
-} from "../temporal/bundleValidator.js";
+import { validateBundleFileShape } from "../temporal/bundleValidator.js";
 import { productVersion } from "../version.js";
 
 const program = new Command();
@@ -86,7 +75,7 @@ program.name(productName).description("Local AI work operations manager").versio
 
 program.option(
   "--instance <name>",
-  "isolated dev instance name; replaces state dir, frontend port, and task queue derived from <name>. Falls back to $TYCHONIC_INSTANCE when omitted. Unset targets the operational paths."
+  "isolated dev instance name; derives state dir, Temporal API port, and task queue from <name>. Falls back to $TYCHONIC_INSTANCE when omitted. Unset targets the operational paths."
 );
 
 program.hook("preAction", (thisCommand) => {
@@ -128,18 +117,6 @@ function assertOperationalOnly(commandLabel: string): void {
   }
 }
 
-program
-  .command("guardrails")
-  .option("--cwd <dir>", "project root to check", process.cwd())
-  .description("Check Tychonic project guardrails and print JSON")
-  .action(async (options: { cwd: string }) => {
-    const result = await checkProjectGuardrails({ root: options.cwd });
-    console.log(JSON.stringify(result, null, 2));
-    if (!result.ok) {
-      process.exitCode = 1;
-    }
-  });
-
 const workflowsCommand = program
   .command("workflows")
   .description("Manage installed workflow bundles in the local runtime registry");
@@ -156,9 +133,8 @@ workflowsCommand
           name: bundle.name,
           path: bundle.path,
           workflowPath: bundle.workflowPath,
-          configPath: bundle.configPath,
           workflowExports: inspection.exportNames,
-          requires: inspection.requires
+          defaultProfile: inspection.defaultProfile
         };
       })
     );
@@ -185,13 +161,10 @@ workflowsCommand
       const { readdir } = await import("node:fs/promises");
       const entries = await readdir(directory);
       validateBundleFileShape(entries);
-      const config = await loadBundleConfigFromDisk(directory);
       const inspection = await inspectBundle({
         name: workflowsBundleDirName(directory),
         workflowPath: pathJoin(directory, "workflow.mjs")
       });
-      const requires = normalizeBundleRequires(inspection.requires);
-      validateBundleRequires({ requires, config });
       console.log(
         JSON.stringify(
           {
@@ -199,7 +172,7 @@ workflowsCommand
             bundle: {
               directory,
               workflowExports: inspection.exportNames,
-              requires: inspection.requires
+              defaultProfile: inspection.defaultProfile
             }
           },
           null,
@@ -224,7 +197,7 @@ workflowsCommand
 workflowsCommand
   .command("install")
   .argument("<directory>", "workflow bundle directory")
-  .description("Install a workflow bundle into the local runtime registry and replace the worker")
+  .description("Install a workflow bundle and refresh the LaunchAgent worker when applicable")
   .action(async (directory: string) => {
     const bundle = await installRuntimeWorkflowModule({ sourcePath: directory });
     const replacement = await tryReplaceLaunchdWorker();
@@ -246,7 +219,7 @@ workflowsCommand
 workflowsCommand
   .command("remove")
   .argument("<name>", "workflow bundle name")
-  .description("Remove an installed workflow bundle and replace the worker")
+  .description("Remove an installed workflow bundle and refresh the LaunchAgent worker when applicable")
   .action(async (name: string) => {
     const bundle = await removeRuntimeWorkflowModule(name);
     const replacement = await tryReplaceLaunchdWorker();
@@ -271,22 +244,22 @@ const configCommand = program
 
 configCommand
   .command("show")
-  .requiredOption("--workflow <name>", "installed workflow bundle name")
+  .requiredOption("--workflow-name <name>", "installed workflow name")
   .option("--config <file>", "one-off Tychonic config YAML file to override the bundle config", undefined)
   .option("--format <format>", "yaml or json", "yaml")
   .description("Print one installed bundle's configuration")
-  .action(async (options: { workflow: string; config?: string; format: "yaml" | "json" }) => {
+  .action(async (options: { workflowName: string; config?: string; format: "yaml" | "json" }) => {
     if (!["yaml", "json"].includes(options.format)) {
       throw new Error("--format must be yaml or json");
     }
-    const bundleDir = await bundleDirForInstalledName(options.workflow);
+    const bundleDir = await bundleDirForInstalledName(options.workflowName);
     const resolved = await resolveEffectiveBundleConfig({
       bundleDir,
       ...(options.config ? { overridePath: options.config } : {})
     });
     const payload = {
       version: "tychonic.config.show.v2" as const,
-      workflow: options.workflow,
+      workflow: options.workflowName,
       bundleDir,
       source: resolved.source,
       profile: resolved.profile
@@ -300,12 +273,12 @@ configCommand
 
 configCommand
   .command("validate")
-  .requiredOption("--workflow <name>", "installed workflow bundle name")
+  .requiredOption("--workflow-name <name>", "installed workflow name")
   .option("--config <file>", "one-off Tychonic config YAML file to validate against the bundle", undefined)
   .description("Validate one installed bundle's configuration")
-  .action(async (options: { workflow: string; config?: string }) => {
+  .action(async (options: { workflowName: string; config?: string }) => {
     try {
-      const bundleDir = await bundleDirForInstalledName(options.workflow);
+      const bundleDir = await bundleDirForInstalledName(options.workflowName);
       const resolved = await resolveEffectiveBundleConfig({
         bundleDir,
         ...(options.config ? { overridePath: options.config } : {})
@@ -315,7 +288,7 @@ configCommand
           {
             ok: true,
             version: "tychonic.config.validate.v2",
-            workflow: options.workflow,
+            workflow: options.workflowName,
             source: resolved.source,
             profile: resolved.profile
           },
@@ -329,7 +302,7 @@ configCommand
           {
             ok: false,
             version: "tychonic.config.validate.v2",
-            workflow: options.workflow,
+            workflow: options.workflowName,
             error: error instanceof Error ? error.message : String(error)
           },
           null,
@@ -344,7 +317,7 @@ const runtimeCommand = program.command("runtime").description("Run the local Tyc
 
 runtimeCommand
   .command("up")
-  .option("--cwd <dir>", "working directory exposed to the web catalog", process.cwd())
+  .option("--project-dir <dir>", "project directory", process.cwd())
   .option("--no-web", "do not start the local web server")
   .option("--web-host <host>", "web host", "127.0.0.1")
   .option(
@@ -352,13 +325,12 @@ runtimeCommand
     "web port. Omit to let --instance <name> derive a port (18000 + fnv1a32(name) mod 1000); when both --instance and --web-port are unset, defaults to 8765 (operational).",
     (value) => Number(value)
   )
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
   .option("--allow-network-bind", "allow non-loopback web bind; unsupported for public alpha without private-network controls", false)
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .option("--shutdown-grace-time <duration>", "worker drain time on shutdown before cancelling in-flight activities")
   .option(
     "--detach",
@@ -368,17 +340,16 @@ runtimeCommand
   .description("Start Temporal if needed, then run worker and optional web server in the foreground")
   .action(
     async (options: {
-      cwd: string;
+      projectDir: string;
       web: boolean;
       webHost: string;
       webPort?: number;
       allowNetworkBind: boolean;
-      frontendPort?: number;
-      uiPort?: number;
-      mode?: TemporalConfig["mode"];
-      address?: string;
-      namespace?: string;
-      taskQueue?: string;
+      temporalMode?: TemporalConfig["mode"];
+      temporalPort?: number;
+      temporalAddress?: string;
+      temporalNamespace?: string;
+      temporalTaskQueue?: string;
       shutdownGraceTime?: string;
       detach?: boolean;
     }) => {
@@ -399,50 +370,122 @@ runtimeCommand
             throw new Error(
               `no workflow bundles installed in instance '${activeInstance}'. ` +
                 `Install a bundle with \`tychonic workflows install <directory> --instance ${activeInstance}\` ` +
-                "(for example, `workflows install dist/workflow-bundles/simpleWorkflow`), " +
+                "(for example, `workflows install ./examples/workflows/simpleWorkflow`), " +
                 `then rerun \`tychonic runtime up --instance ${activeInstance}\`.`
             );
           }
         }
       }
-      const temporalConfig = temporalConfigFromOptions(options);
-      const manager = new TemporalManager(temporalConfig);
-      const temporal = await manager.start();
-      await waitForTemporalReady(manager);
-      const resolvedWebPort = resolveWebPort(options.webPort);
-      const web = options.web
-        ? await startWebServer({
-            cwd: options.cwd,
-            host: options.webHost,
-            port: resolvedWebPort,
-            ...(options.allowNetworkBind ? { allowNetworkBind: true } : {}),
-            ...temporalConfig
-          })
-        : undefined;
-
-      console.log(
-        JSON.stringify(
-          {
-            ok: true,
-            mode: "foreground",
-            temporal,
-            ...(web ? { web: { url: web.url } } : {}),
-            worker: { status: "running" },
-            workflows: { modules: await listRuntimeWorkflowModules() },
-            _meta: cliInstanceMeta()
-          },
-          null,
-          2
-        )
-      );
-
+      const foregroundRuntimePidFile = await claimForegroundRuntimePidFileIfNeeded();
+      let temporalManagerForCleanup: TemporalManager | undefined;
+      let stopTemporalOnFailure = false;
       try {
-        await runTemporalWorker({
-          ...temporalConfig,
-          ...(options.shutdownGraceTime ? { shutdownGraceTime: options.shutdownGraceTime } : {})
-        });
+        const workflowBundle = await buildWorkflowBundle();
+        const temporalConfig = temporalConfigFromOptions(options);
+        const manager = new TemporalManager(temporalConfig);
+        temporalManagerForCleanup = manager;
+        // `inheritProcessGroup: true` keeps the spawned Temporal child in
+        // this runtime parent's pgid. When the outer CLI invocation was
+        // `runtime up --detach`, that pgid is the runtime parent's own
+        // (the parent was spawned with `{ detached: true }`). `runtime
+        // reset` then signals the entire group with `kill(-pgid)` and the
+        // temporal child cannot orphan.
+        const temporal = await manager.start({ inheritProcessGroup: true });
+        stopTemporalOnFailure = temporal.health === "starting";
+        await waitForTemporalReady(manager);
+        // Install a SIGTERM/SIGINT cascade so the polite shutdown path
+        // also reaches the temporal child. Process-group kill from
+        // `runtime reset` already covers the SIGTERM-from-reset case;
+        // this handler covers Ctrl-C in the foreground tty and any
+        // direct `kill <runtimePid>` (without `-pgid`). SIGKILL is
+        // uncatchable, so the structural process-group guarantee remains
+        // the safety net.
+        const temporalChildPid = temporal.pid;
+        const cascadeAndExit = (signal: NodeJS.Signals): void => {
+          if (typeof temporalChildPid === "number" && temporalChildPid > 0) {
+            try {
+              process.kill(temporalChildPid, signal);
+            } catch (error) {
+              const code = (error as NodeJS.ErrnoException).code;
+              // ESRCH: the temporal child already exited. Anything else is
+              // logged but does not block the parent's own shutdown — the
+              // outer `runtime reset` will take a second pass.
+              if (code !== "ESRCH") {
+                process.stderr.write(
+                  `tychonic runtime: failed to forward ${signal} to temporal pid ` +
+                    `${temporalChildPid}: ${(error as Error).message}\n`
+                );
+              }
+            }
+          }
+          // Re-raise the original signal with its default disposition so
+          // the runtime parent itself exits with the conventional 128+sig
+          // code. Removing our handler before re-raising avoids recursion.
+          process.removeListener("SIGTERM", onSigterm);
+          process.removeListener("SIGINT", onSigint);
+          // Defer to the next tick so the listener removal completes
+          // before the second delivery.
+          process.nextTick(() => {
+            process.kill(process.pid, signal);
+          });
+        };
+        const onSigterm = (): void => cascadeAndExit("SIGTERM");
+        const onSigint = (): void => cascadeAndExit("SIGTERM");
+        process.on("SIGTERM", onSigterm);
+        process.on("SIGINT", onSigint);
+        const resolvedWebPort = resolveWebPort(options.webPort);
+        const web = options.web
+          ? await startWebServer({
+              cwd: options.projectDir,
+              host: options.webHost,
+              port: resolvedWebPort,
+              ...(options.allowNetworkBind ? { allowNetworkBind: true } : {}),
+              ...temporalConfig
+            })
+          : undefined;
+
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              mode: "foreground",
+              temporal,
+              ...(web ? { web: { url: web.url } } : {}),
+              worker: { status: "running" },
+              workflows: { modules: await listRuntimeWorkflowModules() },
+              _meta: cliInstanceMeta()
+            },
+            null,
+            2
+          )
+        );
+
+        try {
+          await runTemporalWorker({
+            ...temporalConfig,
+            workflowBundle,
+            ...(options.shutdownGraceTime ? { shutdownGraceTime: options.shutdownGraceTime } : {})
+          });
+        } finally {
+          await closeStartedWebServer(web);
+        }
+      } catch (error) {
+        if (stopTemporalOnFailure && temporalManagerForCleanup) {
+          try {
+            await temporalManagerForCleanup.stop();
+          } catch (stopError) {
+            process.stderr.write(
+              `tychonic runtime: failed to stop Temporal after runtime startup failure: ${
+                stopError instanceof Error ? stopError.message : String(stopError)
+              }\n`
+            );
+          }
+        }
+        throw error;
       } finally {
-        await closeStartedWebServer(web);
+        if (foregroundRuntimePidFile) {
+          await removePidFileIfOwned(foregroundRuntimePidFile, process.pid);
+        }
       }
     }
   );
@@ -451,106 +494,114 @@ runtimeCommand
   .command("reset")
   .option("--yes", "skip the interactive confirmation prompt", false)
   .description(
-    "Terminate the detached runtime for --instance <name> (SIGTERM → 10s → SIGKILL) and remove its state/log directories. Refuses to operate without --instance."
+    "Terminate the runtime for --instance <name> (SIGTERM → 10s → SIGKILL) and remove its state/log directories. Refuses to operate without --instance."
   )
   .action(async (options: { yes?: boolean }) => {
     await handleRuntimeReset({ yes: Boolean(options.yes) });
   });
 
+runtimeCommand
+  .command("stop")
+  .description("Gracefully stop the isolated runtime for --instance <name> with SIGTERM only")
+  .action(async () => {
+    await handleRuntimeStop();
+  });
+
 program
   .command("run")
-  .argument("<workflow-type>", "workflow export name")
+  .argument("<workflow-name>", "installed workflow name")
   .option("--input <json>", "single JSON argument to pass as workflow input")
   .option("--input-file <file>", "path to a JSON file containing the workflow input")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option(
+    "--config <file>",
+    "one-off Tychonic config YAML/JSON file that replaces the bundle's defaultProfile for this invocation; conflicts with input.profile from --input/--input-file"
+  )
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .option("--workflow-id <id>", "Temporal workflow id")
   .option("--wait", "wait for Temporal workflow completion and print the run result")
   .description("Start a Tychonic workflow through Temporal")
-  .action(async (workflowType: string, options: RunCommandOptions) => {
-    await startNamedWorkflowFromCli(workflowType, options);
+  .action(async (workflowName: string, options: RunCommandOptions) => {
+    await startNamedWorkflowFromCli(workflowName, options);
   });
 
 program
-  .command("simple_workflow:patch")
-  .requiredOption("--patch-file <path>", "explicit worker_patch artifact file")
-  .option("--cwd <dir>", "source working directory", process.cwd())
-  .option("--apply", "apply the worker patch to the source workspace")
-  .description("Check or apply a simple_workflow worker_patch artifact")
-  .action(async (options: { patchFile: string; cwd: string; apply?: boolean }) => {
-    const result = await checkOrApplyWorkerPatch({
-      cwd: options.cwd,
-      patchFile: options.patchFile,
-      apply: Boolean(options.apply)
-    });
-    const ok = result.status !== "does_not_apply";
-    console.log(
-      JSON.stringify(
-        {
-          ok,
-          run_id: result.run.id,
-          mode: result.mode,
-          status: result.status,
-          source_workspace: result.sourceWorkspace,
-          artifact_id: result.artifact.id,
-          patch_file: result.patchFile,
-          ...(result.output ? { output: result.output.trim() } : {}),
-          ...(result.exitCode !== undefined ? { exit_code: result.exitCode } : {})
-        },
-        null,
-        2
-      )
-    );
-    if (!ok) {
-      process.exitCode = 1;
-    }
-  });
-
-program
-  .command("simple_workflow:continue")
-  .requiredOption("--workflow-id <id>", "Temporal workflow id for a waiting_user simple_workflow run")
+  .command("signal")
+  .argument("<workflow-id>", "Temporal workflow id")
+  .argument("<signal-name>", "Temporal signal name registered by the workflow")
   .option("--run-id <id>", "Temporal run id")
-  .option("--max-iterations <n>", "fresh auto-continue iteration budget", (value) => Number(value))
-  .option("--verify-command <cmd>", "override verify command for the extended run")
-  .option("--command-timeout <ms>", "per-command timeout in milliseconds", (value) => Number(value))
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
-  .description(
-    "Extend a waiting_user simple_workflow with a fresh auto-continue iteration budget that loops over remaining inbox items"
-  )
+  .option("--payload-file <path>", "JSON file whose parsed contents are the signal payload")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
+  .description("Send an arbitrary Temporal signal with optional JSON payload to a running workflow")
   .action(
-    async (options: {
-      workflowId: string;
-      runId?: string;
-      maxIterations?: number;
-      verifyCommand?: string;
-      commandTimeout?: number;
-      mode?: TemporalConfig["mode"];
-      address?: string;
-      namespace?: string;
-      taskQueue?: string;
-    }) => {
-      if (options.maxIterations !== undefined) {
-        if (!Number.isInteger(options.maxIterations) || options.maxIterations < 1) {
-          throw new Error("--max-iterations must be a positive integer");
+    async (
+      workflowId: string,
+      signalName: string,
+      options: {
+        runId?: string;
+        payloadFile?: string;
+        temporalMode?: TemporalConfig["mode"];
+        temporalPort?: number;
+        temporalAddress?: string;
+        temporalNamespace?: string;
+        temporalTaskQueue?: string;
+      }
+    ) => {
+      if (typeof workflowId !== "string" || workflowId.length === 0) {
+        throw new Error("workflow-id must be a non-empty string");
+      }
+      if (typeof signalName !== "string" || signalName.length === 0) {
+        throw new Error("signal-name must be a non-empty string");
+      }
+      let payload: unknown;
+      if (options.payloadFile) {
+        let raw: string;
+        try {
+          raw = await readFileAsync(options.payloadFile, "utf8");
+        } catch (error) {
+          throw new Error(
+            `failed to read --payload-file ${options.payloadFile}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+        try {
+          payload = JSON.parse(raw);
+        } catch (error) {
+          throw new Error(
+            `--payload-file ${options.payloadFile} contains invalid JSON: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
         }
       }
-      const result = await signalSimpleWorkflowExtendIterations({
-        workflowId: options.workflowId,
+      const result = await signalNamedWorkflow({
+        workflowId,
+        signalName,
         ...(options.runId ? { runId: options.runId } : {}),
-        ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
-        ...(options.verifyCommand ? { verifyCommand: options.verifyCommand } : {}),
-        ...(options.commandTimeout ? { commandTimeoutMs: options.commandTimeout } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...(payload !== undefined ? { payload } : {}),
+        ...temporalConfigFromOptions(options)
       });
-      console.log(JSON.stringify({ ok: true, mode: "temporal", ...result }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            mode: "temporal",
+            signalName,
+            ...result,
+            _meta: cliInstanceMeta()
+          },
+          null,
+          2
+        )
+      );
     }
   );
 
@@ -558,25 +609,27 @@ program
   .command("status")
   .option("--workflow-id <id>", "Temporal workflow id to describe")
   .option("--run-id <id>", "Temporal run id to describe")
-  .option("--result", "include completed workflow result from Temporal history")
+  .option("--include-result", "include completed workflow result from Temporal history")
   .option("--limit <n>", "maximum workflows to list", (value) => Number(value), 20)
-  .option("--query <query>", "Temporal visibility query for listing workflows")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--visibility-query <query>", "advanced Temporal visibility filter for listing workflows")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Inspect Tychonic workflow status through Temporal")
   .action(
     async (options: {
       workflowId?: string;
       runId?: string;
-      result?: boolean;
+      includeResult?: boolean;
       limit: number;
-      query?: string;
-      mode?: TemporalConfig["mode"];
-      address?: string;
-      namespace?: string;
-      taskQueue?: string;
+      visibilityQuery?: string;
+      temporalMode?: TemporalConfig["mode"];
+      temporalPort?: number;
+      temporalAddress?: string;
+      temporalNamespace?: string;
+      temporalTaskQueue?: string;
     }) => {
       if (options.runId && !options.workflowId) {
         throw new Error("--run-id requires --workflow-id");
@@ -589,11 +642,8 @@ program
         const result = await describeTychonicTemporalWorkflow({
           workflowId: options.workflowId,
           ...(options.runId ? { runId: options.runId } : {}),
-          includeResult: Boolean(options.result),
-          ...(options.mode ? { mode: options.mode } : {}),
-          ...(options.address ? { address: options.address } : {}),
-          ...(options.namespace ? { namespace: options.namespace } : {}),
-          ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+          includeResult: Boolean(options.includeResult),
+          ...temporalConfigFromOptions(options)
         });
         console.log(
           JSON.stringify(
@@ -607,11 +657,8 @@ program
 
       const result = await listTychonicTemporalWorkflows({
         limit: options.limit,
-        ...(options.query ? { query: options.query } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...(options.visibilityQuery ? { query: options.visibilityQuery } : {}),
+        ...temporalConfigFromOptions(options)
       });
       console.log(
         JSON.stringify({ ok: true, mode: "temporal", ...result, _meta: cliInstanceMeta() }, null, 2)
@@ -620,101 +667,15 @@ program
   );
 
 program
-  .command("resume")
-  .argument("<session-id>", "agent session id")
-  .requiredOption("--workflow-id <id>", "Temporal workflow id")
-  .option("--run-id <id>", "Temporal run id")
-  .option("--config <file>", "one-off Tychonic config YAML file for review defaults")
-  .option("--cwd <dir>", "working directory for profile resolution", process.cwd())
-  .requiredOption("--prompt <text>", "prompt to send to the session resume command")
-  .requiredOption("--verify-command <cmd>", "deterministic verification command after resume")
-  .option("--review-command <cmd>", "structured reviewer command after resume verification succeeds")
-  .option("--review-agent <name>", "reviewer agent label for custom review commands")
-  .option("--review-candidates-json <json>", "ordered review candidates JSON array")
-  .option("--command-timeout <ms>", "resume command timeout in milliseconds", (value) => Number(value))
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
-  .description("Resume an agent session through Temporal")
-  .action(
-    async (
-      sessionId: string,
-      options: RequiredTemporalResultCommandOptions & {
-        config?: string;
-        cwd: string;
-        prompt: string;
-        verifyCommand: string;
-        reviewCommand?: string;
-        reviewAgent?: string;
-        reviewCandidatesJson?: string;
-        commandTimeout?: number;
-      }
-    ) => {
-      void options.cwd;
-      const reviewCandidates = options.reviewCandidatesJson
-        ? parseAgentCandidatesJSON(options.reviewCandidatesJson, "--review-candidates-json")
-        : undefined;
-      const resolved = options.config
-        ? resolveSimpleWorkflowCliOptions({
-            cwd: options.cwd,
-            verifyCommand: options.verifyCommand,
-            ...(options.reviewCommand ? { reviewCommand: options.reviewCommand } : {}),
-            ...(options.reviewAgent ? { reviewAgent: options.reviewAgent } : {}),
-            ...(reviewCandidates ? { reviewCandidates: reviewCandidates } : {}),
-            ...(options.commandTimeout ? { commandTimeout: options.commandTimeout } : {}),
-            profile: (
-              await resolveBundleConfigForWorkflow({
-                workflowId: options.workflowId,
-                ...(options.runId ? { runId: options.runId } : {}),
-                overridePath: options.config,
-                ...(options.mode ? { mode: options.mode } : {}),
-                ...(options.address ? { address: options.address } : {}),
-                ...(options.namespace ? { namespace: options.namespace } : {}),
-                ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
-              })
-            ).profile
-          })
-        : undefined;
-      const result = await signalSimpleWorkflowResumeSession({
-        workflowId: options.workflowId,
-        ...(options.runId ? { runId: options.runId } : {}),
-        sessionId,
-        prompt: options.prompt,
-        verifyCommand: options.verifyCommand,
-        ...(resolved?.reviewCommand ?? options.reviewCommand
-          ? { reviewCommand: resolved?.reviewCommand ?? options.reviewCommand }
-          : {}),
-        ...(resolved?.reviewAgent ?? options.reviewAgent
-          ? { reviewAgent: resolved?.reviewAgent ?? options.reviewAgent }
-          : {}),
-        ...(resolved?.reviewCandidates
-          ? { reviewCandidates: resolved.reviewCandidates }
-          : reviewCandidates
-            ? { reviewCandidates }
-            : {}),
-        ...(resolved?.commandTimeoutMs ?? options.commandTimeout
-          ? { commandTimeoutMs: resolved?.commandTimeoutMs ?? options.commandTimeout }
-          : {}),
-        ...(resolved?.activityTimeouts ? { activityTimeouts: resolved.activityTimeouts } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
-      });
-      console.log(JSON.stringify({ ok: true, mode: "temporal", ...result }, null, 2));
-    }
-  );
-
-program
   .command("approve")
   .argument("<workflow-id>", "Temporal workflow id")
-  .option("--state <name>", "state NAME to approve; when omitted, queried from the workflow")
+  .option("--state <name>", "workflow state name to approve; when omitted, queried from the workflow")
   .option("--run-id <id>", "Temporal run id")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Approve the currently gated interactive state through Temporal")
   .action(
     async (
@@ -727,19 +688,13 @@ program
         workflowId,
         ...(options.state !== undefined ? { explicitState: options.state } : {}),
         ...(options.runId ? { runId: options.runId } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...temporalConfigFromOptions(options)
       });
       const result = await signalInteractionApproveState({
         workflowId,
         state,
         ...(options.runId ? { runId: options.runId } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...temporalConfigFromOptions(options)
       });
       console.log(
         JSON.stringify(
@@ -755,12 +710,13 @@ program
   .command("reject")
   .argument("<workflow-id>", "Temporal workflow id")
   .requiredOption("--feedback <text>", "non-empty feedback string delivered to the retried state")
-  .option("--state <name>", "state NAME to reject; when omitted, queried from the workflow")
+  .option("--state <name>", "workflow state name to reject; when omitted, queried from the workflow")
   .option("--run-id <id>", "Temporal run id")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Reject the currently gated interactive state with feedback")
   .action(
     async (
@@ -777,20 +733,14 @@ program
         workflowId,
         ...(options.state !== undefined ? { explicitState: options.state } : {}),
         ...(options.runId ? { runId: options.runId } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...temporalConfigFromOptions(options)
       });
       const result = await signalInteractionRejectState({
         workflowId,
         state,
         feedback: options.feedback,
         ...(options.runId ? { runId: options.runId } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...temporalConfigFromOptions(options)
       });
       console.log(
         JSON.stringify(
@@ -805,17 +755,18 @@ program
 program
   .command("modify")
   .argument("<workflow-id>", "Temporal workflow id")
-  .option("--state <name>", "state NAME to modify; when omitted, queried from the workflow")
+  .option("--state <name>", "workflow state name to modify; when omitted, queried from the workflow")
   .option("--status <status>", "set state.status (succeeded|failed|skipped|blocked|timed_out)")
   .option("--reason <text>", "set state.reason")
   .option("--note <text>", "append a short note (becomes reason when reason is absent)")
-  .option("--patch-file <path>", "JSON file containing a full StateRecordPatch (status/reason/note/artifacts/findings)")
+  .option("--patch-file <path>", "JSON file containing state patch fields (status/reason/note/artifacts/findings)")
   .option("--run-id <id>", "Temporal run id")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
-  .description("Patch the latest state record for a gated interactive state (pass-with-overlay)")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
+  .description("Patch the pending interactive state")
   .action(
     async (
       workflowId: string,
@@ -831,10 +782,7 @@ program
         workflowId,
         ...(options.state !== undefined ? { explicitState: options.state } : {}),
         ...(options.runId ? { runId: options.runId } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...temporalConfigFromOptions(options)
       });
       const patch = await composePatchFromCliOptions({
         ...(options.patchFile ? { patchFile: options.patchFile } : {}),
@@ -847,10 +795,7 @@ program
         state,
         patch,
         ...(options.runId ? { runId: options.runId } : {}),
-        ...(options.mode ? { mode: options.mode } : {}),
-        ...(options.address ? { address: options.address } : {}),
-        ...(options.namespace ? { namespace: options.namespace } : {}),
-        ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+        ...temporalConfigFromOptions(options)
       });
       console.log(
         JSON.stringify(
@@ -867,10 +812,11 @@ program
   .requiredOption("--workflow-id <id>", "Temporal workflow id")
   .option("--run-id <id>", "Temporal run id")
   .option("--artifact <id>", "artifact id to print")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("List or print workflow artifacts through Temporal result metadata")
   .action(async (options: RequiredTemporalResultCommandOptions & { artifact?: string }) => {
     const result = await loadTemporalWorkflowResult(options);
@@ -898,10 +844,11 @@ program
   .requiredOption("--workflow-id <id>", "Temporal workflow id")
   .option("--run-id <id>", "Temporal run id")
   .option("--attempt <id>", "activity attempt id to print")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("List or print live activity logs through Temporal result metadata")
   .action(async (options: RequiredTemporalResultCommandOptions & { attempt?: string }) => {
     const result = await loadTemporalWorkflowResult(options);
@@ -924,40 +871,15 @@ program
     );
   });
 
-program
-  .command("candidates")
-  .requiredOption("--workflow-id <id>", "Temporal workflow id")
-  .option("--run-id <id>", "Temporal run id")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
-  .description("List agent-backed candidate execution rows through Temporal result metadata")
-  .action(async (options: RequiredTemporalResultCommandOptions) => {
-    const result = await loadTemporalWorkflowResult(options);
-    console.log(
-      JSON.stringify(
-        {
-          ok: true,
-          mode: "temporal",
-          workflow_id: options.workflowId,
-          ...workflowResultView(result),
-          candidates: listCandidateExecutionRows(result)
-        },
-        null,
-        2
-      )
-    );
-  });
-
 const inboxCommand = program
   .command("inbox")
   .option("--workflow-id <id>", "Temporal workflow id")
   .option("--run-id <id>", "Temporal run id")
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("List decision inbox items through Temporal result metadata")
   .action(async (options: TemporalResultCommandOptions) => {
     requireWorkflowId(options);
@@ -977,179 +899,34 @@ const inboxCommand = program
     );
   });
 
-inboxCommand
-  .command("execute")
-  .argument("<item-id>", "decision inbox item id")
-  .option("--config <file>", "one-off Tychonic config YAML file for worker/review/verify defaults")
-  .option("--cwd <dir>", "working directory for profile resolution", process.cwd())
-  .option("--command <cmd>", "fresh worker command for triage inbox items")
-  .option("--goal <text>", "fresh worker goal")
-  .option("--agent <name>", "fresh worker agent label")
-  .option("--resume-command <cmd>", "resume command to attach to fresh command worker sessions")
-  .option("--worker-candidates-json <json>", "ordered worker candidates JSON array")
-  .option("--verify-command <cmd>", "deterministic verification command after continuation")
-  .option("--review-command <cmd>", "structured reviewer command after continuation verification succeeds")
-  .option("--review-agent <name>", "reviewer agent label for custom review commands")
-  .option("--review-candidates-json <json>", "ordered review candidates JSON array")
-  .option("--command-timeout <ms>", "continuation command timeout in milliseconds", (value) => Number(value))
-  .description("Execute a decision inbox item through Temporal")
-  .action(
-    async (
-      itemId: string,
-      options: {
-        config?: string;
-        cwd: string;
-        command?: string;
-        goal?: string;
-        agent?: string;
-        resumeCommand?: string;
-        workerCandidatesJson?: string;
-        verifyCommand?: string;
-        reviewCommand?: string;
-        reviewAgent?: string;
-        reviewCandidatesJson?: string;
-        commandTimeout?: number;
-      }
-    ) => {
-      const workflowOptions = inboxCommand.opts<TemporalResultCommandOptions>();
-      requireWorkflowId(workflowOptions);
-      void options.cwd;
-      const workerCandidates = options.workerCandidatesJson
-        ? parseAgentCandidatesJSON(options.workerCandidatesJson, "--worker-candidates-json")
-        : undefined;
-      const reviewCandidates = options.reviewCandidatesJson
-        ? parseAgentCandidatesJSON(options.reviewCandidatesJson, "--review-candidates-json")
-        : undefined;
-      const resolved = options.config
-        ? resolveSimpleWorkflowCliOptions({
-            cwd: options.cwd,
-            ...(options.command ? { command: options.command } : {}),
-            ...(options.verifyCommand ? { verifyCommand: options.verifyCommand } : {}),
-            ...(options.goal ? { goal: options.goal } : {}),
-            ...(options.agent ? { agent: options.agent } : {}),
-            ...(options.resumeCommand ? { resumeCommand: options.resumeCommand } : {}),
-            ...(workerCandidates ? { workerCandidates: workerCandidates } : {}),
-            ...(options.reviewCommand ? { reviewCommand: options.reviewCommand } : {}),
-            ...(options.reviewAgent ? { reviewAgent: options.reviewAgent } : {}),
-            ...(reviewCandidates ? { reviewCandidates: reviewCandidates } : {}),
-            ...(options.commandTimeout ? { commandTimeout: options.commandTimeout } : {}),
-            profile: (
-              await resolveBundleConfigForWorkflow({
-                workflowId: workflowOptions.workflowId as string,
-                ...(workflowOptions.runId ? { runId: workflowOptions.runId } : {}),
-                overridePath: options.config,
-                ...(workflowOptions.mode ? { mode: workflowOptions.mode } : {}),
-                ...(workflowOptions.address ? { address: workflowOptions.address } : {}),
-                ...(workflowOptions.namespace ? { namespace: workflowOptions.namespace } : {}),
-                ...(workflowOptions.taskQueue ? { taskQueue: workflowOptions.taskQueue } : {})
-              })
-            ).profile
-          })
-        : undefined;
-      const verifyCommand = options.verifyCommand ?? resolved?.verifyCommand;
-      const continuationFields: Partial<SimpleWorkflowContinuationSignalInput> = {
-        ...(resolved?.command ?? options.command ? { command: resolved?.command ?? options.command } : {}),
-        ...(resolved?.agent ?? options.agent ? { agent: resolved?.agent ?? options.agent } : {}),
-        ...(resolved?.resumeCommand ?? options.resumeCommand
-          ? { resumeCommand: resolved?.resumeCommand ?? options.resumeCommand }
-          : {}),
-        ...(resolved?.workerCandidates
-          ? { workerCandidates: resolved.workerCandidates }
-          : workerCandidates
-            ? { workerCandidates }
-            : {}),
-        ...(resolved?.goal ?? options.goal ? { goal: resolved?.goal ?? options.goal } : {}),
-        ...(resolved?.reviewCommand ?? options.reviewCommand
-          ? { reviewCommand: resolved?.reviewCommand ?? options.reviewCommand }
-          : {}),
-        ...(resolved?.reviewAgent ?? options.reviewAgent
-          ? { reviewAgent: resolved?.reviewAgent ?? options.reviewAgent }
-          : {}),
-        ...(resolved?.reviewCandidates
-          ? { reviewCandidates: resolved.reviewCandidates }
-          : reviewCandidates
-            ? { reviewCandidates }
-            : {}),
-        ...(resolved?.commandTimeoutMs ?? options.commandTimeout
-          ? { commandTimeoutMs: resolved?.commandTimeoutMs ?? options.commandTimeout }
-          : {}),
-        ...(resolved?.activityTimeouts ? { activityTimeouts: resolved.activityTimeouts } : {})
-      };
-      const result = await signalSimpleWorkflowContinuation({
-        workflowId: workflowOptions.workflowId,
-        ...(workflowOptions.runId ? { runId: workflowOptions.runId } : {}),
-        inboxItemId: itemId,
-        ...(verifyCommand ? { verifyCommand } : {}),
-        ...(continuationFields.command ? { command: continuationFields.command } : {}),
-        ...(continuationFields.agent ? { agent: continuationFields.agent } : {}),
-        ...(continuationFields.resumeCommand ? { resumeCommand: continuationFields.resumeCommand } : {}),
-        ...(continuationFields.workerCandidates ? { workerCandidates: continuationFields.workerCandidates } : {}),
-        ...(continuationFields.goal ? { goal: continuationFields.goal } : {}),
-        ...(continuationFields.reviewCommand ? { reviewCommand: continuationFields.reviewCommand } : {}),
-        ...(continuationFields.reviewAgent ? { reviewAgent: continuationFields.reviewAgent } : {}),
-        ...(continuationFields.reviewCandidates ? { reviewCandidates: continuationFields.reviewCandidates } : {}),
-        ...(continuationFields.commandTimeoutMs ? { commandTimeoutMs: continuationFields.commandTimeoutMs } : {}),
-        ...(continuationFields.activityTimeouts ? { activityTimeouts: continuationFields.activityTimeouts } : {}),
-        ...(workflowOptions.mode ? { mode: workflowOptions.mode } : {}),
-        ...(workflowOptions.address ? { address: workflowOptions.address } : {}),
-        ...(workflowOptions.namespace ? { namespace: workflowOptions.namespace } : {}),
-        ...(workflowOptions.taskQueue ? { taskQueue: workflowOptions.taskQueue } : {})
-      });
-      console.log(JSON.stringify({ ok: true, mode: "temporal", ...result }, null, 2));
-    }
-  );
-
-inboxCommand
-  .command("dismiss")
-  .argument("<item-id>", "decision inbox item id")
-  .option("--reason <text>", "optional dismissal reason to preserve in Temporal run data")
-  .description("Dismiss a decision inbox item through Temporal")
-  .action(async (itemId: string, options: { reason?: string }) => {
-    const workflowOptions = inboxCommand.opts<TemporalResultCommandOptions>();
-    requireWorkflowId(workflowOptions);
-    const result = await signalSimpleWorkflowInboxDismiss({
-      workflowId: workflowOptions.workflowId,
-      ...(workflowOptions.runId ? { runId: workflowOptions.runId } : {}),
-      inboxItemId: itemId,
-      ...(options.reason ? { reason: options.reason } : {}),
-      ...(workflowOptions.mode ? { mode: workflowOptions.mode } : {}),
-      ...(workflowOptions.address ? { address: workflowOptions.address } : {}),
-      ...(workflowOptions.namespace ? { namespace: workflowOptions.namespace } : {}),
-      ...(workflowOptions.taskQueue ? { taskQueue: workflowOptions.taskQueue } : {})
-    });
-    console.log(JSON.stringify({ ok: true, mode: "temporal", ...result }, null, 2));
-  });
-
 program
   .command("web")
-  .option("--cwd <dir>", "working directory", process.cwd())
+  .option("--project-dir <dir>", "project directory", process.cwd())
   .option("--host <host>", "host", "127.0.0.1")
   .option("--port <port>", "port", (value) => Number(value), 8765)
   .option("--allow-network-bind", "allow non-loopback web bind; unsupported for public alpha without private-network controls", false)
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Start the local Tychonic status web server")
   .action(
     async (options: {
-      cwd: string;
+      projectDir: string;
       host: string;
       port: number;
       allowNetworkBind: boolean;
-      frontendPort?: number;
-      uiPort?: number;
-      mode?: TemporalConfig["mode"];
-      address?: string;
-      namespace?: string;
-      taskQueue?: string;
+      temporalMode?: TemporalConfig["mode"];
+      temporalPort?: number;
+      temporalAddress?: string;
+      temporalNamespace?: string;
+      temporalTaskQueue?: string;
     }) => {
       assertLoopbackHost(options.host, options.allowNetworkBind);
       const temporalConfig = temporalConfigFromOptions(options);
       const started = await startWebServer({
-        cwd: options.cwd,
+        cwd: options.projectDir,
         host: options.host,
         port: options.port,
         ...(options.allowNetworkBind ? { allowNetworkBind: true } : {}),
@@ -1163,25 +940,23 @@ const serviceCommand = program.command("service").description("Manage macOS laun
 
 serviceCommand
   .command("install")
-  .requiredOption("--project-cwd <dir>", "project directory exposed to the web catalog")
+  .requiredOption("--project-dir <dir>", "project directory")
   .option("--web-host <host>", "web host", "127.0.0.1")
   .option("--web-port <port>", "web port", (value) => Number(value), 8765)
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
   .option("--allow-network-bind", "allow non-loopback web bind; unsupported for public alpha without private-network controls", false)
-  .option("--node-path <path>", "absolute node executable path")
-  .option("--cli-path <path>", "absolute Tychonic CLI JavaScript path")
-  .option("--temporal-cli-path <path>", "absolute temporal executable path")
+  .option("--node-path <path>", "advanced: Node executable path")
+  .option("--cli-path <path>", "advanced: Tychonic CLI entrypoint path")
+  .option("--temporal-cli-path <path>", "advanced: Temporal CLI executable path")
   .option("--worker-shutdown-grace-time <duration>", "worker drain time on shutdown before cancelling in-flight activities")
-  .option("--allow-source-cli", "allow launchd services to execute a source checkout CLI; development only", false)
+  .option("--allow-source-cli", "advanced: allow running from a source checkout; development only", false)
   .description("Install and load user LaunchAgents for Temporal, worker, and web")
   .action(
     async (options: {
-      projectCwd: string;
+      projectDir: string;
       webHost: string;
       webPort: number;
-      frontendPort?: number;
-      uiPort?: number;
+      temporalPort?: number;
       allowNetworkBind: boolean;
       nodePath?: string;
       cliPath?: string;
@@ -1191,11 +966,10 @@ serviceCommand
     }) => {
       assertOperationalOnly("tychonic service install");
       const result = await installLaunchdServices({
-        projectCwd: options.projectCwd,
+        projectDir: options.projectDir,
         webHost: options.webHost,
         webPort: options.webPort,
-        ...(options.frontendPort ? { frontendPort: options.frontendPort } : {}),
-        ...(options.uiPort ? { uiPort: options.uiPort } : {}),
+        ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {}),
         allowNetworkBind: options.allowNetworkBind,
         ...(options.nodePath ? { nodePath: options.nodePath } : {}),
         ...(options.cliPath ? { cliPath: options.cliPath } : {}),
@@ -1209,16 +983,16 @@ serviceCommand
 
 serviceCommand
   .command("restart-worker")
-  .option("--replacement-timeout-ms <ms>", "maximum time to wait for old and temporary replacement workers to drain", (value) => Number(value))
+  .option("--timeout-ms <ms>", "maximum time to wait for worker replacement", (value) => Number(value))
   .description("Start a replacement worker before gracefully retiring the old worker")
-  .action(async (options: { replacementTimeoutMs?: number }) => {
+  .action(async (options: { timeoutMs?: number }) => {
     assertOperationalOnly("tychonic service restart-worker");
     console.log(
       JSON.stringify(
         {
           ok: true,
           worker_replacement: await replaceLaunchdWorker({
-            ...(options.replacementTimeoutMs ? { timeoutMs: options.replacementTimeoutMs } : {})
+            ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {})
           }),
           _meta: cliInstanceMeta()
         },
@@ -1270,28 +1044,26 @@ const temporalCommand = program.command("temporal").description("Manage local Te
 
 temporalCommand
   .command("status")
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Inspect Temporal runtime status")
-  .action(async (options: { mode?: TemporalConfig["mode"]; frontendPort?: number; uiPort?: number; address?: string; namespace?: string; taskQueue?: string }) => {
+  .action(async (options: TemporalCliOptions) => {
     const manager = new TemporalManager(temporalConfigFromOptions(options));
     console.log(JSON.stringify({ ok: true, status: await manager.status() }, null, 2));
   });
 
 temporalCommand
   .command("doctor")
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Run Temporal runtime checks")
-  .action(async (options: { mode?: TemporalConfig["mode"]; frontendPort?: number; uiPort?: number; address?: string; namespace?: string; taskQueue?: string }) => {
+  .action(async (options: TemporalCliOptions) => {
     const manager = new TemporalManager(temporalConfigFromOptions(options));
     const report = await manager.doctor();
     console.log(JSON.stringify({ ok: report.overall !== "fail", report }, null, 2));
@@ -1299,14 +1071,13 @@ temporalCommand
 
 temporalCommand
   .command("start")
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Start or reuse managed-local Temporal")
-  .action(async (options: { mode?: TemporalConfig["mode"]; frontendPort?: number; uiPort?: number; address?: string; namespace?: string; taskQueue?: string }) => {
+  .action(async (options: TemporalCliOptions) => {
     const manager = new TemporalManager(temporalConfigFromOptions(options));
     console.log(
       JSON.stringify({ ok: true, status: await manager.start(), _meta: cliInstanceMeta() }, null, 2)
@@ -1315,14 +1086,13 @@ temporalCommand
 
 temporalCommand
   .command("stop")
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
-  .option("--mode <mode>", "managed-local only")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local only")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("Stop Tychonic-managed local Temporal")
-  .action(async (options: { mode?: TemporalConfig["mode"]; frontendPort?: number; uiPort?: number; address?: string; namespace?: string; taskQueue?: string }) => {
+  .action(async (options: TemporalCliOptions) => {
     const manager = new TemporalManager(temporalConfigFromOptions(options));
     const status = await manager.stop();
     console.log(JSON.stringify({ ok: status.ok, status, _meta: cliInstanceMeta() }, null, 2));
@@ -1333,21 +1103,19 @@ temporalCommand
 
 temporalCommand
   .command("worker")
-  .option("--frontend-port <port>", "managed-local Temporal frontend port", (value) => Number(value))
-  .option("--ui-port <port>", "managed-local Temporal UI port", (value) => Number(value))
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .option("--shutdown-grace-time <duration>", "worker drain time on shutdown before cancelling in-flight activities")
   .description("Run the Tychonic TypeScript Temporal worker")
   .action(async (options: {
-    frontendPort?: number;
-    uiPort?: number;
-    mode?: TemporalConfig["mode"];
-    address?: string;
-    namespace?: string;
-    taskQueue?: string;
+    temporalMode?: TemporalConfig["mode"];
+    temporalPort?: number;
+    temporalAddress?: string;
+    temporalNamespace?: string;
+    temporalTaskQueue?: string;
     shutdownGraceTime?: string;
   }) => {
     await runTemporalWorker({
@@ -1361,10 +1129,11 @@ const sessionsCommand = program
   .option("--workflow-id <id>", "Temporal workflow id")
   .option("--run-id <id>", "Temporal run id")
   .option("--limit <n>", "maximum number of sessions", (value) => Number(value), 20)
-  .option("--mode <mode>", "managed-local or external")
-  .option("--address <address>", "Temporal frontend address")
-  .option("--namespace <name>", "Temporal namespace")
-  .option("--task-queue <name>", "Temporal task queue")
+  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
+  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "Temporal API address")
+  .option("--temporal-namespace <name>", "Temporal namespace")
+  .option("--temporal-task-queue <name>", "Temporal task queue")
   .description("List recorded agent sessions through Temporal result metadata")
   .action(async (options: TemporalResultCommandOptions & { limit: number }) => {
     requireWorkflowId(options);
@@ -1387,79 +1156,42 @@ const sessionsCommand = program
     );
   });
 
-sessionsCommand
-  .command("register")
-  .requiredOption("--agent <name>", "agent name")
-  .requiredOption("--id <id>", "Tychonic session id")
-  .option("--role <role>", "worker, reviewer, or verifier", "worker")
-  .requiredOption("--session-cwd <dir>", "working directory for the agent session")
-  .option("--external-session-id <id>", "external agent session id")
-  .option("--resume-command <cmd>", "command used to resume this session")
-  .option("--status <status>", "running, succeeded, failed, timed_out, or unknown", "unknown")
-  .description("Register an agent session through Temporal")
-  .action(
-    async (options: {
-      agent: string;
-      id: string;
-      role: "worker" | "reviewer" | "verifier";
-      sessionCwd: string;
-      externalSessionId?: string;
-      resumeCommand?: string;
-      status: "running" | "succeeded" | "failed" | "timed_out" | "unknown";
-    }) => {
-      const workflowOptions = sessionsCommand.opts<TemporalResultCommandOptions>();
-      requireWorkflowId(workflowOptions);
-      if (!["worker", "reviewer", "verifier"].includes(options.role)) {
-        throw new Error("--role must be one of worker, reviewer, verifier");
-      }
-      if (!["running", "succeeded", "failed", "timed_out", "unknown"].includes(options.status)) {
-        throw new Error("--status must be one of running, succeeded, failed, timed_out, unknown");
-      }
-      const result = await signalSimpleWorkflowRegisterSession({
-        workflowId: workflowOptions.workflowId,
-        ...(workflowOptions.runId ? { runId: workflowOptions.runId } : {}),
-        id: options.id,
-        agent: options.agent,
-        role: options.role,
-        cwd: options.sessionCwd,
-        status: options.status,
-        ...(options.externalSessionId ? { externalSessionId: options.externalSessionId } : {}),
-        ...(options.resumeCommand ? { resumeCommand: options.resumeCommand } : {}),
-        startedAt: new Date().toISOString(),
-        ...(workflowOptions.mode ? { mode: workflowOptions.mode } : {}),
-        ...(workflowOptions.address ? { address: workflowOptions.address } : {}),
-        ...(workflowOptions.namespace ? { namespace: workflowOptions.namespace } : {}),
-        ...(workflowOptions.taskQueue ? { taskQueue: workflowOptions.taskQueue } : {})
-      });
-      console.log(JSON.stringify({ ok: true, mode: "temporal", ...result }, null, 2));
-    }
-  );
+interface TemporalCliOptions {
+  temporalMode?: TemporalConfig["mode"];
+  temporalPort?: number;
+  temporalAddress?: string;
+  temporalNamespace?: string;
+  temporalTaskQueue?: string;
+}
 
-interface RunCommandOptions {
+interface RunCommandOptions extends TemporalCliOptions {
   input?: string;
   inputFile?: string;
-  mode?: TemporalConfig["mode"];
-  address?: string;
-  namespace?: string;
-  taskQueue?: string;
+  config?: string;
   workflowId?: string;
   wait?: boolean;
 }
 
-async function startNamedWorkflowFromCli(workflowType: string, options: RunCommandOptions): Promise<void> {
-  const workflowInput = await resolveRunWorkflowInput(options);
+async function startNamedWorkflowFromCli(workflowName: string, options: RunCommandOptions): Promise<void> {
+  const rawInput = await resolveRunWorkflowInput(options);
+  const workflowInput = await applyConfigOrDefaultProfileToRunInput({
+    rawInput,
+    ...(options.config ? { configPath: options.config } : {}),
+    loadDefaultProfile: async () => {
+      const bundleDir = await bundleDirForInstalledName(workflowName);
+      return loadBundleDefaultProfile(bundleDir);
+    }
+  });
   const result = await startNamedTemporalWorkflow({
-    workflowType,
+    workflowType: workflowName,
     ...(workflowInput.hasInput ? { input: workflowInput.input } : {}),
     wait: Boolean(options.wait),
-    ...(options.mode ? { mode: options.mode } : {}),
-    ...(options.address ? { address: options.address } : {}),
-    ...(options.namespace ? { namespace: options.namespace } : {}),
-    ...(options.taskQueue ? { taskQueue: options.taskQueue } : {}),
+    ...temporalConfigFromOptions(options),
     ...(options.workflowId ? { workflowId: options.workflowId } : {})
   });
   console.log(JSON.stringify({ ok: true, mode: "temporal", ...result, _meta: cliInstanceMeta() }, null, 2));
 }
+
 
 async function resolveRunWorkflowInput(options: RunCommandOptions): Promise<{ hasInput: boolean; input?: unknown }> {
   if (options.input && options.inputFile) {
@@ -1482,13 +1214,9 @@ async function resolveRunWorkflowInput(options: RunCommandOptions): Promise<{ ha
   }
 }
 
-interface TemporalResultCommandOptions {
+interface TemporalResultCommandOptions extends TemporalCliOptions {
   workflowId?: string;
   runId?: string;
-  mode?: TemporalConfig["mode"];
-  address?: string;
-  namespace?: string;
-  taskQueue?: string;
 }
 
 /**
@@ -1502,10 +1230,11 @@ async function resolveInteractionState(options: {
   workflowId: string;
   explicitState?: string;
   runId?: string;
-  mode?: TemporalConfig["mode"];
-  address?: string;
-  namespace?: string;
-  taskQueue?: string;
+  temporalMode?: TemporalConfig["mode"];
+  temporalPort?: number;
+  temporalAddress?: string;
+  temporalNamespace?: string;
+  temporalTaskQueue?: string;
 }): Promise<string> {
   if (options.explicitState !== undefined) {
     if (options.explicitState.length === 0) {
@@ -1516,10 +1245,7 @@ async function resolveInteractionState(options: {
   const queryResult = await queryInteractionPendingState({
     workflowId: options.workflowId,
     ...(options.runId ? { runId: options.runId } : {}),
-    ...(options.mode ? { mode: options.mode } : {}),
-    ...(options.address ? { address: options.address } : {}),
-    ...(options.namespace ? { namespace: options.namespace } : {}),
-    ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+    ...temporalConfigFromOptions(options)
   });
   if (queryResult.resultError) {
     throw new Error(
@@ -1560,7 +1286,7 @@ async function composePatchFromCliOptions(options: {
       );
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error(`--patch-file ${options.patchFile} must contain a JSON object matching StateRecordPatch`);
+      throw new Error(`--patch-file ${options.patchFile} must contain a JSON object with state patch fields`);
     }
     Object.assign(patch, parsed);
   }
@@ -1587,10 +1313,7 @@ async function loadTemporalWorkflowResult(options: RequiredTemporalResultCommand
     workflowId: options.workflowId,
     ...(options.runId ? { runId: options.runId } : {}),
     includeResult: true,
-    ...(options.mode ? { mode: options.mode } : {}),
-    ...(options.address ? { address: options.address } : {}),
-    ...(options.namespace ? { namespace: options.namespace } : {}),
-    ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+    ...temporalConfigFromOptions(options)
   });
 
   if (!workflow.result) {
@@ -1621,7 +1344,7 @@ async function bundleDirForInstalledName(name: string): Promise<string> {
   const match = bundles.find((bundle) => bundle.name === name);
   if (!match) {
     throw new Error(
-      `no installed workflow bundle named ${JSON.stringify(name)}. ` +
+      `no installed workflow named ${JSON.stringify(name)}. ` +
         "Run `tychonic workflows list` to list installed bundles."
     );
   }
@@ -1654,47 +1377,6 @@ async function tryReplaceLaunchdWorker(): Promise<{ worker_replacement: unknown 
   }
 }
 
-type ResolveBundleConfigOptions = {
-  workflowId: string;
-  runId?: string;
-  overridePath?: string;
-  mode?: TemporalConfig["mode"];
-  address?: string;
-  namespace?: string;
-  taskQueue?: string;
-};
-
-async function resolveBundleConfigForWorkflow(options: ResolveBundleConfigOptions): Promise<{
-  profile: Awaited<ReturnType<typeof loadBundleConfig>>;
-  source: "bundle" | { override: string };
-  workflowType: string;
-}> {
-  const description = await describeTychonicTemporalWorkflow({
-    workflowId: options.workflowId,
-    ...(options.runId ? { runId: options.runId } : {}),
-    ...(options.mode ? { mode: options.mode } : {}),
-    ...(options.address ? { address: options.address } : {}),
-    ...(options.namespace ? { namespace: options.namespace } : {}),
-    ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
-  });
-  const workflowType = description.type;
-  if (options.overridePath) {
-    const { readFile } = await import("node:fs/promises");
-    const raw = await readFile(options.overridePath, "utf8");
-    return {
-      profile: parseBundleConfigYaml(raw),
-      source: { override: options.overridePath },
-      workflowType
-    };
-  }
-  const bundleDir = await bundleDirForInstalledName(workflowType);
-  return {
-    profile: await loadBundleConfig(bundleDir),
-    source: "bundle",
-    workflowType
-  };
-}
-
 /**
  * `runtime up --detach` handler. Spawns the current CLI again (same
  * `--instance <name>`) in a new session with stdio → `runtime.log`, then
@@ -1703,17 +1385,16 @@ async function resolveBundleConfigForWorkflow(options: ResolveBundleConfigOption
  * instances only.
  */
 async function handleRuntimeUpDetach(options: {
-  cwd: string;
+  projectDir: string;
   web: boolean;
   webHost: string;
   webPort?: number;
   allowNetworkBind: boolean;
-  frontendPort?: number;
-  uiPort?: number;
-  mode?: TemporalConfig["mode"];
-  address?: string;
-  namespace?: string;
-  taskQueue?: string;
+  temporalMode?: TemporalConfig["mode"];
+  temporalPort?: number;
+  temporalAddress?: string;
+  temporalNamespace?: string;
+  temporalTaskQueue?: string;
   shutdownGraceTime?: string;
 }): Promise<void> {
   const instance = getActiveInstance();
@@ -1732,7 +1413,8 @@ async function handleRuntimeUpDetach(options: {
   if (existingPid > 0) {
     if (isProcessAlive(existingPid)) {
       throw new Error(
-        `instance '${instance}' already has a detached runtime (pid=${existingPid}); stop it with 'tychonic runtime reset --instance ${instance}'`
+        `instance '${instance}' already has a runtime (pid=${existingPid}); stop it with ` +
+          `'tychonic runtime stop --instance ${instance}' or use 'runtime reset --instance ${instance}' only for destructive cleanup`
       );
     }
     staleRemoved = true;
@@ -1747,7 +1429,7 @@ async function handleRuntimeUpDetach(options: {
     throw new Error(
       `no workflow bundles installed in instance '${instance}'. ` +
         `Install a bundle with \`tychonic workflows install <directory> --instance ${instance}\` ` +
-        "(for example, `workflows install dist/workflow-bundles/simpleWorkflow`), " +
+        "(for example, `workflows install ./examples/workflows/simpleWorkflow`), " +
         `then rerun \`tychonic runtime up --instance ${instance} --detach\`.`
     );
   }
@@ -1756,18 +1438,17 @@ async function handleRuntimeUpDetach(options: {
   // not forwarded (child runs foreground); `--instance` is re-passed
   // explicitly inside spawnDetachedRuntime.
   const extraArgs: string[] = [];
-  if (options.cwd) extraArgs.push("--cwd", options.cwd);
+  if (options.projectDir) extraArgs.push("--project-dir", options.projectDir);
   if (options.web === false) extraArgs.push("--no-web");
   if (options.webHost) extraArgs.push("--web-host", options.webHost);
   if (options.webPort !== undefined) extraArgs.push("--web-port", String(options.webPort));
   if (options.allowNetworkBind) extraArgs.push("--allow-network-bind");
-  if (options.frontendPort !== undefined)
-    extraArgs.push("--frontend-port", String(options.frontendPort));
-  if (options.uiPort !== undefined) extraArgs.push("--ui-port", String(options.uiPort));
-  if (options.mode) extraArgs.push("--mode", options.mode);
-  if (options.address) extraArgs.push("--address", options.address);
-  if (options.namespace) extraArgs.push("--namespace", options.namespace);
-  if (options.taskQueue) extraArgs.push("--task-queue", options.taskQueue);
+  if (options.temporalMode) extraArgs.push("--temporal-mode", options.temporalMode);
+  if (options.temporalPort !== undefined)
+    extraArgs.push("--temporal-port", String(options.temporalPort));
+  if (options.temporalAddress) extraArgs.push("--temporal-address", options.temporalAddress);
+  if (options.temporalNamespace) extraArgs.push("--temporal-namespace", options.temporalNamespace);
+  if (options.temporalTaskQueue) extraArgs.push("--temporal-task-queue", options.temporalTaskQueue);
   if (options.shutdownGraceTime)
     extraArgs.push("--shutdown-grace-time", options.shutdownGraceTime);
 
@@ -1795,6 +1476,24 @@ async function handleRuntimeUpDetach(options: {
       2
     )
   );
+}
+
+async function claimForegroundRuntimePidFileIfNeeded(): Promise<string | undefined> {
+  const instance = getActiveInstance();
+  if (instance === undefined) {
+    return undefined;
+  }
+  const dirs = tychonicRuntimeDirs();
+  const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
+  const existingPid = await readPidFile(pidFile);
+  if (existingPid > 0 && existingPid !== process.pid && isProcessAlive(existingPid)) {
+    throw new Error(
+      `instance '${instance}' already has a runtime (pid=${existingPid}); stop it with ` +
+        `'tychonic runtime stop --instance ${instance}' or use 'runtime reset --instance ${instance}' only for destructive cleanup`
+    );
+  }
+  await writePidFile(pidFile, process.pid);
+  return pidFile;
 }
 
 /**
@@ -1884,6 +1583,11 @@ async function handleRuntimeReset(options: { yes: boolean }): Promise<void> {
         instance: result.instance,
         killedPid: result.killedPid,
         killedSignal: result.killedSignal,
+        // Surface the temporal-child cleanup separately so operators
+        // can confirm the cascade reached both the runtime parent and
+        // the spawned Temporal server.
+        killedTemporalPid: result.killedTemporalPid,
+        killedTemporalSignal: result.killedTemporalSignal,
         removed: result.removed,
         _meta: cliInstanceMeta()
       },
@@ -1893,21 +1597,45 @@ async function handleRuntimeReset(options: { yes: boolean }): Promise<void> {
   );
 }
 
+async function handleRuntimeStop(): Promise<void> {
+  const instance = getActiveInstance();
+  if (instance === undefined) {
+    throw new Error("runtime stop requires --instance <name>; operational paths must not be stopped through this command");
+  }
+  validateInstanceName(instance);
+  const dirs = tychonicRuntimeDirs();
+  const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
+  const result = await stopRuntimeParent({ instance, pidFile });
+  const temporal =
+    result.ok && (result.state === "stopped" || result.state === "not_running")
+      ? await new TemporalManager(temporalConfigFromOptions({})).stop()
+      : undefined;
+  const ok = result.ok && (temporal?.ok ?? true);
+  console.log(
+    JSON.stringify(
+      { ...result, ok, ...(temporal ? { temporal } : {}), _meta: cliInstanceMeta() },
+      null,
+      2
+    )
+  );
+  if (!ok) {
+    process.exitCode = 1;
+  }
+}
+
 function temporalConfigFromOptions(options: {
-  mode?: TemporalConfig["mode"];
-  frontendPort?: number;
-  uiPort?: number;
-  address?: string;
-  namespace?: string;
-  taskQueue?: string;
+  temporalMode?: TemporalConfig["mode"];
+  temporalPort?: number;
+  temporalAddress?: string;
+  temporalNamespace?: string;
+  temporalTaskQueue?: string;
 }): TemporalConfig {
   return {
-    ...(options.mode ? { mode: options.mode } : {}),
-    ...(options.frontendPort ? { frontendPort: options.frontendPort } : {}),
-    ...(options.uiPort ? { uiPort: options.uiPort } : {}),
-    ...(options.address ? { address: options.address } : {}),
-    ...(options.namespace ? { namespace: options.namespace } : {}),
-    ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
+    ...(options.temporalMode ? { mode: options.temporalMode } : {}),
+    ...(options.temporalPort !== undefined ? { apiPort: options.temporalPort } : {}),
+    ...(options.temporalAddress ? { address: options.temporalAddress } : {}),
+    ...(options.temporalNamespace ? { namespace: options.temporalNamespace } : {}),
+    ...(options.temporalTaskQueue ? { taskQueue: options.temporalTaskQueue } : {})
   };
 }
 

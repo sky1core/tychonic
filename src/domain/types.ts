@@ -12,7 +12,6 @@ export type WorkflowStateStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "retrying"
   | "skipped"
   | "blocked"
   | "timed_out";
@@ -77,8 +76,7 @@ export interface AgentSessionRecord {
   id: string;
   agent: string;
   role: "worker" | "reviewer" | "verifier";
-  external_session_id?: string;
-  resume_command?: string;
+  resumable?: boolean;
   cwd: string;
   status: "running" | "succeeded" | "failed" | "timed_out" | "unknown";
   prompt_artifact_id?: string;
@@ -110,7 +108,7 @@ export interface DecisionInboxItemRecord {
   finding_id?: string;
   target_session_id?: string;
   action:
-    | { kind: "resume_work"; command: string; prompt_artifact_id: string }
+    | { kind: "resume_work"; prompt_artifact_id: string }
     | { kind: "run_command"; command: string }
     | { kind: "triage"; reason: string }
     | { kind: "manual_approval"; reason: string };
@@ -123,12 +121,9 @@ export interface WorkflowRunRecord {
   template: string;
   status: WorkflowRunStatus;
   goal?: string;
-  target_session_id?: string;
   cwd: string;
-  worktree_path?: string;
   summary?: string;
   facts?: unknown;
-  profile_name?: string;
   profile_snapshot_artifact_id?: string;
   created_at: string;
   updated_at: string;

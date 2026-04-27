@@ -114,6 +114,32 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(output).not.toMatch(/"mode": "foreground"/);
   });
 
+  it("foreground runtime up fails before starting Temporal when installed bundle deps are missing", async () => {
+    const fakeHome = await makeStateHome();
+    const env = makeIsolatedEnv(fakeHome);
+    const instance = `missing-deps-${process.pid}`;
+
+    const install = await runCli(
+      ["--instance", instance, "workflows", "install", "examples/workflows/simpleWorkflow"],
+      { env }
+    );
+    expect(install.exitCode).toBe(0);
+
+    const result = await runCli(
+      ["--instance", instance, "runtime", "up", "--no-web"],
+      { env }
+    );
+    expect(result.exitCode).not.toBe(0);
+    const output = result.stderr + result.stdout;
+    expect(output).toMatch(/Can't resolve '@temporalio\/workflow'/);
+    expect(output).not.toMatch(/"mode": "foreground"/);
+
+    const status = await runCli(["--instance", instance, "temporal", "status"], { env });
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout).toContain('"portOpen": false');
+    expect(status.stdout).toContain('"health": "stopped"');
+  }, 20000);
+
   it("refuses when an existing PID file points at a live process", async () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
@@ -132,8 +158,8 @@ describe("tychonic runtime up --detach (gating)", () => {
     );
     expect(result.exitCode).not.toBe(0);
     const output = result.stderr + result.stdout;
-    expect(output).toMatch(/already has a detached runtime/);
+    expect(output).toMatch(/already has a runtime/);
     expect(output).toContain(`pid=${process.pid}`);
-    expect(output).toContain("runtime reset --instance live-pid");
+    expect(output).toContain("runtime stop --instance live-pid");
   });
 });

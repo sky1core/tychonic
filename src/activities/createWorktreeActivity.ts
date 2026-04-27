@@ -15,9 +15,9 @@ export interface CreateWorktreeActivityResult {
 /**
  * Creates the isolated worktree a `simple_workflow` run mutates. Returns the
  * path + the creation mode (git worktree vs directory copy when no HEAD
- * exists). The Stage 5 workflow feeds `worktreePath` into every
- * subsequent worker / verify / review activity through
- * `extras.worktreePath`.
+ * exists). The calling workflow passes `worktreePath` into subsequent
+ * worker / verify / review activities through the explicit
+ * `worktreePath` call field.
  *
  * SPEC §Workflow Loop Semantics: "Background mutation must use an
  * isolated worktree." This activity is the single place that creates

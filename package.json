@@ -22,6 +22,7 @@
     "skills",
     "README.md",
     "AGENTS.md",
+    "GUARDRAILS.md",
     "SPEC.md",
     "SECURITY.md",
     "LICENSE"
@@ -36,7 +37,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "tsx src/cli/main.ts",
-    "build": "npm run clean && tsc -p tsconfig.json && vite build && node scripts/bundle-workflows.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json && vite build",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
     "install:local": "npm run build && npm pack --pack-destination /tmp && npm install -g /tmp/tychonic-$npm_package_version.tgz",
@@ -44,7 +45,7 @@
     "test": "vitest run --exclude '**/.tychonic/**'",
     "smoke:package": "node scripts/smoke-pack-install.mjs",
     "verify:agents-live": "npm run build && node scripts/verify-agent-resume-live.mjs",
-    "verify:worker": "npm run typecheck && npm run build && npm test && npm run validate:examples && node dist/cli/main.js guardrails --cwd .",
+    "verify:worker": "npm run typecheck && npm run build && npm test && npm run validate:examples",
     "verify": "npm run verify:worker && npm audit --omit=dev && npm publish --dry-run --access public && npm run smoke:package",
     "start": "node dist/cli/main.js"
   },

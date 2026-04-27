@@ -20,7 +20,8 @@ describe("runWorkerActivity", () => {
       run,
       cwd,
       profile: profileWith("node -e \"console.log('worker ok')\""),
-      extras: { worktreePath, prompt: "do the thing" }
+      worktreePath,
+      prompt: "do the thing"
     });
 
     expect(run).toEqual(runBefore);
@@ -50,7 +51,8 @@ describe("runWorkerActivity", () => {
       run: baseRun("run_worker_fail"),
       cwd,
       profile: profileWith("node -e \"process.exit(1)\""),
-      extras: { worktreePath, prompt: "" }
+      worktreePath,
+      prompt: ""
     });
 
     expect(result.delta.states?.[0]?.status).toBe("failed");
@@ -68,25 +70,78 @@ describe("runWorkerActivity", () => {
         run: baseRun("run_worker_missing"),
         cwd,
         profile: { version: "tychonic.config.v1" },
-        extras: { worktreePath }
+        worktreePath
       })
     ).rejects.toThrow(/does_not_exist/);
   });
 
-  it("throws ApplicationFailure when extras.worktreePath is missing", async () => {
+  it("throws ApplicationFailure when worktreePath is missing", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-no-wt-"));
     await expect(
       runWorkerActivity({
         stateName: ACTIVITY_NAME,
         run: baseRun("run_worker_no_wt"),
         cwd,
-        profile: profileWith("echo"),
-        extras: {}
+        profile: profileWith("echo")
       })
     ).rejects.toThrow(/worktreePath/);
   });
 
-  it("fails when the work activity omits command", async () => {
+  it("does not infer resume from prior sessions when sessionId is omitted", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-no-implicit-resume-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-no-implicit-resume-wt-"));
+    const run = baseRun("run_worker_no_implicit_resume");
+    run.states.push({
+      id: "state_prev",
+      name: ACTIVITY_NAME,
+      status: "succeeded",
+      reason: "previous work",
+      activity_attempt_ids: ["attempt_prev"],
+      artifact_ids: [],
+      finding_ids: [],
+      started_at: "2026-01-01T00:00:00Z",
+      finished_at: "2026-01-01T00:00:05Z"
+    });
+    run.activity_attempts.push({
+      id: "attempt_prev",
+      state_id: "state_prev",
+      kind: "work",
+      status: "succeeded",
+      reason: "previous attempt",
+      command: "node previous.js",
+      cwd: worktreePath,
+      agent_session_id: "sess_prev",
+      started_at: "2026-01-01T00:00:00Z",
+      finished_at: "2026-01-01T00:00:05Z"
+    });
+    run.agent_sessions.push({
+      id: "sess_prev",
+      agent: "claude",
+      role: "worker",
+      resumable: true,
+      cwd: worktreePath,
+      status: "succeeded",
+      started_at: "2026-01-01T00:00:00Z",
+      finished_at: "2026-01-01T00:00:05Z"
+    });
+
+    const result = await runWorkerActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith("node -e \"console.log('fresh work')\""),
+      worktreePath,
+      prompt: "fresh please"
+    });
+
+    expect(result.delta.activityAttempts?.[0]?.kind).toBe("work");
+    expect(result.workerOutcome?.kind).toBe("executed");
+    if (result.workerOutcome?.kind === "executed") {
+      expect(result.workerOutcome.resumedSessionId).toBeUndefined();
+    }
+  });
+
+  it("rejects an unvalidated work profile block before command resolution", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-command-missing-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-wt-command-missing-"));
 
@@ -100,13 +155,39 @@ describe("runWorkerActivity", () => {
           states: {
             [ACTIVITY_NAME]: {
               type: "work",
-              agent: "codex"
+              agent: "custom-non-builtin"
             }
           }
         },
-        extras: { worktreePath, prompt: "make the requested change" }
+        worktreePath,
+        prompt: "make the requested change"
       })
-    ).rejects.toThrow(/requires a command/);
+    ).rejects.toThrow(/profile\.states\.work_alt failed schema validation/);
+  });
+
+  it("rejects an unvalidated work profile block that declares both selectors", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-both-selectors-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-wt-both-selectors-"));
+
+    await expect(
+      runWorkerActivity({
+        stateName: ACTIVITY_NAME,
+        run: baseRun("run_worker_both_selectors"),
+        cwd,
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            [ACTIVITY_NAME]: {
+              type: "work",
+              agent: "codex",
+              command: "node worker.js"
+            }
+          }
+        },
+        worktreePath,
+        prompt: "make the requested change"
+      })
+    ).rejects.toThrow(/must set only one execution selector: agent or command/);
   });
 });
 
@@ -116,7 +197,6 @@ function profileWith(command: string): TychonicConfig {
     states: {
       [ACTIVITY_NAME]: {
         type: "work",
-        agent: "codex",
         command
       }
     }

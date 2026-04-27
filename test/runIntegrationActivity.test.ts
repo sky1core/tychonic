@@ -18,8 +18,7 @@ describe("runIntegrationActivity", () => {
       stateName: ACTIVITY_NAME,
       run,
       cwd,
-      profile: profileWith("node -e \"console.log('integration ok')\""),
-      extras: {}
+      profile: profileWith("node -e \"console.log('integration ok')\"")
     });
 
     expect(run).toEqual(runBefore);
@@ -35,8 +34,7 @@ describe("runIntegrationActivity", () => {
         stateName: "missing",
         run: baseRun("run_integration_missing"),
         cwd,
-        profile: { version: "tychonic.config.v1" },
-        extras: {}
+        profile: { version: "tychonic.config.v1" }
       })
     ).rejects.toThrow(/missing/);
   });

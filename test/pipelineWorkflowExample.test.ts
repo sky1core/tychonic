@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { inspectBundle } from "../src/temporal/workflowModules.js";
 
 const WORKFLOW_PATH = new URL("../examples/workflows/pipelineWorkflow/workflow.mjs", import.meta.url);
-const CONFIG_PATH = new URL("../examples/workflows/pipelineWorkflow/config.yaml", import.meta.url);
+const WORKFLOW_FILE_PATH = fileURLToPath(WORKFLOW_PATH);
 
 describe("pipelineWorkflow bundle example", () => {
   it("falls back to goal when launched through the generic workflow starter", async () => {
@@ -22,18 +24,17 @@ describe("pipelineWorkflow bundle example", () => {
     expect(source).toContain("\"schema_version\": \"tychonic.review.v1\"");
   });
 
-  it("declares its required state set via the requires export", async () => {
-    const source = await readFile(WORKFLOW_PATH, "utf8");
-    expect(source).toContain("export const requires");
-    expect(source).toContain("{ name: \"work\", type: \"work\" }");
-    expect(source).toContain("{ name: \"review_1\", type: \"review\" }");
-  });
-
-  it("ships its config.yaml with matching state blocks", async () => {
-    const config = await readFile(CONFIG_PATH, "utf8");
-    expect(config).toContain("version: tychonic.config.v1");
-    expect(config).toContain("review_1:");
-    expect(config).toContain("review_2:");
-    expect(config).toContain("security:");
+  it("declares its workflow-default profile via the defaultProfile export", async () => {
+    const inspection = await inspectBundle({
+      name: "pipelineWorkflow",
+      workflowPath: WORKFLOW_FILE_PATH
+    });
+    const states = inspection.defaultProfile.states ?? {};
+    expect(states.work?.type).toBe("work");
+    expect(states.review_1?.type).toBe("review");
+    expect(states.review_2?.type).toBe("review");
+    expect(states.security?.type).toBe("verify");
+    expect(states.integration?.type).toBe("integration");
+    expect(inspection.defaultProfile.version).toBe("tychonic.config.v1");
   });
 });

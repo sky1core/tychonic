@@ -18,8 +18,7 @@ describe("runVerifyActivity", () => {
       stateName: ACTIVITY_NAME,
       run,
       cwd,
-      profile: profileWith("node -e \"console.log('verify ok')\""),
-      extras: {}
+      profile: profileWith("node -e \"console.log('verify ok')\"")
     });
 
     expect(run).toEqual(runBefore);
@@ -28,7 +27,7 @@ describe("runVerifyActivity", () => {
     expect(result.commandOutcome?.artifact.kind).toBe(`${ACTIVITY_NAME}_output`);
   });
 
-  it("uses extras.worktreePath as the execution cwd when provided", async () => {
+  it("uses worktreePath as the execution cwd when provided", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-verify-cwd-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-verify-wt-"));
     const run = baseRun("run_verify_cwd");
@@ -38,7 +37,7 @@ describe("runVerifyActivity", () => {
       run,
       cwd,
       profile: profileWith("node -e \"process.stdout.write(process.cwd())\""),
-      extras: { worktreePath }
+      worktreePath
     });
 
     expect(result.commandOutcome?.artifact).toBeDefined();
@@ -52,8 +51,7 @@ describe("runVerifyActivity", () => {
         stateName: "missing",
         run: baseRun("run_verify_missing"),
         cwd,
-        profile: { version: "tychonic.config.v1" },
-        extras: {}
+        profile: { version: "tychonic.config.v1" }
       })
     ).rejects.toThrow(/missing/);
   });

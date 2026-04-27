@@ -8,12 +8,18 @@ import {
   activityTimeoutMs,
   defaultActivityTimeoutMs,
   optionalStateConfig,
-  resolveActivityCommand,
-  stateResumeEnabled
+  type ActivityBlock
 } from "../catalog/types.js";
+import {
+  resolveCommand,
+  resolveResumeCommand,
+  type AdapterDispatch
+} from "../adapters/resolveAdapter.js";
+import { AdapterUnsupported } from "../adapters/types.js";
 import { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import type { AgentSessionRecord } from "../domain/types.js";
+import { applyParsedAdapterSession } from "./adapterSession.js";
 import { heartbeatActivity } from "./heartbeat.js";
 
 export type RunWorkerActivityInput = ActivityInput<"work">;
@@ -29,20 +35,18 @@ export async function runWorkerActivity(input: RunWorkerActivityInput): Promise<
     });
   }
 
-  const worktreePath = input.extras.worktreePath;
+  const worktreePath = input.worktreePath;
   if (!worktreePath) {
     throw ApplicationFailure.create({
-      message: `work activity '${input.stateName}' requires extras.worktreePath (worker activities run inside an isolated worktree)`,
+      message: `work activity '${input.stateName}' requires worktreePath (worker activities run inside an isolated worktree)`,
       type: "WorktreePathMissing",
       nonRetryable: true
     });
   }
 
   const store = new RunArtifactStore(join(input.cwd, ".tychonic"));
-  const prompt = input.extras.prompt ?? input.extras.goal ?? "";
-  const resumeSession =
-    resolveExplicitResumeSession(input) ??
-    (stateResumeEnabled(block) ? findLatestStateResumeSession(input) : undefined);
+  const prompt = input.prompt ?? input.goal ?? "";
+  const resumeSession = resolveExplicitResumeSession(input);
 
   const resources: WorkerActivityResources = {
     store,
@@ -53,62 +57,144 @@ export async function runWorkerActivity(input: RunWorkerActivityInput): Promise<
   };
   const timeoutMs = activityTimeoutMs(input.profile, input.stateName, defaultActivityTimeoutMs("work"));
 
-  const result = resumeSession
-    ? await runWorkerActivityBody({
-        input,
-        expectedType: "work",
-        resources,
-        command: resumeSession.resume_command!,
-        timeoutMs,
-        executionCwd: worktreePath,
-        prompt,
-        agent: resumeSession.agent,
-        stateReason: `resume ${input.stateName} (session ${resumeSession.id})`,
-        resumeSessionId: resumeSession.id,
-        attemptKind: "resume_work"
-      })
-    : (await runFreshWorkerActivity({
-        input,
-        block,
-        resources,
-        timeoutMs,
-        worktreePath,
-        prompt
-      })).result;
-  return result;
+  if (resumeSession) {
+    const resumeDispatch = resolveResumeDispatch({
+      input,
+      block,
+      session: resumeSession,
+      worktreePath,
+      prompt,
+      role: "work"
+    });
+    return runWorkerActivityBody({
+      input,
+      expectedType: "work",
+      resources,
+      command: resumeDispatch.command,
+      timeoutMs,
+      executionCwd: worktreePath,
+      prompt,
+      agent: resumeDispatch.agentName,
+      stateReason: `resume ${input.stateName} (session ${resumeSession.id})`,
+      resumeSessionId: resumeSession.id,
+      attemptKind: "resume_work"
+    });
+  }
+
+  return runFreshWorkerActivity({
+    input,
+    block,
+    resources,
+    timeoutMs,
+    worktreePath,
+    prompt
+  });
 }
 
-async function runFreshWorkerActivity(input: {
+async function runFreshWorkerActivity(args: {
   input: RunWorkerActivityInput;
-  block: NonNullable<ReturnType<typeof optionalStateConfig>>;
+  block: ActivityBlock;
   resources: WorkerActivityResources;
   timeoutMs: number;
   worktreePath: string;
   prompt: string;
-}): Promise<{ result: ActivityResult; command: string }> {
-  const agentCommand = resolveActivityCommand(input.block);
-  let command = input.input.extras.command ?? input.block.command ?? agentCommand?.command;
-  if (!command) {
+}): Promise<ActivityResult> {
+  const { input, block, resources, timeoutMs, worktreePath, prompt } = args;
+
+  let resolved;
+  try {
+    resolved = resolveCommand({
+      block,
+      worktreeCwd: worktreePath,
+      prompt,
+      role: "work"
+    });
+  } catch (err) {
+    if (err instanceof AdapterUnsupported) {
+      throw ApplicationFailure.create({
+        message: `work activity '${input.stateName}': ${err.message}`,
+        type: "AdapterUnsupported",
+        nonRetryable: true
+      });
+    }
+    throw err;
+  }
+  if (!resolved) {
     throw ApplicationFailure.create({
-      message: `work activity '${input.input.stateName}' requires a command (profile.states.${input.input.stateName}.command or extras.command)`,
+      message: `work activity '${input.stateName}' requires profile.states.${input.stateName}.command or a built-in agent`,
       type: "CommandMissing",
       nonRetryable: true
     });
   }
 
+  const agentLabel = resolved.kind === "adapter" ? resolved.agentName : resolved.agentLabel;
   const result = await runWorkerActivityBody({
-    input: input.input,
+    input,
     expectedType: "work",
-    resources: input.resources,
-    command,
-    timeoutMs: input.timeoutMs,
-    executionCwd: input.worktreePath,
-    prompt: input.prompt,
-    agent: input.block.agent ?? "custom",
-    stateReason: `run ${input.input.stateName}`,
-    ...(input.block.resume_command ? { resumeCommand: input.block.resume_command } : {})
+    resources,
+    command: resolved.command,
+    timeoutMs,
+    executionCwd: worktreePath,
+    prompt,
+    agent: agentLabel,
+    stateReason: `run ${input.stateName}`
   });
-  return { result, command };
+
+  if (resolved.kind === "adapter") {
+    return applyParsedAdapterSession(result, resolved);
+  }
+  return result;
+}
+
+function resolveResumeDispatch(args: {
+  input: RunWorkerActivityInput;
+  block: ActivityBlock;
+  session: AgentSessionRecord;
+  worktreePath: string;
+  prompt: string;
+  role: "work";
+}): AdapterDispatch {
+  const { input, block, session, worktreePath, prompt, role } = args;
+  if (!session.resumable) {
+    throw ApplicationFailure.create({
+      message: `work activity '${input.stateName}': session '${session.id}' is not resumable`,
+      type: "ResumeSessionNotResumable",
+      nonRetryable: true
+    });
+  }
+
+  let dispatch;
+  try {
+    dispatch = resolveResumeCommand({
+      block: blockForSessionAgent(block, session.agent),
+      sessionId: session.id,
+      worktreeCwd: worktreePath,
+      prompt,
+      role
+    });
+  } catch (err) {
+    if (err instanceof AdapterUnsupported) {
+      throw ApplicationFailure.create({
+        message: `work activity '${input.stateName}': ${err.message}`,
+        type: "AdapterUnsupported",
+        nonRetryable: true
+      });
+    }
+    throw err;
+  }
+  if (!dispatch) {
+    throw ApplicationFailure.create({
+      message: `work activity '${input.stateName}': session '${session.id}' has no built-in adapter resume path`,
+      type: "ResumeSessionNotResumable",
+      nonRetryable: true
+    });
+  }
+  return dispatch;
+}
+
+function blockForSessionAgent(block: ActivityBlock, agent: string): ActivityBlock {
+  const { command: _command, ...rest } = block;
+  return { ...rest, agent };
 }
 
 function nextIdFromRun(run: RunWorkerActivityInput["run"]): (prefix: string) => string {
@@ -123,7 +209,7 @@ function nextIdFromRun(run: RunWorkerActivityInput["run"]): (prefix: string) => 
 }
 
 function resolveExplicitResumeSession(input: RunWorkerActivityInput): AgentSessionRecord | undefined {
-  const sessionId = input.extras.sessionId;
+  const sessionId = input.sessionId;
   if (!sessionId) {
     return undefined;
   }
@@ -135,28 +221,12 @@ function resolveExplicitResumeSession(input: RunWorkerActivityInput): AgentSessi
       nonRetryable: true
     });
   }
-  if (!session.resume_command) {
+  if (!session.resumable) {
     throw ApplicationFailure.create({
-      message: `work activity '${input.stateName}': session '${sessionId}' has no resume_command`,
-      type: "ResumeCommandMissing",
+      message: `work activity '${input.stateName}': session '${sessionId}' is not resumable`,
+      type: "ResumeSessionNotResumable",
       nonRetryable: true
     });
   }
   return session;
-}
-
-function findLatestStateResumeSession(input: RunWorkerActivityInput): AgentSessionRecord | undefined {
-  const stateIds = new Set(
-    input.run.states.filter((state) => state.name === input.stateName).map((state) => state.id)
-  );
-  for (const attempt of [...input.run.activity_attempts].reverse()) {
-    if (!stateIds.has(attempt.state_id) || !attempt.agent_session_id) {
-      continue;
-    }
-    const session = input.run.agent_sessions.find((candidate) => candidate.id === attempt.agent_session_id);
-    if (session?.resume_command) {
-      return session;
-    }
-  }
-  return undefined;
 }
