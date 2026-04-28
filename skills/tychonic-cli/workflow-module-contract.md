@@ -46,6 +46,9 @@ Tychonic does not synthesize resolver state during install.
 - Activities execute one state invocation at a time.
 - State NAME is workflow-defined and product-facing.
 - Activity TYPE selects the activity contract.
+- Activity TYPE is exactly `work`, `verify`, or `review`; do not create
+  narrower TYPES such as architect, builder, QA, repair, or pre-review.
+  Express those roles as state NAMEs.
 
 Do not encode workflow graph behavior in config. Do not add source-tree
 shortcuts or built-in workflow execution paths.

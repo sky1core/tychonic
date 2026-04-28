@@ -86,6 +86,16 @@ Workflow input must be a JSON object. Do not put `profile` in `--input` or
 `--input-file`; Tychonic reserves that field for the effective config it
 passes internally to workflow code.
 
+State `type` is exactly one of `work`, `verify`, or `review`:
+
+- `work` runs an agent or command to produce or modify work.
+- `verify` runs deterministic checks.
+- `review` produces a structured pass/fail review verdict.
+
+For architect/builder/QA workflows, architect and builder states are `work`.
+The QA gate is `review`. A prose Kiro pre-review or repair step is still
+`work`; only the structured pass/fail gate is `review`.
+
 Minimal state profile shape:
 
 ```yaml
