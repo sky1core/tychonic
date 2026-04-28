@@ -594,14 +594,8 @@ function qaPrompt({ runId, worktreePath }) {
     `Check the builder output in ${worktreePath} against the architect`,
     `design captured under .tychonic/runs/${runId}/artifacts/.`,
     "",
-    "Return only one JSON object matching this contract. Do not wrap it in markdown.",
-    "{",
-    '  "status": "pass|fail",',
-    '  "summary": "short result summary",',
-    '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
-    "  ]",
-    "}",
+    "Report a semantic review verdict with status, summary, and findings.",
+    "Each finding needs severity, title, and actionable detail.",
     "Add target or target_session_id only when you can identify one.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
   ].join("\n");

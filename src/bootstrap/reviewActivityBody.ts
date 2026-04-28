@@ -1,10 +1,13 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   optionalStateConfig
 } from "../catalog/types.js";
 import type { TychonicConfig } from "../catalog/types.js";
+import { getAgentAdapter } from "../adapters/index.js";
 import type { AdapterDispatch } from "../adapters/resolveAdapter.js";
+import type { BuiltInAgentName } from "../adapters/types.js";
 import type {
   ActivityAttemptRecord,
   AgentSessionRecord,
@@ -27,6 +30,7 @@ export interface ResolvedReviewOptions {
   command: string;
   agent: string;
   adapterDispatch?: AdapterDispatch;
+  normalizerAgent?: Extract<BuiltInAgentName, "claude" | "codex">;
 }
 
 export interface ReviewActivityResources {
@@ -182,9 +186,61 @@ export async function runReviewActivityBody(
   };
 
   attempt.agent_session_id = session.id;
-  const parsed = reviewOptions.adapterDispatch
-    ? parseBuiltInReviewOutput(result.output)
-    : parseReviewOutput(result.output);
+  let outputToParse = result.output;
+  let parseBuiltInEnvelope = reviewOptions.adapterDispatch !== undefined;
+  const agentSessions: AgentSessionRecord[] = [session];
+
+  if (reviewOptions.normalizerAgent !== undefined) {
+    const normalized = await runReviewNormalizer({
+      normalizerAgent: reviewOptions.normalizerAgent,
+      primaryAgent: reviewOptions.agent,
+      primaryOutput: result.output,
+      executionCwd,
+      timeoutMs,
+      env,
+      heartbeat: progress,
+      store,
+      artifactsDir,
+      attemptId: attempt.id,
+      stateId: state.id,
+      stateName: input.stateName,
+      createdAt,
+      now,
+      nextId
+    });
+    artifacts.push(...normalized.artifacts);
+    state.artifact_ids.push(...normalized.artifacts.map((artifact) => artifact.id));
+    if (normalized.session) {
+      agentSessions.push(normalized.session);
+    }
+    if (normalized.result.status !== "succeeded") {
+      attempt.status = normalized.result.status;
+      attempt.reason = "review normalizer command did not succeed";
+      if (normalized.result.exitCode !== undefined) {
+        attempt.exit_code = normalized.result.exitCode;
+      }
+      state.status = "blocked";
+      state.reason = "review normalizer command did not succeed";
+      state.finished_at = now().toISOString();
+      const outcome: ReviewActivityOutcome = {
+        kind: "unparseable",
+        detail: "review normalizer command did not succeed",
+        reviewerSessionId: session.id,
+        artifacts,
+        agentSessions
+      };
+      return {
+        delta: { states: [state], activityAttempts: [attempt] },
+        reviewOutcome: outcome
+      };
+    }
+    outputToParse = normalized.result.output;
+    parseBuiltInEnvelope = true;
+  }
+
+  const parsed = parseBuiltInEnvelope
+    ? parseBuiltInReviewOutput(outputToParse)
+    : parseReviewOutput(outputToParse);
 
   if (!parsed) {
     state.status = "blocked";
@@ -195,7 +251,7 @@ export async function runReviewActivityBody(
       detail: "reviewer output did not match tychonic.review.v1",
       reviewerSessionId: session.id,
       artifacts,
-      agentSessions: [session]
+      agentSessions
     };
     return {
       delta: { states: [state], activityAttempts: [attempt] },
@@ -226,7 +282,7 @@ export async function runReviewActivityBody(
     result: parsed,
     reviewerSessionId: session.id,
     artifacts,
-    agentSessions: [session]
+    agentSessions
   };
   return {
     delta: { states: [state], activityAttempts: [attempt] },
@@ -273,8 +329,122 @@ export async function resolveNamedReviewOptions(options: {
   return {
     command: resolved.command,
     agent: agentLabel,
+    ...(review.normalizer ? { normalizerAgent: review.normalizer } : {}),
     ...(resolved.kind === "adapter" ? { adapterDispatch: resolved } : {})
   };
+}
+
+async function runReviewNormalizer(input: {
+  normalizerAgent: Extract<BuiltInAgentName, "claude" | "codex">;
+  primaryAgent: string;
+  primaryOutput: string;
+  executionCwd: string;
+  timeoutMs: number;
+  env: NodeJS.ProcessEnv;
+  heartbeat: () => void;
+  store: RunArtifactStore;
+  artifactsDir: string;
+  attemptId: string;
+  stateId: string;
+  stateName: string;
+  createdAt: string;
+  now: () => Date;
+  nextId: (prefix: string) => string;
+}): Promise<{
+  result: Awaited<ReturnType<typeof runCommand>>;
+  artifacts: ArtifactRecord[];
+  session?: AgentSessionRecord;
+}> {
+  const normalizerPrompt = buildReviewNormalizerPrompt({
+    primaryAgent: input.primaryAgent,
+    primaryOutput: input.primaryOutput
+  });
+  const adapter = getAgentAdapter(input.normalizerAgent);
+  const normalizerCwd = await mkdtemp(join(tmpdir(), "tychonic-review-normalizer-"));
+  try {
+    const command = adapter.runNew({
+      prompt: normalizerPrompt,
+      worktreeCwd: normalizerCwd,
+      role: "review"
+    }).command;
+
+    const artifacts: ArtifactRecord[] = [];
+    const promptArtifact = await writeReviewArtifact({
+      store: input.store,
+      artifactsDir: input.artifactsDir,
+      id: input.nextId("artifact"),
+      kind: `${input.stateName}_normalizer_prompt`,
+      attemptId: input.attemptId,
+      ext: "txt",
+      content: normalizerPrompt,
+      stateId: input.stateId,
+      createdAt: input.createdAt
+    });
+    artifacts.push(promptArtifact);
+
+    const result = await withPeriodicProgress(input.heartbeat, async () =>
+      await runCommand({
+        command,
+        cwd: normalizerCwd,
+        timeoutMs: input.timeoutMs,
+        env: input.env,
+        stdin: normalizerPrompt,
+        onProgress: input.heartbeat
+      })
+    );
+
+    const outputArtifact = await writeReviewArtifact({
+      store: input.store,
+      artifactsDir: input.artifactsDir,
+      id: input.nextId("artifact"),
+      kind: `${input.stateName}_normalizer_output`,
+      attemptId: input.attemptId,
+      ext: "txt",
+      content: result.output,
+      stateId: input.stateId,
+      createdAt: input.createdAt
+    });
+    artifacts.push(outputArtifact);
+
+    const parsedSessionId = adapter.parseResult(result.output, "", result.exitCode ?? 0).sessionId;
+    const session = parsedSessionId
+      ? {
+          id: parsedSessionId,
+          agent: input.normalizerAgent,
+          role: "reviewer" as const,
+          cwd: normalizerCwd,
+          status: result.status,
+          prompt_artifact_id: promptArtifact.id,
+          result_artifact_id: outputArtifact.id,
+          started_at: input.createdAt,
+          finished_at: input.now().toISOString()
+        }
+      : undefined;
+
+    return { result, artifacts, ...(session ? { session } : {}) };
+  } finally {
+    await rm(normalizerCwd, { recursive: true, force: true });
+  }
+}
+
+function buildReviewNormalizerPrompt(input: {
+  primaryAgent: string;
+  primaryOutput: string;
+}): string {
+  return [
+    "You are a Tychonic review normalizer.",
+    "Convert the primary review output into the semantic review payload only.",
+    "Return JSON with exactly: status, summary, findings.",
+    "Do not add schema_version; the host owns that field.",
+    "Do not invent findings that are not present in the primary review output.",
+    "If the primary output says the work passes, return status pass and findings [].",
+    "If the primary output identifies concrete problems, return status fail and those findings.",
+    "",
+    `Primary reviewer: ${input.primaryAgent}`,
+    "",
+    "Primary review output:",
+    input.primaryOutput
+  ].join("\n");
 }
 
 async function writeReviewArtifact(input: {

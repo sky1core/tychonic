@@ -2,7 +2,7 @@
  * Built-in agent adapter contract.
  *
  * An `AgentAdapter` translates a host-level intent ("run a worker / reviewer
- * / auto_continue session against agent X with role Y") into the concrete
+ * session against agent X with role Y") into the concrete
  * shell command and stdin layout the underlying CLI expects, and translates
  * the CLI's stdout back into a normalised result the host can attach to a
  * `AgentSessionRecord`.
@@ -14,7 +14,7 @@
  * of the refactor will wire activities to the registry; Step 1 (this file)
  * only lands the abstraction.
  *
- * Role mapping ("work" / "auto_continue" / "review") drives permission flag
+ * Role mapping ("work" / "review") drives permission flag
  * selection inside each adapter. The role is supplied per call and is the
  * sole source of permission policy unless the caller explicitly overrides
  * via `sandbox` / `approval` / `permission_mode` / `trust_all_tools`.
@@ -26,15 +26,15 @@ import type {
 
 /**
  * Built-in adapter names. The schema's free-form `agent` field is a label
- * (UI / logs); only these four values trigger the adapter dispatch path.
+ * (UI / logs); only these values trigger the adapter dispatch path.
  */
-export type BuiltInAgentName = "claude" | "codex" | "gemini" | "kiro";
+export type BuiltInAgentName = "claude" | "codex" | "gemini" | "kiro" | "kiro-acp";
 
 /**
  * Roles that the host knows how to map to permission flags. Maps directly
  * to the relevant subset of `ActivityType`.
  */
-export type AdapterRole = Extract<ActivityType, "work" | "auto_continue" | "review">;
+export type AdapterRole = Extract<ActivityType, "work" | "review">;
 
 export type AdapterSandbox = "read-only" | "workspace-write" | "danger-full-access";
 export type AdapterApproval = "never" | "on-request" | "on-failure" | "untrusted";

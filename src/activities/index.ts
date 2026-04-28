@@ -11,13 +11,8 @@ import { CancelledFailure, Context } from "@temporalio/activity";
 
 export { heartbeatActivity } from "./heartbeat.js";
 
-export { runLintActivity } from "./runLintActivity.js";
-export { runUnitTestActivity } from "./runUnitTestActivity.js";
-export { runIntegrationActivity } from "./runIntegrationActivity.js";
 export { runVerifyActivity } from "./runVerifyActivity.js";
 export { runWorkerActivity } from "./runWorkerActivity.js";
-export { runResumeWorkActivity } from "./runResumeWorkActivity.js";
-export { runAutoContinueActivity } from "./runAutoContinueActivity.js";
 export { runReviewActivity } from "./runReviewActivity.js";
 export { startRunActivity } from "./startRunActivity.js";
 export { collectGitFactsActivity } from "./collectGitFactsActivity.js";

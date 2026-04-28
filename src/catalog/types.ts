@@ -4,6 +4,7 @@ import { BUILTIN_AGENT_NAMES, isBuiltInAgentName } from "../adapters/index.js";
 
 const ActivityNameSchema = z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);
 const AgentLabelSchema = z.string().min(1);
+const ReviewNormalizerSchema = z.enum(["claude", "codex"]);
 const CommandStringSchema = z.string().min(1).refine((value) => !hasInlineSecrets(value), {
   message: "command must not contain inline secret values; use external CLI auth or inherited environment references"
 });
@@ -20,13 +21,9 @@ const TimeoutValueSchema = z.union([z.number().int().positive(), z.string().min(
 );
 
 export const ActivityTypeSchema = z.enum([
-  "lint",
-  "unit_test",
-  "integration",
   "work",
   "verify",
-  "review",
-  "auto_continue"
+  "review"
 ]);
 
 export type ActivityType = z.infer<typeof ActivityTypeSchema>;
@@ -40,18 +37,6 @@ const ORCHESTRATION_FIELDS = [
 ] as const satisfies readonly ActivityBlockField[];
 
 export const activityTypeContracts = {
-  lint: {
-    required: ["command"],
-    allowed: ["command", "timeout", ...ORCHESTRATION_FIELDS]
-  },
-  unit_test: {
-    required: ["command"],
-    allowed: ["command", "timeout", ...ORCHESTRATION_FIELDS]
-  },
-  integration: {
-    required: ["command"],
-    allowed: ["command", "timeout", ...ORCHESTRATION_FIELDS]
-  },
   verify: {
     required: ["command"],
     allowed: ["command", "timeout", ...ORCHESTRATION_FIELDS]
@@ -60,13 +45,9 @@ export const activityTypeContracts = {
     requiredOneOf: [["command", "agent"]],
     allowed: ["agent", "command", "timeout", ...ORCHESTRATION_FIELDS]
   },
-  auto_continue: {
-    requiredOneOf: [["command", "agent"]],
-    allowed: ["agent", "command", "timeout", ...ORCHESTRATION_FIELDS]
-  },
   review: {
     requiredOneOf: [["command", "agent"]],
-    allowed: ["agent", "command", "timeout", ...ORCHESTRATION_FIELDS]
+    allowed: ["agent", "normalizer", "command", "timeout", ...ORCHESTRATION_FIELDS]
   }
 } as const satisfies Record<
   ActivityType,
@@ -79,6 +60,7 @@ export const activityTypeContracts = {
 
 type ActivityBlockField =
   | "agent"
+  | "normalizer"
   | "command"
   | "resume"
   | "timeout"
@@ -90,12 +72,14 @@ type ActivityBlockField =
 /**
  * Activity block contract:
  * - every block has a required product-controlled `type`
- * - deterministic command activities (`lint`, `unit_test`, `integration`, `verify`) require `command`
- * - `work`, `review`, and `auto_continue` require either `agent` or `command`
- * - when `agent` is set on a `work` / `review` / `auto_continue` block it
- *   must name one of the four built-in adapters (`claude`, `codex`,
- *   `gemini`, `kiro`); the host dispatches the CLI argv, resume invocation,
+ * - deterministic `verify` activities require `command`
+ * - `work` and `review` require either `agent` or `command`
+ * - when `agent` is set on a `work` / `review` block it
+ *   must name one of the built-in adapters (`claude`, `codex`,
+ *   `gemini`, `kiro`, `kiro-acp`); the host dispatches the CLI argv, resume invocation,
  *   and session-id capture for those names
+ * - `normalizer` is review-only. It is required when a review state selects
+ *   `gemini`, `kiro`, or `kiro-acp`, and must be `claude` or `codex`.
  * - `agent` and `command` are mutually exclusive execution selectors
  * - `resume` is a non-negative integer workflow-readable budget. `0` or
  *   an absent value disables in-session resume by convention. The schema
@@ -110,6 +94,7 @@ export const StateConfigBlockSchema = z
   .object({
     type: ActivityTypeSchema,
     agent: AgentLabelSchema.optional(),
+    normalizer: ReviewNormalizerSchema.optional(),
     command: CommandStringSchema.optional(),
     resume: z.number().int().min(0).optional(),
     timeout: TimeoutValueSchema.optional(),
@@ -145,13 +130,9 @@ export type ActivityTimeoutName = string;
 export type ActivityTimeoutOverrides = Partial<Record<ActivityTimeoutName, number>>;
 
 export const DEFAULT_ACTIVITY_TIMEOUT_BY_TYPE = {
-  lint: 10 * 60 * 1000,
-  unit_test: 30 * 60 * 1000,
-  integration: 60 * 60 * 1000,
   verify: 30 * 60 * 1000,
   work: 120 * 60 * 1000,
-  review: 45 * 60 * 1000,
-  auto_continue: 90 * 60 * 1000
+  review: 45 * 60 * 1000
 } as const satisfies Record<ActivityType, number>;
 
 export function defaultActivityTimeoutMs(type: ActivityType): number {
@@ -289,26 +270,24 @@ function validateActivityBlock(block: ActivityBlock, ctx: z.RefinementCtx): void
 }
 
 /**
- * Built-in adapters that lack the structured-output reviewer surface.
- * The schema rejects them on `type: "review"` so operators learn at
- * install time, not at first run; the runtime adapter additionally
- * throws `AdapterUnsupported` as the second line of defense.
+ * Built-in adapters that need a review normalizer. They can produce prose
+ * review output, but not the structured payload the host accepts directly.
  */
-const NON_REVIEWER_BUILTIN_AGENTS = new Set<string>(["gemini", "kiro"]);
+const NON_REVIEWER_BUILTIN_AGENTS = new Set<string>(["gemini", "kiro", "kiro-acp"]);
 
 /**
  * When `agent` is set on an adapter-capable activity type, restrict it
- * to the four built-in adapter names. Misspelt names (`claud`,
+ * to the built-in adapter names. Misspelt names (`claud`,
  * `geminii`, ...) are caught at config validation time so they never
  * reach the runtime command-resolution chain — which would otherwise
  * fall through and surface as a `CommandMissing` failure mid-run.
  */
 function validateAgentName(block: ActivityBlock, ctx: z.RefinementCtx): void {
   if (block.agent === undefined) return;
-  // `agent` is only a meaningful adapter selector on the three adapter
+  // `agent` is only a meaningful adapter selector on adapter-backed
   // types. On deterministic types the field is rejected by the
   // allowed-list check above; we never reach here for those.
-  if (block.type !== "work" && block.type !== "review" && block.type !== "auto_continue") {
+  if (block.type !== "work" && block.type !== "review") {
     return;
   }
   if (!isBuiltInAgentName(block.agent)) {
@@ -334,22 +313,40 @@ function validateSingleExecutionSelector(block: ActivityBlock, ctx: z.Refinement
 }
 
 /**
- * `gemini` and `kiro` are partial adapters: their CLIs do not expose a stable
- * structured-review payload the host can normalize into `tychonic.review.v1`.
- * Reject them on `type: "review"` at install time. Operators pick `claude` or
- * `codex` for review states, or use an explicit `command` escape hatch with
- * their own reviewer wrapper.
+ * `gemini`, `kiro`, and `kiro-acp` review states must name a built-in
+ * normalizer (`claude` or `codex`). Direct structured reviewers (`claude`,
+ * `codex`) must not set a normalizer because they already emit the semantic
+ * review payload the host normalizes.
  */
 function validateReviewerCapableAgent(block: ActivityBlock, ctx: z.RefinementCtx): void {
   if (block.type !== "review") return;
+  if (block.command !== undefined && block.normalizer !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "states.<name>.normalizer is only valid with a review agent, not command",
+      path: ["normalizer"]
+    });
+    return;
+  }
   if (block.agent === undefined) return;
   if (NON_REVIEWER_BUILTIN_AGENTS.has(block.agent)) {
+    if (block.normalizer === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `agent ${block.agent} requires states.<name>.normalizer on a review state; ` +
+          "normalizer must be claude or codex",
+        path: ["normalizer"]
+      });
+    }
+    return;
+  }
+  if (block.normalizer !== undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message:
-        `agent ${block.agent} does not support the reviewer role; ` +
-        "only claude or codex may serve as a review-state agent",
-      path: ["agent"]
+        "states.<name>.normalizer is only valid when the review agent is gemini, kiro, or kiro-acp",
+      path: ["normalizer"]
     });
   }
 }
@@ -357,6 +354,7 @@ function validateReviewerCapableAgent(block: ActivityBlock, ctx: z.RefinementCtx
 function activityBlockFieldNames(): ActivityBlockField[] {
   return [
     "agent",
+    "normalizer",
     "command",
     "resume",
     "timeout",

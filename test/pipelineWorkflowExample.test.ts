@@ -18,10 +18,11 @@ describe("pipelineWorkflow bundle example", () => {
     expect(source).toContain("addReviewTriageInbox");
   });
 
-  it("uses a structured review contract by default", async () => {
+  it("asks for semantic review payload without host wire fields", async () => {
     const source = await readFile(WORKFLOW_PATH, "utf8");
     expect(source).toContain("structuredReviewPrompt(\"work stages 1-3\")");
-    expect(source).toContain("\"status\": \"pass|fail\"");
+    expect(source).toContain("Report a semantic review verdict with status, summary, and findings.");
+    expect(source).not.toContain("Return only one JSON object");
     expect(source).not.toContain("\"schema_version\": \"tychonic.review.v1\"");
   });
 
@@ -35,7 +36,7 @@ describe("pipelineWorkflow bundle example", () => {
     expect(states.review_1?.type).toBe("review");
     expect(states.review_2?.type).toBe("review");
     expect(states.security?.type).toBe("verify");
-    expect(states.integration?.type).toBe("integration");
+    expect(states.integration?.type).toBe("verify");
     expect(inspection.defaultProfile.version).toBe("tychonic.config.v1");
   });
 });

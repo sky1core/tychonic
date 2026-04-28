@@ -10,7 +10,7 @@ import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import { runCommand, withPeriodicProgress } from "./commandRunner.js";
 
-export type DeterministicCommandType = "lint" | "unit_test" | "integration" | "verify";
+export type DeterministicCommandType = "verify";
 
 export interface DeterministicCommandResources {
   store: RunArtifactStore;
@@ -31,8 +31,7 @@ export interface RunDeterministicCommandBodyOptions<T extends DeterministicComma
 }
 
 /**
- * Shared body for deterministic-command activities (`lint`, `unit_test`,
- * `integration`, `verify`). Runs one command, records one attempt, writes
+ * Shared body for deterministic-command activities (`verify`). Runs one command, records one attempt, writes
  * one output artifact. Does not mutate `input.run` and produces exactly one
  * state (SPEC §Activity Result And Evidence Invariants).
  *

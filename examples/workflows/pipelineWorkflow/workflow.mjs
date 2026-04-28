@@ -23,10 +23,7 @@ const {
   createWorktreeActivity,
   collectGitFactsActivity,
   runWorkerActivity,
-  runLintActivity,
-  runUnitTestActivity,
   runReviewActivity,
-  runIntegrationActivity,
   runVerifyActivity,
   finalizeRunActivity
 } = act;
@@ -40,14 +37,14 @@ export const defaultProfile = {
       resume: 0,
       permission_mode: "acceptEdits"
     },
-    static: { type: "lint", command: "npm run lint" },
-    unit: { type: "unit_test", command: "npm test" },
+    static: { type: "verify", command: "npm run lint" },
+    unit: { type: "verify", command: "npm test" },
     review_1: {
       type: "review",
       agent: "claude",
       permission_mode: "plan"
     },
-    integration: { type: "integration", command: "npm run test:integration" },
+    integration: { type: "verify", command: "npm run test:integration" },
     review_2: {
       type: "review",
       agent: "codex",
@@ -66,7 +63,9 @@ export const defaultProfile = {
  * Identity And Activity TYPE.
  *
  * Input:
- *   { cwd, profile, goal?, prompt?, reviewPrompt?, reviewPrompt2? }
+ *   { cwd, goal?, prompt?, reviewPrompt?, reviewPrompt2? }
+ * Host-injected:
+ *   { profile?: TychonicConfig }
  *
  * Result:
  *   { runId, status, run, artifactRoot, summary? }
@@ -119,11 +118,8 @@ export async function pipelineWorkflow(input) {
   }
 
   // Stages 2-3: deterministic checks.
-  for (const [stateName, activity] of [
-    ["static", runLintActivity],
-    ["unit", runUnitTestActivity]
-  ]) {
-    const res = await activity({
+  for (const stateName of ["static", "unit"]) {
+    const res = await runVerifyActivity({
       stateName,
       run,
       cwd: input.cwd,
@@ -153,7 +149,7 @@ export async function pipelineWorkflow(input) {
   }
 
   // Stage 5: integration.
-  run = apply(run, await runIntegrationActivity({
+  run = apply(run, await runVerifyActivity({
     stateName: "integration",
     run,
     cwd: input.cwd,
@@ -288,14 +284,8 @@ function structuredReviewPrompt(scope) {
   return [
     `Review ${scope} for correctness, regressions, missing tests, and risky assumptions.`,
     "",
-    "Return only one JSON object matching this contract. Do not wrap it in markdown.",
-    "{",
-    '  "status": "pass|fail",',
-    '  "summary": "short result summary",',
-    '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
-    "  ]",
-    "}",
+    "Report a semantic review verdict with status, summary, and findings.",
+    "Each finding needs severity, title, and actionable detail.",
     "Add target or target_session_id only when you can identify one.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
   ].join("\n");

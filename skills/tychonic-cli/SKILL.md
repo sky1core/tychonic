@@ -82,6 +82,10 @@ The installed bundle's `defaultProfile` is the default config source.
 `--config <file>` replaces that profile for one invocation as a whole object.
 There is no merge.
 
+Workflow input must be a JSON object. Do not put `profile` in `--input` or
+`--input-file`; Tychonic reserves that field for the effective config it
+passes internally to workflow code.
+
 Minimal state profile shape:
 
 ```yaml
@@ -105,7 +109,7 @@ Use optional fields only when they express behavior the workflow actually
 needs. Do not add `resume`, permission, sandbox, timeout, or policy knobs just
 because the schema accepts them.
 
-Allowed state-block fields are `type`, `agent`, `command`, `resume`,
+Allowed state-block fields are `type`, `agent`, `normalizer`, `command`, `resume`,
 `timeout`, `sandbox`, `approval`, `permission_mode`, and `trust_all_tools`.
 Vendor-owned values such as model name, reasoning effort, thinking budget, and
 provider approval mode belong in the external CLI config or in an explicit
@@ -119,11 +123,26 @@ Use `agent: "<name>"` for built-in adapters:
 |---|---:|---:|---:|
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
-| `kiro` | yes | no | yes |
-| `gemini` | yes | no | no |
+| `kiro-acp` | yes | with normalizer | yes |
+| `kiro` | yes | with normalizer | yes |
+| `gemini` | yes | with normalizer | no |
 
 Use `command` only as an escape hatch for custom CLIs, unusual flags, or test
 stubs. A state sets exactly one of `agent` or `command`.
+
+For review states, `gemini`, `kiro`, and `kiro-acp` require `normalizer:
+claude` or `normalizer: codex`. The primary agent performs the review; the
+normalizer structures that output into the semantic review payload.
+
+Use `kiro-acp` rather than `kiro` for Kiro worker states when the installed
+Kiro CLI supports ACP. The plain `kiro` adapter is the legacy chat-wrapper
+path.
+
+`TYCHONIC_AGENT_PATH` prepends directories to the agent CLI lookup path. Use it
+when a smoke test or local setup needs Tychonic to find agent binaries outside
+the normal `PATH`, for example a temporary stub directory or a locally installed
+CLI. It is not workflow config and ordinary workflow input should not mention
+it.
 
 Built-in review adapters ask the model for the semantic payload:
 

@@ -33,8 +33,8 @@ Supported:
 - CLI as the primary machine interface
 - local-only Web UI/API
 - workflow config catalog plus runtime workflow module registry
-- deterministic command activities for lint, unit, integration, verify, and
-  similar project checks
+- deterministic command activities for project checks through the `verify`
+  activity TYPE
 - structured reviewer contract `tychonic.review.v1`
 - isolated worktree mutation path for workflows that run worker activities
 
@@ -124,8 +124,9 @@ different categories. Every other term must reduce to one of them.
   more states per invocation. The runtime record type is
   `WorkflowStateRecord` and the record array is `run.states[]`.
 - **Activity** — a Temporal activity function registered on the
-  Tychonic worker. One activity exists per TYPE
-  (`runReviewActivity`, `runLintActivity`, ...). An activity takes a
+  Tychonic worker. State-producing TYPE activities are
+  `runWorkerActivity`, `runVerifyActivity`, and `runReviewActivity`.
+  An activity takes a
   state NAME as a parameter, reads the state config block under that
   NAME from the effective profile, validates that the block's `type`
   matches the activity's TYPE, runs its TYPE contract, and returns a
@@ -212,20 +213,17 @@ A state and the activity it invokes share exactly two axes.
   invoked the activity, and equals the key under which the state's
   config block lives (`profile.states.<name>`).
 - **TYPE** — a product-controlled label drawn from the fixed
-  `ActivityTypeSchema` set (`lint`, `unit_test`, `integration`,
-  `work`, `verify`, `review`, `auto_continue`, and
-  similar as the catalog grows). TYPE selects the activity function
-  the workflow must call for a given state, and the contract that
-  activity runs.
+  `ActivityTypeSchema` set (`work`, `verify`, `review`). TYPE selects
+  the activity function the workflow must call for a given state, and
+  the contract that activity runs.
 
-Tychonic registers one activity per TYPE. An activity accepts a
-state NAME as a parameter, never as a hardcoded identifier in its
-own source. Workflow code owns every NAME literal that reaches an
-activity call site. The same activity function is called any number
-of times per run with distinct state NAMEs — a workflow that needs
-three reviews calls `runReviewActivity` with three state NAMEs, and
-the configuration declares three state config blocks of `type:
-review`.
+Tychonic exposes one state-producing activity function per TYPE. An activity
+accepts a state NAME as a parameter, never as a hardcoded identifier in its own
+source. Workflow code owns every NAME literal that reaches an activity call
+site. The same activity function is called any number of times per run with
+distinct state NAMEs — a workflow that needs three reviews calls
+`runReviewActivity` with three state NAMEs, and the configuration declares
+three state config blocks of `type: review`.
 
 A workflow never branches, retries, or aggregates based on TYPE.
 TYPE exists only for schema validation (`type: review` rejects a
@@ -329,11 +327,12 @@ npm run validate:examples`
 ```
 
 - `defaultProfile` must parse under `TychonicConfigSchema`. The same schema
-  applies to bundle defaults, operator-supplied `input.profile`, and
-  override files passed through `--config <file>`.
+  applies to bundle defaults and override files passed through
+  `--config <file>`.
 - `defaultProfile` is the workflow's author-supplied default profile. It
-  travels with the bundle and is the value `tychonic run` substitutes into
-  `input.profile` when the operator does not supply one.
+  travels with the bundle and is the value `tychonic run` injects into the
+  workflow input's reserved `profile` field when no `--config <file>` override
+  is passed.
 - The state and policy contract for the workflow lives entirely in this
   one export. No separate manifest, schema file, or JSON companion file
   exists.
@@ -362,10 +361,11 @@ Contract".
 
 ## Configuration Model
 
-A workflow bundle's `defaultProfile` export is the **only** source of
-configuration for that workflow. There is no global configuration file, no
-repository configuration file, no product-default configuration file, and
-no layered merge pipeline.
+A workflow bundle's `defaultProfile` export is the **default** source of
+configuration for that workflow. A single `--config <file>` may replace it
+for one run. There is no global configuration file, no repository
+configuration file, no product-default configuration file, and no layered
+merge pipeline.
 
 Configuration has exactly two top-level groups. No others.
 
@@ -388,33 +388,37 @@ There is no `agents.<name>` top-level, no `commands.<name>` top-level, no
 Workflow selection is a CLI invocation argument, not a file field.
 
 State NAMEs are arbitrary identifiers unique within the file. State config
-block types are a fixed product-controlled set (`lint`, `unit_test`,
-`integration`, `work`, `verify`, `review`, `auto_continue`). Each TYPE has
-a documented contract for its activity's inputs and outputs. The TYPE field
-exists for schema validation and for binding the state to its activity
-function, not for orchestration. A workflow never branches, retries, or
-selects states based on TYPE. See "Workflow Model → State Identity And
-Activity TYPE" for the full NAME/TYPE contract.
+block types are the fixed product-controlled set `work`, `verify`, and
+`review`. Each TYPE has a documented contract for its activity's inputs and
+outputs. The TYPE field exists for schema validation and for binding the state
+to its activity function, not for orchestration. A workflow never branches,
+retries, or selects states based on TYPE. See "Workflow Model → State Identity
+And Activity TYPE" for the full NAME/TYPE contract.
 
 Workflows reference states by NAME only. Retry, aggregation, and all other
 multi-state orchestration live in the workflow's TypeScript code and use
 explicit NAMEs for each call site.
 
-### Bundle config is the only source
+### Bundle config is the default source
 
-The effective config for a workflow run is the workflow's `defaultProfile`
+The default config for a workflow run is the workflow's `defaultProfile`
 export, validated once at install time and again at workflow start by
-`TychonicConfigSchema`. No other file — not a user home-directory config,
-not a repository config, not a product-default config — is read, merged,
-or consulted.
+`TychonicConfigSchema`. A caller may replace it for one invocation through
+`--config <file>`. No other file — not a user home-directory config, not a
+repository config, not a product-default config — is read, merged, or
+consulted.
 
-`tychonic run <name>` resolves the run's profile from this single source:
-when the operator's input includes `input.profile`, that value is the
-effective profile for the run; when `input.profile` is omitted, Tychonic
-substitutes the installed bundle's `defaultProfile`. Pulling the state and
-policy contract into the workflow code itself keeps the contract
-single-sourced: a workflow author declares state names, types, and policy
-blocks once, in one place, and the runtime reads exactly that.
+`tychonic run <name>` resolves the run's profile from exactly one config
+source: the installed bundle's `defaultProfile`, or the whole-object
+replacement file passed with `--config <file>`. Raw workflow input from
+`--input` or `--input-file` must not include a top-level `profile` field;
+that field is reserved for Tychonic's internal handoff of the effective
+profile to workflow code. When raw workflow input is supplied, it must be a
+JSON object so the reserved handoff can be attached without changing the
+payload's category. Pulling the state and policy contract into the workflow
+code itself keeps the contract single-sourced: a workflow author declares
+state names, types, and policy blocks once, in one place, and the runtime
+reads exactly that.
 
 Two consequences follow and must both hold:
 
@@ -449,8 +453,8 @@ workflows never re-read any config file.
 At workflow start Tychonic loads the bundle's `defaultProfile`, optionally
 replaces it whole with a CLI-override file, validates the resulting
 `TychonicConfig`, and passes the parsed object into the Temporal workflow
-input. Running workflows must not re-read any config source for state
-decisions after start.
+input under the reserved `profile` field. Running workflows must not re-read
+any config source for state decisions after start.
 
 Each run records one `profile_snapshot.yaml` artifact so the effective
 settings are reproducible evidence. No `profile_sources.json` artifact is
@@ -463,14 +467,6 @@ Every state config block (`states.<name>`) is a self-contained unit:
 
 ```yaml
 states:
-  lint:
-    type: lint
-    command: npm run lint
-    timeout: 10m
-  unit_test:
-    type: unit_test
-    command: npm test
-    timeout: 45m
   work:
     type: work
     agent: codex
@@ -495,8 +491,7 @@ states:
 Rules:
 
 - `type` is mandatory and must be one of the product-defined set. The
-  current types are `lint`, `unit_test`, `integration`, `work`,
-  `verify`, `review`, and `auto_continue`.
+  current types are `work`, `verify`, and `review`.
   New types are added by releasing new product code, not by user
   declaration.
 - The settings allowed in a block are the union of settings the type
@@ -508,13 +503,21 @@ Rules:
   vendor-owned fields) are not part of this schema. A bundle's
   `defaultProfile` must not declare them: the external agent CLI already
   owns its own configuration for these values. Allowed fields inside a
-  state block are exactly `type`, `agent`, `resume`, `command`,
+  state block are exactly `type`, `agent`, `normalizer`, `resume`, `command`,
   `timeout`, `sandbox`, `approval`, `permission_mode`, and
   `trust_all_tools`. Unknown fields are a validation error.
-- `agent` is the primary input: it selects one of the four built-in
-  adapters (`claude`, `codex`, `gemini`, `kiro`). The host writes the
-  CLI's `argv`, role-aware permission flags, and resume invocation where
-  the selected adapter supports same-session resume.
+- `agent` is the primary input: it selects one of the built-in
+  adapters (`claude`, `codex`, `gemini`, `kiro`, `kiro-acp`). The host
+  writes the CLI's `argv`, role-aware permission flags, and resume invocation
+  where the selected adapter supports same-session resume.
+- `normalizer` is review-only. It is required when `type: review` selects
+  `agent: gemini`, `agent: kiro`, or `agent: kiro-acp`, because those agents
+  produce prose review output rather than the structured semantic payload the
+  host can validate. The normalizer must be `claude` or `codex`, is prompted
+  with only the primary review output, and emits the semantic review payload
+  that the host normalizes into `tychonic.review.v1`. Direct structured reviewers
+  (`claude`, `codex`) and escape-hatch `command` reviewers must not set
+  `normalizer`.
 - `resume` is a non-negative integer (default `0`). It is a simple
   continuity budget a workflow may read when it explicitly chooses to
   continue an existing external agent session. `resume: 0` disables
@@ -537,13 +540,9 @@ Rules:
 
   | Type | Default timeout |
   | --- | --- |
-  | `lint` | 10 minutes |
-  | `unit_test` | 30 minutes |
-  | `integration` | 60 minutes |
   | `verify` | 30 minutes |
   | `work` | 120 minutes |
   | `review` | 45 minutes |
-  | `auto_continue` | 90 minutes |
 
   Temporal activity envelopes and worker drain defaults are
   intentionally more generous than these command defaults so
@@ -554,8 +553,7 @@ Rules:
   heartbeats for the full wall-clock lifetime of the activity, from
   command launch through output capture, artifact writes, session-id
   extraction, and every other post-processing step. This is especially
-  required for worker-like activity types (`work`, `auto_continue`) and
-  structured `review`.
+  required for long-running `work` and structured `review` activities.
 - A healthy long-running activity may finish successfully, fail its
   command, or hit its configured command `timeout`. It must **not**
   fail merely because Tychonic stopped heartbeating while the underlying
@@ -576,12 +574,12 @@ Rules:
 
 ## Adapter Model
 
-Tychonic ships **built-in adapters for the four supported agent CLIs**:
-`claude`, `codex`, `gemini`, `kiro`. The host owns command synthesis,
-session-id handling, agent-specific flags (permission, sandbox, approval,
-trust), and resume semantics where the selected adapter supports same-session
-resume. Workflow authors and operators select an adapter by setting
-`agent: "<name>"` on a state block.
+Tychonic ships **built-in adapters for the supported agent CLI paths**:
+`claude`, `codex`, `gemini`, `kiro`, `kiro-acp`. The host owns command
+synthesis, session-id handling, agent-specific flags (permission, sandbox,
+approval, trust), and resume semantics where the selected adapter supports
+same-session resume. Workflow authors and operators select an adapter by
+setting `agent: "<name>"` on a state block.
 
 The default code path for every executable activity is **agent-driven**:
 
@@ -596,7 +594,7 @@ The default code path for every executable activity is **agent-driven**:
   session-id round trip, and the role-aware permission flags
 
 `command` is an **escape hatch** for non-default scenarios — a custom CLI not
-in the four-adapter set, an unusual flag combination, or a test stub. When
+in the built-in adapter set, an unusual flag combination, or a test stub. When
 `command` is set, the host runs that command verbatim and skips the adapter
 layer entirely; the workflow's resume bookkeeping does not apply because the
 host has no way to know how the user's CLI handles session continuation.
@@ -622,29 +620,35 @@ Workflow call inputs carry runtime data such as `prompt`, `worktreePath`,
 
 ### Built-in adapter coverage
 
-The four adapters do not have identical capabilities:
+The built-in adapters do not have identical capabilities:
 
 - **claude**, **codex** — full coverage: new run, resume by session id,
   role-aware permission flags, and worker / reviewer roles.
-- **kiro** — worker / auto_continue fresh-run coverage and built-in resume by
+- **kiro-acp** — preferred Kiro worker path when the installed
+  Kiro CLI supports ACP. Fresh runs call ACP `session/new`, store the returned
+  `sessionId` as `AgentSessionRecord.id`, send the prompt through
+  `session/prompt`, and resume through `session/load`. The adapter acts as the
+  ACP client for the one workflow turn and exposes file / terminal client
+  capabilities inside the workflow worktree. Review states may use it only
+  with `normalizer: claude` or `normalizer: codex`.
+- **kiro** — legacy worker fresh-run coverage and built-in resume by
   `--resume-id`. Fresh-run session capture must be process-bound: the adapter
   runs the prompt and `/chat save` in the same `kiro-cli chat` process, parses
   the exported JSON's `conversation_id`, and stores that value as
   `AgentSessionRecord.id`. Tychonic must not infer identity from
-  `kiro-cli chat --list-sessions` before/after diffs. Reviewer role is
-  unsupported because kiro does not produce the structured
-  `tychonic.review.v1` output the host requires.
-- **gemini** — worker / auto_continue fresh-run coverage only. Reviewer role
-  is unsupported, and `runResume` throws `AdapterUnsupported` because
+  `kiro-cli chat --list-sessions` before/after diffs. Review states may use it
+  only with `normalizer: claude` or `normalizer: codex`.
+- **gemini** — worker and prose-review fresh-run coverage only. Review states
+  may use it only with `normalizer: claude` or `normalizer: codex`.
+  `runResume` throws `AdapterUnsupported` because
   `gemini --resume` takes a project-relative index rather than a stable
   session id.
 
-The host schema rejects `agent: "gemini"` or `agent: "kiro"` on a
-`type: "review"` state at install time, and the adapter additionally throws
-`AdapterUnsupported` if a runtime review call still reaches it. A custom
-`command` wrapper may still implement its own review or continuation contract,
-but Tychonic does not synthesize adapter resume behavior for the escape-hatch
-command path.
+The host schema rejects `agent: "gemini"`, `agent: "kiro"`, or
+`agent: "kiro-acp"` on a `type: "review"` state unless `normalizer` is
+`claude` or `codex`. A custom `command` wrapper may still implement its own
+review or continuation contract, but Tychonic does not synthesize adapter
+normalization or resume behavior for the escape-hatch command path.
 
 ### Pass-Through Values vs Orchestration Values
 
@@ -795,14 +799,13 @@ bundle-owned workflow contracts documented by the bundle that implements them.
 
 Agent session continuity is a host capability, not a host policy. Tychonic
 exposes the activity layer needed for a workflow to resume the same external
-agent session across iterations: `runResumeWorkActivity` accepts an existing
-session reference and the built-in adapter for that session's agent issues
-the CLI's own resume invocation. A workflow that wants same-session
-continuity calls `runResumeWorkActivity` with the prior session id; a
-workflow that wants a fresh session calls the normal non-resume activity
-path instead. When a given agent CLI cannot expose a durable session
-reference (for example the partial gemini adapter), the activity records
-the session as non-resumable evidence.
+agent session across iterations: `runWorkerActivity` accepts an explicit
+`sessionId`, and the built-in adapter for that session's agent issues the CLI's
+own resume invocation. A workflow that wants same-session continuity calls
+`runWorkerActivity` with the prior session id; a workflow that wants a fresh
+session omits `sessionId`. When a given agent CLI cannot expose a durable
+session reference (for example the partial gemini adapter), the activity
+records the session as non-resumable evidence.
 
 `states.<name>.resume` (non-negative integer, default `0`) is the optional
 budget for that explicit continuation path. Omitted or `0` means no
@@ -827,7 +830,7 @@ its own recovery path and documents that behavior in the bundle's README.
 - `final_gate`: run after a workflow's review loop as the final gate
 
 A workflow that respects this policy reads `profile.policies.integration`
-and routes its `integration`-TYPE activity calls accordingly.
+and routes its integration state NAME to `runVerifyActivity` accordingly.
 
 ## Runtime
 

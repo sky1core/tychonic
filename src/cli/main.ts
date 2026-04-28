@@ -512,11 +512,11 @@ runtimeCommand
 program
   .command("run")
   .argument("<workflow-name>", "installed workflow name")
-  .option("--input <json>", "single JSON argument to pass as workflow input")
-  .option("--input-file <file>", "path to a JSON file containing the workflow input")
+  .option("--input <json>", "JSON object to pass as workflow input")
+  .option("--input-file <file>", "path to a JSON object file containing the workflow input")
   .option(
     "--config <file>",
-    "one-off Tychonic config YAML/JSON file that replaces the bundle's defaultProfile for this invocation; conflicts with input.profile from --input/--input-file"
+    "one-off Tychonic config YAML/JSON file that replaces the bundle's defaultProfile for this invocation"
   )
   .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
   .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))

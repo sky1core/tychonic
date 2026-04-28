@@ -171,8 +171,8 @@ describe("parseBuiltInReviewOutput — gemini envelope is not unwrapped", () => 
     // SPEC §structured-review: only documented adapter envelopes are
     // normalized by the host. A real gemini --output-format json object has
     // `{ response: "<stringified review>", ... }`. The parser must NOT unwrap
-    // that envelope; if an operator wants gemini as a reviewer they must use a
-    // command wrapper that emits the wire contract directly.
+    // that envelope; gemini review requires a declared normalizer or an
+    // escape-hatch command that emits the wire contract directly.
     const geminiLike = JSON.stringify({
       session_id: "sess_test",
       response: passReview,

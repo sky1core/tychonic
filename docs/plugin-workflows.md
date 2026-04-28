@@ -10,6 +10,12 @@ The bundle directory name must match the exported workflow function name. The
 host package ships no first-party workflows; operators install bundles with
 `tychonic workflows install`.
 
+At workflow start, Tychonic injects the effective config into the workflow
+input's reserved `profile` field. Workflow authors pass `input.profile` to
+activities; operators pass workflow input as a JSON object and do not put
+`profile` in `--input` or `--input-file`. Per-run config replacement uses
+`tychonic run --config <file>`.
+
 ## Minimal Bundle
 
 ```sh
@@ -38,7 +44,12 @@ export const defaultProfile = {
   version: "tychonic.config.v1",
   states: {
     work: { type: "work", agent: "codex" },
-    verify: { type: "verify", command: "npm test" },
+    verify: {
+      type: "verify",
+      command: `npm run typecheck
+npm run build
+npm test`
+    },
     review: { type: "review", agent: "claude" }
   }
 };
@@ -144,9 +155,6 @@ workflow-defined instance:
 | `startRunActivity` | n/a | `template`, `cwd` |
 | `collectGitFactsActivity` | n/a | `run`, `cwd` |
 | `createWorktreeActivity` | n/a | `run`, `cwd` |
-| `runLintActivity` | `lint` | `stateName`, `run`, `profile`, `cwd` |
-| `runUnitTestActivity` | `unit_test` | `stateName`, `run`, `profile`, `cwd` |
-| `runIntegrationActivity` | `integration` | `stateName`, `run`, `profile`, `cwd` |
 | `runVerifyActivity` | `verify` | `stateName`, `run`, `profile`, `cwd`, `worktreePath` |
 | `runWorkerActivity` | `work` | `stateName`, `run`, `profile`, `cwd`, `worktreePath`, `prompt?`, `sessionId?` |
 | `runReviewActivity` | `review` | `stateName`, `run`, `profile`, `cwd`, `worktreePath`, `prompt` |
@@ -155,7 +163,9 @@ workflow-defined instance:
 Activity call inputs carry runtime data only: prompt text, worktree path,
 session id, run record, and similar values. They must not choose which command
 or agent runs. Execution selection belongs to `profile.states.<name>.agent` or
-`profile.states.<name>.command`.
+`profile.states.<name>.command`. Review states that use `gemini`, `kiro`, or
+`kiro-acp` as the primary reviewer must also declare
+`profile.states.<name>.normalizer` as `claude` or `codex`.
 
 Every activity returns records through `ActivityResult.delta` and optional
 TYPE-specific outcome payloads. The activity does not mutate `input.run`; the

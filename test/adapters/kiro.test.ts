@@ -24,23 +24,11 @@ describe("kiroAdapter", () => {
     expect(command).not.toContain("--list-sessions");
   });
 
-  it("runNew(review) throws AdapterUnsupported (no structured-review surface)", () => {
-    expect(() => kiroAdapter.runNew({ ...BASE, role: "review" })).toThrow(
-      AdapterUnsupported
-    );
-    expect(() => kiroAdapter.runNew({ ...BASE, role: "review" })).toThrow(/kiro/);
-  });
-
-  it("runNew(review) AdapterUnsupported carries adapter + operation metadata", () => {
-    try {
-      kiroAdapter.runNew({ ...BASE, role: "review" });
-      expect.fail("expected throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(AdapterUnsupported);
-      const e = err as AdapterUnsupported;
-      expect(e.adapter).toBe("kiro");
-      expect(e.operation).toBe("review");
-    }
+  it("runNew(review) emits prose review wrapper without trust-all-tools", () => {
+    const { command } = kiroAdapter.runNew({ ...BASE, role: "review" });
+    expect(command).toContain("'kiro-cli' 'chat' '--wrap' 'never'");
+    expect(command).not.toContain("--trust-all-tools");
+    expect(command).toContain("/chat save");
   });
 
   it("runNew honours explicit trustAllTools=false on a worker role", () => {

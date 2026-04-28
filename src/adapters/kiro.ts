@@ -1,5 +1,5 @@
 /**
- * Kiro built-in adapter (binary `kiro-cli`) — PARTIAL: no reviewer role.
+ * Kiro built-in adapter (binary `kiro-cli`) — PARTIAL: prose review needs a normalizer.
  *
  * CLI surface verified against `kiro-cli chat --help`:
  * - Fresh worker runs use interactive `kiro-cli chat` with a positional
@@ -14,11 +14,10 @@
  *
  * Reviewer role: kiro-cli chat does not produce a non-interactive
  * structured-review surface — its output is free-form chat text, not a
- * machine-readable `tychonic.review.v1` object. `runNew` and
- * `runResume` both throw `AdapterUnsupported` when called with
- * `role: "review"`. Operators must pick `claude` or `codex` for review
- * states (the host schema also rejects `agent: "kiro"` on review states
- * at install time).
+ * machine-readable `tychonic.review.v1` object. `runNew` can produce that
+ * prose review output without `--trust-all-tools`; review states must attach
+ * a host normalizer (`claude` or `codex`) before the host accepts the result.
+ * `runResume` still throws for reviewer role.
  *
  * Session id capture: Tychonic does not infer identity from
  * `--list-sessions` before/after diffs because that does not prove which
@@ -125,13 +124,6 @@ export const kiroAdapter: AgentAdapter = {
   name: "kiro",
 
   runNew(input: AdapterRunInput): AdapterCommand {
-    if (input.role === "review") {
-      throw new AdapterUnsupported(
-        "kiro",
-        "review",
-        "kiro-cli chat does not emit a non-interactive structured-review surface; configure the review state with `agent: \"claude\"` or `agent: \"codex\"`, or use an explicit `command`"
-      );
-    }
     return { command: buildFreshCommand(input) };
   },
 

@@ -52,15 +52,6 @@ export type InteractionSignalPayload =
   | ({ kind: "modify" } & InteractionModifyStatePayload);
 
 export interface ActivityCallFieldsByType {
-  lint: {
-    worktreePath?: string;
-  };
-  unit_test: {
-    worktreePath?: string;
-  };
-  integration: {
-    worktreePath?: string;
-  };
   work: {
     prompt?: string;
     goal?: string;
@@ -74,18 +65,6 @@ export interface ActivityCallFieldsByType {
     prompt?: string;
     verificationCommands?: string[];
     worktreePath?: string;
-  };
-  auto_continue: {
-    prompt?: string;
-    worktreePath?: string;
-    verificationCommands?: string[];
-    /**
-     * When present the activity runs in resume mode: invokes the existing
-     * resumable worker session referenced by `sessionId` (which must already
-     * live in `input.run.agent_sessions`). When absent the activity runs in
-     * fresh mode using the state config's command or agent.
-     */
-    sessionId?: string;
   };
 }
 
@@ -145,7 +124,7 @@ export type ActivityInput<T extends ActivityType> = {
  *                           (not ids) that the caller appends to
  *                           `run.artifacts` / `run.agent_sessions`.
  * @field commandOutcome     Present only for deterministic-command activities
- *                           (`lint`, `unit_test`, `integration`, `verify`).
+ *                           (`verify`).
  *                           Carries the single `ArtifactRecord` the body
  *                           produced (command output). The caller appends it
  *                           to `run.artifacts`. The artifact exists regardless

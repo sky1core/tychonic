@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 
 // Step 4 contract: every example bundle's `defaultProfile` worker / review
 // state runs through a built-in adapter (`agent: "<name>"`), not through a
-// hand-rolled `command` / `resume_command`. Deterministic activity types
-// (`lint`, `unit_test`, `integration`, `verify`) are the legitimate
-// escape-hatch path and keep `command`.
+// hand-rolled `command` / `resume_command`. The deterministic `verify` type
+// is the legitimate escape-hatch path and keeps `command`.
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - bundle modules export plain JS, no TS types.
@@ -24,9 +23,9 @@ import { defaultProfile as architectDefault } from "../examples/workflows/archit
 
 import { TychonicConfigSchema } from "../src/catalog/types.js";
 
-const BUILTIN_AGENTS = new Set(["claude", "codex", "gemini", "kiro"]);
-const ADAPTER_TYPES = new Set(["work", "review", "auto_continue"]);
-const ESCAPE_HATCH_TYPES = new Set(["lint", "unit_test", "integration", "verify"]);
+const BUILTIN_AGENTS = new Set(["claude", "codex", "gemini", "kiro", "kiro-acp"]);
+const ADAPTER_TYPES = new Set(["work", "review"]);
+const ESCAPE_HATCH_TYPES = new Set(["verify"]);
 
 interface Bundle {
   name: string;
@@ -49,7 +48,7 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
         expect(result.success, JSON.stringify(result.error?.issues ?? null, null, 2)).toBe(true);
       });
 
-      it("uses built-in adapters on every work / review / auto_continue state", () => {
+      it("uses built-in adapters on every work / review state", () => {
         for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
           const b = block as any;
           if (!ADAPTER_TYPES.has(b.type)) continue;
@@ -59,7 +58,7 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
           ).toBeDefined();
           expect(
             BUILTIN_AGENTS.has(b.agent),
-            `${bundle.name}.${stateName} agent must be one of claude/codex/gemini/kiro, got ${b.agent}`
+            `${bundle.name}.${stateName} agent must be one of claude/codex/gemini/kiro/kiro-acp, got ${b.agent}`
           ).toBe(true);
         }
       });
@@ -74,7 +73,7 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
         }
       });
 
-      it("only carries command on deterministic-script states (lint/unit_test/integration/verify)", () => {
+      it("only carries command on deterministic verify states", () => {
         for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
           const b = block as any;
           if (b.command !== undefined) {
@@ -99,22 +98,25 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
         }
       });
 
-      // gemini and kiro are partial adapters: neither exposes a stable
-      // structured-review payload the host can normalize into
-      // `tychonic.review.v1`, so example bundles must not pin them on a
-      // review state.
-      it("never declares agent gemini or kiro on a review state", () => {
+      // gemini, kiro, and kiro-acp are partial review adapters: they need a
+      // normalizer if a bundle pins them on a review state.
+      it("never declares a partial adapter on a review state without normalizer", () => {
         for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
           const b = block as any;
           if (b.type !== "review") continue;
+          if (b.normalizer !== undefined) continue;
           expect(
             b.agent,
-            `${bundle.name}.${stateName} (review) must not use gemini or kiro`
+            `${bundle.name}.${stateName} (review) must not use gemini, kiro, or kiro-acp`
           ).not.toBe("gemini");
           expect(
             b.agent,
-            `${bundle.name}.${stateName} (review) must not use gemini or kiro`
+            `${bundle.name}.${stateName} (review) must not use gemini, kiro, or kiro-acp`
           ).not.toBe("kiro");
+          expect(
+            b.agent,
+            `${bundle.name}.${stateName} (review) must not use gemini, kiro, or kiro-acp`
+          ).not.toBe("kiro-acp");
         }
       });
     });

@@ -33,7 +33,7 @@ describe("activity heartbeat wiring", () => {
     expect(captured.heartbeat).toEqual(expect.any(Function));
   });
 
-  it("passes heartbeat into runResumeWorkActivity bodies", async () => {
+  it("passes heartbeat into runWorkerActivity resume-mode bodies", async () => {
     const captured = { heartbeat: undefined as unknown };
     vi.doMock("../src/bootstrap/workerActivityBody.js", () => ({
       runWorkerActivityBody: vi.fn(async (options: { resources: { heartbeat?: unknown } }) => {
@@ -42,8 +42,8 @@ describe("activity heartbeat wiring", () => {
       })
     }));
 
-    const { runResumeWorkActivity } = await import("../src/activities/runResumeWorkActivity.js");
-    await runResumeWorkActivity({
+    const { runWorkerActivity } = await import("../src/activities/runWorkerActivity.js");
+    await runWorkerActivity({
       stateName: "resume_alt",
       run: baseRun("run_resume_heartbeat", {
         sessionId: "sess_1"
@@ -57,44 +57,9 @@ describe("activity heartbeat wiring", () => {
     expect(captured.heartbeat).toEqual(expect.any(Function));
   });
 
-  it("passes heartbeat into runAutoContinueActivity bodies in both fresh and resume modes", async () => {
-    const captured: unknown[] = [];
-    vi.doMock("../src/bootstrap/workerActivityBody.js", () => ({
-      runWorkerActivityBody: vi.fn(async (options: { resources: { heartbeat?: unknown } }) => {
-        captured.push(options.resources.heartbeat);
-        return executedResult();
-      })
-    }));
-
-    const { runAutoContinueActivity } = await import("../src/activities/runAutoContinueActivity.js");
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-auto-heartbeat-"));
-
-    await runAutoContinueActivity({
-      stateName: "auto_alt",
-      run: baseRun("run_auto_fresh_heartbeat"),
-      cwd,
-      profile: profileWith("auto_alt", "auto_continue"),
-      worktreePath: await mkdtemp(join(tmpdir(), "tychonic-auto-heartbeat-wt1-"))
-    });
-
-    await runAutoContinueActivity({
-      stateName: "auto_alt",
-      run: baseRun("run_auto_resume_heartbeat", {
-        sessionId: "sess_auto"
-      }),
-      cwd,
-      profile: profileWith("auto_alt", "auto_continue"),
-      worktreePath: await mkdtemp(join(tmpdir(), "tychonic-auto-heartbeat-wt2-")),
-      sessionId: "sess_auto"
-    });
-
-    expect(captured).toHaveLength(2);
-    expect(captured[0]).toEqual(expect.any(Function));
-    expect(captured[1]).toEqual(expect.any(Function));
-  });
 });
 
-function profileWith(name: string, type: "work" | "auto_continue"): TychonicConfig {
+function profileWith(name: string, type: "work"): TychonicConfig {
   return {
     version: "tychonic.config.v1",
     states: {

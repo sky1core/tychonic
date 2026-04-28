@@ -29,7 +29,6 @@ const {
   runWorkerActivity,
   runVerifyActivity,
   runReviewActivity,
-  runResumeWorkActivity,
   finalizeRunActivity
 } = act;
 
@@ -114,9 +113,9 @@ export function validateLoopPolicy(policies) {
  *     cwd: string,
  *     goal?: string,
  *     autoContinue?: boolean,
- *     maxIterations?: number,
- *     profile?: TychonicConfig
+ *     maxIterations?: number
  *   }
+ * Host-injected: profile?: TychonicConfig
  */
 const SIMPLE_WORKFLOW_INPUT_FIELDS = new Set([
   "cwd",
@@ -250,7 +249,6 @@ async function runMainPipeline(input) {
 export function defaultActivities() {
   return {
     runWorker: runWorkerActivity,
-    runResume: runResumeWorkActivity,
     runVerify: runVerifyActivity,
     runReview: runReviewActivity
   };
@@ -263,8 +261,8 @@ export function defaultActivities() {
  * shapes. Production code calls this via `runMainPipeline` with
  * `defaultActivities()`.
  *
- * Reads the same-session resume cap from `input.profile.states.work.resume`
- * (the start-time snapshot). The counter starts at zero on every entry to
+ * Reads the same-session resume cap from the start-time effective profile
+ * snapshot. The counter starts at zero on every entry to
  * this loop; once it reaches `maxResume`, the workflow appends a triage
  * inbox item titled `Resume cap exhausted with unresolved findings` and
  * stops the loop.
@@ -312,7 +310,7 @@ export async function runAutoContinueLoop({
       break;
     }
 
-    const resumeRes = await activities.runResume({
+    const resumeRes = await activities.runWorker({
       stateName: "work",
       run,
       ...(profile ? { profile } : {}),
@@ -625,14 +623,8 @@ export function buildReviewPrompt(run, scope) {
     findingsLine,
     "",
     "Inspect the worktree, validate the worker's claimed result, and decide pass/fail.",
-    "Return only one JSON object matching this contract. Do not wrap it in markdown.",
-    "{",
-    '  "status": "pass|fail",',
-    '  "summary": "short result summary",',
-    '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
-    "  ]",
-    "}",
+    "Report a semantic review verdict with status, summary, and findings.",
+    "Each finding needs severity, title, and actionable detail.",
     "Add target when you can identify a file, state, or session.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists.",
     lastWorker

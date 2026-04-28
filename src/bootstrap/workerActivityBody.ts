@@ -12,7 +12,7 @@ import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import type { WorkerActivityOutcome } from "../worker/outcome.js";
 import { runCommand, withPeriodicProgress } from "./commandRunner.js";
 
-export type WorkerBodyType = "work" | "auto_continue";
+export type WorkerBodyType = "work";
 
 export interface WorkerActivityResources {
   store: RunArtifactStore;

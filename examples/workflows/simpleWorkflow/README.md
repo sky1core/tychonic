@@ -27,7 +27,6 @@ to the workflow.
 | `goal` | no | Prompt text for the worker. |
 | `autoContinue` | no | Enables the review-fail continuation loop for this run. |
 | `maxIterations` | no | Per-run loop budget override. |
-| `profile` | no | Whole-profile replacement for this run. |
 
 Unknown fields are rejected. `cwd` must be a git repository.
 

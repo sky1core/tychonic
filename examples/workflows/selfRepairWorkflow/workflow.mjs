@@ -265,14 +265,8 @@ function detectBugsPrompt(goal) {
   return [
     `Inspect the workspace and identify candidate bugs${goal ? ` in service of: ${goal}` : ""}.`,
     "",
-    "Return only one JSON object matching this contract:",
-    "{",
-    '  "status": "pass|fail",',
-    '  "summary": "short summary",',
-    '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
-    "  ]",
-    "}",
+    "Report a semantic review verdict with status, summary, and findings.",
+    "Each finding needs severity, title, and actionable detail.",
     "Add target only when you can identify a file or symbol.",
     "Use status fail when at least one bug-shaped finding exists."
   ].join("\n");

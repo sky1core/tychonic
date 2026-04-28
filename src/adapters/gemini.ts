@@ -11,10 +11,10 @@
  *   or deleted, so they cannot be safely persisted in
  *   `AgentSessionRecord.id`.
  *
- *   Conclusion: ship a partial gemini adapter — `runNew` works for the
- *   worker / auto_continue role, `runResume` throws
- *   `AdapterUnsupported`, and `review` also throws because gemini does
- *   not currently produce a non-interactive structured-review surface.
+ *   Conclusion: ship a partial gemini adapter — `runNew` works for worker
+ *   and prose review roles, but review needs a host normalizer because gemini
+ *   does not currently produce a non-interactive structured-review surface.
+ *   `runResume` throws `AdapterUnsupported`.
  *   `parseResult` returns `{}` so the host marks the session
  *   non-resumable. The workflow decides what recovery path to expose
  *   when it needs to continue.
@@ -46,8 +46,9 @@ function roleApprovalMode(input: AdapterRunInput): string {
   if (input.permissionMode === "plan") {
     return "plan";
   }
-  // Worker / auto_continue default. `review` should never reach here
-  // because `runNew` rejects it below.
+  if (input.role === "review") {
+    return "plan";
+  }
   return "yolo";
 }
 
@@ -70,13 +71,6 @@ export const geminiAdapter: AgentAdapter = {
   name: "gemini",
 
   runNew(input: AdapterRunInput): AdapterCommand {
-    if (input.role === "review") {
-      throw new AdapterUnsupported(
-        "gemini",
-        "review",
-        "gemini has no non-interactive structured-review surface; configure the review state with explicit `command` or a different agent"
-      );
-    }
     return { command: joinArgs(buildBaseArgs(input)) };
   },
 

@@ -7,10 +7,10 @@ as separate `review` states.
 ## States
 
 - `work` — `work`
-- `static` — `lint`
-- `unit` — `unit_test`
+- `static` — `verify`
+- `unit` — `verify`
 - `review_1` — `review`
-- `integration` — `integration`
+- `integration` — `verify`
 - `review_2` — `review`
 - `security` — `verify`
 
@@ -19,7 +19,6 @@ as separate `review` states.
 | Field | Required | Purpose |
 |---|---|---|
 | `cwd` | yes | Git repository used for facts and the isolated worker worktree. |
-| `profile` | no | Whole-profile replacement for this run. |
 | `goal` | no | Worker goal; used when `prompt` is omitted. |
 | `prompt` | no | Worker prompt. |
 | `reviewPrompt` | no | Prompt for `review_1`. |

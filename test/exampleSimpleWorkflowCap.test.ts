@@ -27,7 +27,6 @@ interface MockSession {
 }
 
 interface MockActivities {
-  runResume: ReturnType<typeof makeStub>;
   runWorker: ReturnType<typeof makeStub>;
   runVerify: ReturnType<typeof makeStub>;
   runReview: ReturnType<typeof makeStub>;
@@ -162,14 +161,18 @@ function makeBaseRun(workerSession: MockSession): any {
 }
 
 /**
- * Build a `runResume` activity stub that returns a successful resume on
- * `currentSessionId` and pretends the worker emitted no new patch artifacts.
- * The activity result carries the `attempt_kind: resume_work` shape the
- * worker activity body produces in production.
+ * Build a `runWorker` activity stub. With an explicit `sessionId`, this is
+ * the resume path and returns the `resume_work` attempt shape the production
+ * worker activity body emits. Without `sessionId`, it records a fresh-worker
+ * call and fails because the cap loop must not start a new worker session.
  */
-function makeResumeStub(log: CallLog[]) {
+function makeWorkerStub(log: CallLog[]) {
   let attemptCounter = 0;
   return (callInput: any) => {
+    if (!callInput.sessionId) {
+      log.push({ name: "worker", prompt: callInput.prompt });
+      throw new Error("runWorker fresh mode must not be called by the cap loop");
+    }
     attemptCounter += 1;
     const stateId = `state_resume_${attemptCounter}`;
     const attemptId = `attempt_resume_${attemptCounter}`;
@@ -205,18 +208,6 @@ function makeResumeStub(log: CallLog[]) {
       },
       workerOutcome: { kind: "executed", artifacts: [], agentSessions: [] }
     };
-  };
-}
-
-/**
- * Build a `runWorker` activity stub. The cap loop simplification removed
- * the new worker-session branch entirely, so this stub should never be invoked
- * by the cap loop. It records calls so a test can assert non-invocation.
- */
-function makeWorkerStub(log: CallLog[]) {
-  return (callInput: any) => {
-    log.push({ name: "worker", prompt: callInput.prompt });
-    throw new Error("runWorker must not be called by the cap loop");
   };
 }
 
@@ -348,7 +339,6 @@ function makeActivities(opts: {
   reviewerSessionFactory: () => MockSession;
 }): MockActivities {
   return {
-    runResume: makeResumeStub(opts.log),
     runWorker: makeWorkerStub(opts.log),
     runVerify: makeVerifyStub(opts.log),
     runReview: makeFailReviewStub(opts.log, opts.reviewerSessionFactory)
@@ -393,7 +383,7 @@ describe("simpleWorkflow cap loop", () => {
     const resumeCalls = log.filter((c) => c.name === "resume");
     expect(resumeCalls.length).toBe(3);
 
-    // The cap loop never calls runWorker — it only resumes the current session.
+    // The cap loop never calls runWorker in fresh mode — it only resumes the current session.
     const workerCalls = log.filter((c) => c.name === "worker");
     expect(workerCalls.length).toBe(0);
 

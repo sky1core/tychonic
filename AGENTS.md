@@ -71,15 +71,16 @@ Workflows reference activities by name and call each activity explicitly.
 
 ## Agent Principle
 
-Tychonic ships **built-in adapters for the four supported agent CLIs**:
-`claude`, `codex`, `gemini`, `kiro`. The host owns command synthesis, session
-resume where the adapter supports same-session resume, agent-specific flags,
-and session-id handling for these four. Users select an adapter by setting
-`agent: "<name>"` in workflow input — no need to hand-write the underlying CLI
-command, no need to know the agent's resume flag or session-id encoding.
+Tychonic ships **built-in adapters for the supported agent CLI paths**:
+`claude`, `codex`, `gemini`, `kiro`, `kiro-acp`. The host owns command
+synthesis, session resume where the adapter supports same-session resume,
+agent-specific flags, and session-id handling for these paths. Users select an
+adapter by setting `agent: "<name>"` in workflow input — no need to hand-write
+the underlying CLI command, no need to know the agent's resume flag or
+session-id encoding.
 
 The `command` field is an **escape hatch for non-default scenarios** — a
-custom CLI not in the four-adapter set, an unusual flag combination, or a
+custom CLI not in the built-in adapter set, an unusual flag combination, or a
 test stub. The default code path for ordinary users is the agent label,
 not a hand-written command.
 
@@ -95,10 +96,17 @@ behind adapter boundaries; shared workflow code depends on common activity
 contracts, not on provider-specific command strings.
 
 `gemini` is the exception for built-in automatic resume: its resume surface is
-not a stable session id. `kiro-cli` supports built-in worker resume only through
-the adapter's same-process `/chat save` capture path: the fresh run must export
-its own `conversation_id`, and Tychonic must not infer identity from
-`kiro-cli chat --list-sessions` before/after diffs.
+not a stable session id. The legacy `kiro` adapter supports worker resume only
+through the adapter's same-process `/chat save` capture path: the fresh run
+must export its own `conversation_id`, and Tychonic must not infer identity
+from `kiro-cli chat --list-sessions` before/after diffs. The `kiro-acp`
+adapter uses Kiro's ACP `sessionId` from `session/new` and resumes through
+`session/load`; it is the preferred Kiro path when ACP works in the operator's
+environment.
+
+For review states, `gemini`, `kiro`, and `kiro-acp` are prose-review primary
+agents only. They require `normalizer: claude` or `normalizer: codex`; the
+normalizer structures the primary review output and must not invent findings.
 
 Retry and multi-attempt behavior belong in workflow code with explicit state
 NAMEs. The host must not model attempts as an ordered data list of agents or
@@ -443,7 +451,7 @@ is NAME-agnostic and TYPE-blind.
 
 The exception is the workflow function that owns the loop. A workflow
 defining a fix loop with NAMEs `work` / `verify` / `review` /
-`auto_continue` may use those literals because they are its own
+`continue_work` may use those literals because they are its own
 contract with its own config. The literal must not leak past the
 workflow function — into an activity, a shared helper, or a schema —
 without being passed as a parameter.

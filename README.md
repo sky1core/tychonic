@@ -119,6 +119,8 @@ agent.
 A workflow bundle is a directory with `workflow.mjs` and a `defaultProfile`.
 The profile is the workflow author's default config. A run can replace it with
 `--config <file>`, but replacement is whole-object replacement, not merge.
+Workflow JSON input is task data only: pass a JSON object, and do not put
+config under `profile`.
 
 Minimal profile shape:
 
@@ -158,12 +160,19 @@ Built-in adapters:
 |---|---:|---:|---:|
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
-| `kiro` | yes | no | yes |
-| `gemini` | yes | no | no |
+| `kiro-acp` | yes | with normalizer | yes |
+| `kiro` | yes | with normalizer | yes |
+| `gemini` | yes | with normalizer | no |
 
 Use `agent: "<name>"` for the built-in path. Use `command` only as an escape
 hatch for custom CLIs, unusual flags, or test stubs. A state sets exactly one of
 `agent` or `command`.
+
+For review states, `gemini`, `kiro`, and `kiro-acp` require `normalizer:
+claude` or `normalizer: codex`.
+
+Prefer `kiro-acp` over `kiro` when using Kiro for worker states. `kiro-acp`
+uses Kiro's ACP session API; `kiro` remains the legacy chat wrapper path.
 
 Model names, reasoning effort, thinking budget, and similar provider settings
 belong to the external CLI configuration or to an explicit `command`; they are

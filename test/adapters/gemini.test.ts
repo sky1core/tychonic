@@ -30,9 +30,10 @@ describe("geminiAdapter", () => {
     expect(command).not.toContain("yolo");
   });
 
-  it("runNew(review) throws AdapterUnsupported (no non-interactive review surface)", () => {
-    expect(() => geminiAdapter.runNew({ ...BASE, role: "review" })).toThrow(
-      AdapterUnsupported
+  it("runNew(review) emits plan approval for prose review output", () => {
+    const { command } = geminiAdapter.runNew({ ...BASE, role: "review" });
+    expect(command).toBe(
+      'gemini --approval-mode plan --sandbox --output-format stream-json -p ""'
     );
   });
 

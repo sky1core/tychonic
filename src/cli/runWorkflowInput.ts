@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { parseBundleConfigYaml } from "../catalog/loadProfile.js";
-import { TychonicConfigSchema, type TychonicConfig } from "../catalog/types.js";
+import type { TychonicConfig } from "../catalog/types.js";
 
 /**
  * Result of resolving the input that `tychonic run <workflow>` will hand
@@ -16,24 +16,18 @@ export interface ResolvedRunWorkflowInput {
 }
 
 /**
- * Inject the workflow bundle's `defaultProfile` into the run input when
- * the user did not provide one of their own. Resolution order:
+ * Inject the effective profile into the run input. `profile` is reserved for
+ * Tychonic's internal config handoff to the workflow:
  *
- *  - User-supplied `input.profile` wins after schema validation (no merge).
- *  - When the user-supplied input is an object without a `profile` key,
- *    we attach the bundle's `defaultProfile` so the workflow runs with
- *    the author-default policies / states.
- *  - When the user passed no `--input` / `--input-file` at all, we
- *    synthesize `{ profile: defaultProfile }` so the workflow still
- *    starts with the author defaults instead of an empty input.
- *  - When the user-supplied input is a non-object value (e.g. a JSON
- *    array, primitive, or `null`), we leave it verbatim — `profile`
- *    is an object-valued field and a non-object input cannot accept
- *    one without changing shape.
+ *  - User-supplied `input.profile` is rejected. Use `--config <file>` to
+ *    replace the bundle default profile for one run.
+ *  - Object input receives the bundle's `defaultProfile`.
+ *  - No input becomes `{ profile: defaultProfile }`.
+ *  - Non-object input is rejected because the effective profile must be
+ *    injected into an object input.
  *
  * The `loadDefaultProfile` callback is called at most once and only when
- * the bundle's `defaultProfile` is needed, so callers that pass a valid
- * explicit `profile` never trigger a bundle lookup.
+ * the bundle's `defaultProfile` is needed.
  */
 export async function applyDefaultProfileToRunInput(options: {
   rawInput: ResolvedRunWorkflowInput;
@@ -48,13 +42,10 @@ export async function applyDefaultProfileToRunInput(options: {
 
   const value = rawInput.input;
   if (!isPlainObject(value)) {
-    return rawInput;
+    throw workflowInputObjectError();
   }
   if (Object.prototype.hasOwnProperty.call(value, "profile")) {
-    return {
-      hasInput: true,
-      input: { ...value, profile: validateExplicitInputProfile(value.profile) }
-    };
+    throw reservedInputProfileError();
   }
   const defaultProfile = await loadDefaultProfile();
   return {
@@ -69,24 +60,26 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return true;
 }
 
-function validateExplicitInputProfile(value: unknown): TychonicConfig {
-  const parsed = TychonicConfigSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new Error(`input.profile is not a valid tychonic.config.v1 profile: ${parsed.error.message}`);
-  }
-  return parsed.data;
+function reservedInputProfileError(): Error {
+  return new Error(
+    "input.profile is reserved for Tychonic config injection; pass --config <file> to replace the bundle defaultProfile"
+  );
+}
+
+function workflowInputObjectError(): Error {
+  return new Error("workflow input must be a JSON object");
 }
 
 /**
  * Resolve the run workflow input considering an optional `--config <file>`
  * override and the bundle's `defaultProfile`.
  *
- *  - With `configPath`, the parsed YAML/JSON file becomes `input.profile`.
- *    If the user input also carried a top-level `profile` field, fail with a
- *    clear user-error message; we never silently merge the two sources.
+ *  - With `configPath`, the parsed YAML/JSON file becomes the internal
+ *    `input.profile` value passed to the workflow.
+ *  - If the user input carried a top-level `profile` field, fail with a clear
+ *    user-error message. Raw input never owns the config carrier.
  *  - Without `configPath`, fall back to the bundle's `defaultProfile`
- *    auto-load through `applyDefaultProfileToRunInput` (user-supplied
- *    `input.profile` still wins there after schema validation).
+ *    auto-load through `applyDefaultProfileToRunInput`.
  *
  * The `loadDefaultProfile` callback is invoked only on the no-config branch
  * and only when the bundle profile is actually needed — passing `--config`
@@ -105,9 +98,7 @@ export async function applyConfigOrDefaultProfileToRunInput(options: {
       isPlainObject(rawInput.input) &&
       Object.prototype.hasOwnProperty.call(rawInput.input, "profile")
     ) {
-      throw new Error(
-        "--config conflicts with input.profile from --input/--input-file; remove one"
-      );
+      throw reservedInputProfileError();
     }
     let raw: string;
     try {
@@ -129,9 +120,7 @@ export async function applyConfigOrDefaultProfileToRunInput(options: {
       return { hasInput: true, input: { profile } };
     }
     if (!isPlainObject(rawInput.input)) {
-      throw new Error(
-        "--config requires the workflow input to be a JSON object so the parsed profile can be attached to input.profile"
-      );
+      throw workflowInputObjectError();
     }
     return {
       hasInput: true,

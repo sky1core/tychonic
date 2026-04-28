@@ -23,7 +23,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLE_PATH = join(__dirname, "..", "examples", "workflows", "simpleWorkflow", "workflow.mjs");
 
 interface RecordedCall {
-  name: "worker" | "resume" | "verify" | "review";
+  name: "worker" | "verify" | "review";
   input: any;
 }
 
@@ -140,15 +140,8 @@ function makeStubActivities(calls: RecordedCall[], reviewerFactory: () => any) {
   let attemptCounter = 0;
   return {
     runWorker: (input: any) => {
-      // The simplified cap loop never calls runWorker; the start-time
-      // pipeline is the only call site. Record so a regression that
-      // re-introduces a new worker-session branch fails this test.
-      calls.push({ name: "worker", input });
-      throw new Error("runWorker must not be called by runAutoContinueLoop");
-    },
-    runResume: (input: any) => {
       attemptCounter += 1;
-      calls.push({ name: "resume", input });
+      calls.push({ name: "worker", input });
       const stateId = `state_resume_${attemptCounter}`;
       const attemptId = `attempt_resume_${attemptCounter}`;
       return {
@@ -326,16 +319,14 @@ describe("simpleWorkflow runAutoContinueLoop activity-call contracts", () => {
 
     // At least one of every required dispatch type must have happened.
     const byKind = (kind: RecordedCall["name"]) => calls.filter((c) => c.name === kind);
-    expect(byKind("resume").length).toBeGreaterThanOrEqual(1);
+    expect(byKind("worker").length).toBeGreaterThanOrEqual(1);
     expect(byKind("verify").length).toBeGreaterThanOrEqual(1);
     expect(byKind("review").length).toBeGreaterThanOrEqual(1);
-    // The simplified cap loop never invokes runWorker.
-    expect(byKind("worker").length).toBe(0);
 
-    // ===== runResumeWorkActivity contract =====
+    // ===== runWorkerActivity resume-mode contract =====
     // Bundle's resume call must carry worktreePath + sessionId + prompt —
     // the host activity rejects missing fields.
-    for (const call of byKind("resume")) {
+    for (const call of byKind("worker")) {
       expect(call.input.stateName).toBe("work");
       expect(typeof call.input.worktreePath).toBe("string");
       expect(typeof call.input.sessionId).toBe("string");
@@ -374,6 +365,7 @@ describe("simpleWorkflow buildReviewPrompt", () => {
     expect(prompt.length).toBeGreaterThan(0);
     expect(prompt).not.toContain("tychonic.review.v1");
     expect(prompt).not.toContain("schema_version");
+    expect(prompt).not.toContain("Return only one JSON object");
     expect(prompt).toContain("scope-label");
     expect(prompt).toContain("session_w0");
     expect(prompt).toContain('set target_session_id to "session_w0"');
@@ -431,8 +423,6 @@ describe("simpleWorkflow workflow source — every runReviewActivity call passes
   });
 
   it("runWorkerActivity / activities.runWorker calls pass worktreePath", () => {
-    // The simplified cap loop never invokes runWorker, so the bundle has
-    // exactly one runWorker call site — the start-time pipeline.
     const sites = [
       ...findCallSites(source, "runWorkerActivity"),
       ...findCallSites(source, "activities\\.runWorker")
@@ -455,15 +445,12 @@ describe("simpleWorkflow workflow source — every runReviewActivity call passes
     }
   });
 
-  it("runResumeWorkActivity / activities.runResume calls pass sessionId and prompt", () => {
-    const sites = [
-      ...findCallSites(source, "runResumeWorkActivity"),
-      ...findCallSites(source, "activities\\.runResume")
-    ];
+  it("activities.runWorker resume-mode calls pass sessionId and prompt", () => {
+    const sites = findCallSites(source, "activities\\.runWorker");
     expect(sites.length).toBeGreaterThanOrEqual(1);
     for (const arg of sites) {
-      expect(arg, `runResume call without sessionId: ${arg.slice(0, 200)}`).toMatch(/\bsessionId\b/);
-      expect(arg, `runResume call without prompt: ${arg.slice(0, 200)}`).toMatch(/\bprompt\b/);
+      expect(arg, `resume-mode runWorker call without sessionId: ${arg.slice(0, 200)}`).toMatch(/\bsessionId\b/);
+      expect(arg, `resume-mode runWorker call without prompt: ${arg.slice(0, 200)}`).toMatch(/\bprompt\b/);
     }
   });
 
@@ -473,12 +460,10 @@ describe("simpleWorkflow defaultActivities surface", () => {
   it("returns the proxied activity dispatch table the cap loop expects", () => {
     const surface = defaultActivities();
     expect(typeof surface.runWorker).toBe("function");
-    expect(typeof surface.runResume).toBe("function");
     expect(typeof surface.runVerify).toBe("function");
     expect(typeof surface.runReview).toBe("function");
-    // The dispatch surface now has exactly four entries.
+    // The dispatch surface now has exactly the three TYPE activity entries.
     expect(Object.keys(surface).sort()).toEqual([
-      "runResume",
       "runReview",
       "runVerify",
       "runWorker"

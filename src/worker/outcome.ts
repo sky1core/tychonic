@@ -3,8 +3,7 @@ import type { AgentSessionRecord, ArtifactRecord, WorkflowStateStatus } from "..
 /**
  * Outcome of one worker-body invocation. Parallels
  * `ReviewActivityOutcome` / `commandOutcome`. Returned through
- * `ActivityResult.workerOutcome` by `work`, `resume_work`, and (in future)
- * `auto_continue` activities.
+ * `ActivityResult.workerOutcome` by `work` and explicit resume-work calls.
  *
  * `artifacts` and `agentSessions` carry full records (not ids) because the
  * caller appends them to `run.artifacts` / `run.agent_sessions`; the body

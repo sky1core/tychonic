@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,15 +11,10 @@ const cliPath = fileURLToPath(new URL("../src/cli/main.ts", import.meta.url));
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
 describe("run workflow dispatch", () => {
-  it("uses the generic run path without local shipped-workflow preflight", async () => {
+  it("rejects raw input.profile before Temporal connection or bundle lookup", async () => {
     const fixture = await createRunDispatchFixture();
-    // The user supplies input.profile explicitly, which short-circuits the
-    // installed-bundle defaultProfile lookup and lets the run command go
-    // straight to the Temporal client. The connection attempt to the
-    // unreachable address must be the first observable failure.
     const input = JSON.stringify({
       cwd: fixture.repo,
-      goal: "connect through Temporal only",
       profile: {
         version: "tychonic.config.v1",
         states: { verify: { type: "verify", command: "echo ok" } }
@@ -27,6 +22,40 @@ describe("run workflow dispatch", () => {
     });
 
     const failure = await runCliExpectFailure(["run", "customWorkflow", "--input", input, "--temporal-address", "127.0.0.1:1"], fixture.env);
+
+    expect(failure.stderr).toMatch(/input\.profile is reserved for Tychonic config injection/);
+    expect(failure.stderr).not.toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
+    expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build|self_repair_workflow/i);
+  }, 20_000);
+
+  it("uses the generic run path without local shipped-workflow preflight", async () => {
+    const fixture = await createRunDispatchFixture();
+    const configPath = join(fixture.repo, "profile.yaml");
+    await writeFile(
+      configPath,
+      [
+        "version: tychonic.config.v1",
+        "states:",
+        "  verify:",
+        "    type: verify",
+        "    command: echo ok",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    // The explicit --config path short-circuits the installed-bundle
+    // defaultProfile lookup and lets the run command go straight to the
+    // Temporal client. The connection attempt to the unreachable address
+    // must be the first observable failure.
+    const input = JSON.stringify({
+      cwd: fixture.repo,
+      goal: "connect through Temporal only"
+    });
+
+    const failure = await runCliExpectFailure(
+      ["run", "customWorkflow", "--input", input, "--config", configPath, "--temporal-address", "127.0.0.1:1"],
+      fixture.env
+    );
 
     expect(failure.stderr).toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
     expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build|self_repair_workflow/i);

@@ -1,13 +1,13 @@
 /**
  * Built-in agent adapter registry.
  *
- * Centralises the four shipped adapters behind a typed lookup. The
+ * Centralises the shipped adapters behind a typed lookup. The
  * `agent` field on a state config block is matched against
  * `BUILTIN_AGENT_NAMES` — non-built-in names remain free-form labels and
  * follow the explicit-`command` path unchanged.
  *
  * Step 1 (this file) only exports the registry. Step 2 will plumb it
- * into `runWorkerActivity` / `runReviewActivity` / `runAutoContinueActivity`
+ * into `runWorkerActivity` / `runReviewActivity`
  * per architect §5.
  */
 
@@ -15,20 +15,23 @@ import type { AgentAdapter, BuiltInAgentName } from "./types.js";
 import { claudeAdapter } from "./claude.js";
 import { codexAdapter } from "./codex.js";
 import { geminiAdapter } from "./gemini.js";
+import { kiroAcpAdapter } from "./kiroAcp.js";
 import { kiroAdapter } from "./kiro.js";
 
 export const BUILTIN_AGENT_NAMES: readonly BuiltInAgentName[] = [
   "claude",
   "codex",
   "gemini",
-  "kiro"
+  "kiro",
+  "kiro-acp"
 ] as const;
 
 const REGISTRY: Record<BuiltInAgentName, AgentAdapter> = {
   claude: claudeAdapter,
   codex: codexAdapter,
   gemini: geminiAdapter,
-  kiro: kiroAdapter
+  kiro: kiroAdapter,
+  "kiro-acp": kiroAcpAdapter
 };
 
 /**

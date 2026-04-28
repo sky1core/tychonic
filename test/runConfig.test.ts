@@ -46,7 +46,7 @@ async function writeConfigFile(format: "yaml" | "json"): Promise<string> {
 }
 
 describe("tychonic run --config resolution", () => {
-  it("attaches a YAML --config file as input.profile and skips the bundle default", async () => {
+  it("attaches a YAML --config file as the internal profile and skips the bundle default", async () => {
     const path = await writeConfigFile("yaml");
     let bundleLoads = 0;
     const resolved = await applyConfigOrDefaultProfileToRunInput({
@@ -67,7 +67,7 @@ describe("tychonic run --config resolution", () => {
     });
   });
 
-  it("attaches a JSON --config file as input.profile and skips the bundle default", async () => {
+  it("attaches a JSON --config file as the internal profile and skips the bundle default", async () => {
     const path = await writeConfigFile("json");
     let bundleLoads = 0;
     const resolved = await applyConfigOrDefaultProfileToRunInput({
@@ -84,7 +84,7 @@ describe("tychonic run --config resolution", () => {
     expect(resolved.input).toEqual({ profile: CONFIG_PROFILE });
   });
 
-  it("rejects --config + input.profile as a conflict instead of silently merging", async () => {
+  it("rejects --config + raw input.profile because profile is reserved for config injection", async () => {
     const path = await writeConfigFile("yaml");
     await expect(
       applyConfigOrDefaultProfileToRunInput({
@@ -95,7 +95,7 @@ describe("tychonic run --config resolution", () => {
         configPath: path,
         loadDefaultProfile: async () => BUNDLE_DEFAULT_PROFILE
       })
-    ).rejects.toThrow(/--config conflicts with input\.profile/);
+    ).rejects.toThrow(/input\.profile is reserved for Tychonic config injection/);
   });
 
   it("--config wins over the bundle defaultProfile when input has no profile field", async () => {
@@ -145,6 +145,6 @@ describe("tychonic run --config resolution", () => {
         configPath: path,
         loadDefaultProfile: async () => BUNDLE_DEFAULT_PROFILE
       })
-    ).rejects.toThrow(/--config requires the workflow input to be a JSON object/);
+    ).rejects.toThrow(/workflow input must be a JSON object/);
   });
 });

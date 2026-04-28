@@ -6,8 +6,8 @@ import {
 } from "../../src/adapters/index.js";
 
 describe("adapter registry", () => {
-  it("exports the four built-in agent names in stable order", () => {
-    expect(BUILTIN_AGENT_NAMES).toEqual(["claude", "codex", "gemini", "kiro"]);
+  it("exports the built-in agent names in stable order", () => {
+    expect(BUILTIN_AGENT_NAMES).toEqual(["claude", "codex", "gemini", "kiro", "kiro-acp"]);
   });
 
   it("isBuiltInAgentName recognises each built-in name", () => {

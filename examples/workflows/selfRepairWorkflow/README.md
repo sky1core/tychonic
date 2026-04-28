@@ -18,7 +18,6 @@ passes or the iteration budget is exhausted.
 | Field | Required | Purpose |
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
-| `profile` | no | Whole-profile replacement for this run. |
 | `goal` | no | Free-text goal threaded into worker prompts. |
 
 Unknown fields are rejected. `cwd` must be a git repository.
@@ -33,3 +32,8 @@ it uses the workflow default.
 The workflow does not register signal handlers. If the iteration budget is
 exhausted before final review passes, inspect the artifacts and start a fresh
 run with adjusted input or config.
+
+## Config Override
+
+`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+does not merge with the bundle default.

@@ -13,13 +13,9 @@ import {
 describe("activity-centric config schema", () => {
   it("exposes the exact product-controlled activity type set", () => {
     expect(ActivityTypeSchema.options).toEqual([
-      "lint",
-      "unit_test",
-      "integration",
       "work",
       "verify",
-      "review",
-      "auto_continue"
+      "review"
     ]);
     expect(Object.keys(activityTypeContracts).sort()).toEqual([...ActivityTypeSchema.options].sort());
   });
@@ -28,7 +24,6 @@ describe("activity-centric config schema", () => {
     const config = TychonicConfigSchema.parse({
       version: "tychonic.config.v1",
       states: {
-        lint: { type: "lint", command: "npm run lint", timeout: "10m" },
         work: { type: "work", agent: "claude" },
         verify: { type: "verify", command: "npm run verify:worker" },
         review: {
@@ -44,7 +39,7 @@ describe("activity-centric config schema", () => {
     });
 
     expect(requiredActivity(config, "work", "work").agent).toBe("claude");
-    expect(optionalStateConfig(config, "missing", "lint")).toBeUndefined();
+    expect(optionalStateConfig(config, "missing", "verify")).toBeUndefined();
   });
 
   it("treats policies as an opaque record so workflow-defined keys round-trip unchanged", () => {
@@ -71,13 +66,9 @@ describe("activity-centric config schema", () => {
 
   it("defines per-type default activity timeouts in one table", () => {
     expect(DEFAULT_ACTIVITY_TIMEOUT_BY_TYPE).toEqual({
-      lint: 10 * 60 * 1000,
-      unit_test: 30 * 60 * 1000,
-      integration: 60 * 60 * 1000,
       verify: 30 * 60 * 1000,
       work: 120 * 60 * 1000,
-      review: 45 * 60 * 1000,
-      auto_continue: 90 * 60 * 1000
+      review: 45 * 60 * 1000
     });
     expect(defaultActivityTimeoutMs("review")).toBe(45 * 60 * 1000);
   });
@@ -139,10 +130,10 @@ describe("activity-centric config schema", () => {
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
-          lint: { type: "lint", agent: "lint-runner", command: "npm run lint" }
+          verify: { type: "verify", agent: "claude", command: "npm run lint" }
         }
       })
-    ).toThrow(/agent is not allowed for type lint/);
+    ).toThrow(/agent is not allowed for type verify/);
 
     // work activity requires at least one of command/agent. A block with
     // neither must be rejected; a block with only `agent` (built-in or
@@ -170,10 +161,10 @@ describe("activity-centric config schema", () => {
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
-          lint: { type: "lint", agent: "lint-runner" }
+          verify: { type: "verify", agent: "claude" }
         }
       })
-    ).toThrow(/agent is not allowed for type lint/);
+    ).toThrow(/agent is not allowed for type verify/);
   });
 
   it("rejects agent and command together", () => {
@@ -235,8 +226,8 @@ describe("activity-centric config schema", () => {
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
-          lint: {
-            type: "lint",
+          verify: {
+            type: "verify",
             command: "npm run lint",
             emits: ["tychonic.review.v1"]
           }
@@ -277,7 +268,7 @@ describe("Step 6 schema tighten", () => {
           }
         }
       })
-    ).toThrow(/'fakebot' is not a built-in adapter; must be one of: claude, codex, gemini, kiro/);
+    ).toThrow(/'fakebot' is not a built-in adapter; must be one of: claude, codex, gemini, kiro, kiro-acp/);
   });
 
   it("rejects an unknown agent name on a review state", () => {
@@ -294,22 +285,8 @@ describe("Step 6 schema tighten", () => {
     ).toThrow(/'claud' is not a built-in adapter/);
   });
 
-  it("rejects an unknown agent name on an auto_continue state", () => {
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        states: {
-          loop: {
-            type: "auto_continue",
-            agent: "geminii"
-          }
-        }
-      })
-    ).toThrow(/'geminii' is not a built-in adapter/);
-  });
-
-  it("accepts each of the four built-in adapter names", () => {
-    for (const name of ["claude", "codex", "gemini", "kiro"]) {
+  it("accepts each built-in adapter name", () => {
+    for (const name of ["claude", "codex", "gemini", "kiro", "kiro-acp"]) {
       const config = TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
@@ -407,17 +384,6 @@ describe("Step 6 schema tighten", () => {
     ).toThrow(/requires one of: command, agent/);
   });
 
-  it("rejects an auto_continue state with neither agent nor command", () => {
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        states: {
-          loop: { type: "auto_continue" }
-        }
-      })
-    ).toThrow(/requires one of: command, agent/);
-  });
-
   it("rejects a review state with neither agent nor command", () => {
     expect(() =>
       TychonicConfigSchema.parse({
@@ -431,12 +397,10 @@ describe("Step 6 schema tighten", () => {
 
 });
 
-// Reviewer role coverage. `gemini` and `kiro` lack the structured
-// `tychonic.review.v1` output the host requires from a reviewer, so the
-// host schema rejects them on `type: "review"` at install time. The
-// runtime adapter throw is the second line of defense.
+// Reviewer role coverage. `gemini`, `kiro`, and `kiro-acp` can be primary
+// prose reviewers only when a structured-output normalizer is declared.
 describe("review-state agent restrictions", () => {
-  it("rejects agent: \"gemini\" on a review state", () => {
+  it("rejects agent: \"gemini\" on a review state without normalizer", () => {
     expect(() =>
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
@@ -447,12 +411,10 @@ describe("review-state agent restrictions", () => {
           }
         }
       })
-    ).toThrow(
-      /agent gemini does not support the reviewer role; only claude or codex may serve as a review-state agent/
-    );
+    ).toThrow(/agent gemini requires states\.<name>\.normalizer/);
   });
 
-  it("rejects agent: \"kiro\" on a review state", () => {
+  it("rejects agent: \"kiro\" on a review state without normalizer", () => {
     expect(() =>
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
@@ -463,9 +425,70 @@ describe("review-state agent restrictions", () => {
           }
         }
       })
-    ).toThrow(
-      /agent kiro does not support the reviewer role; only claude or codex may serve as a review-state agent/
-    );
+    ).toThrow(/agent kiro requires states\.<name>\.normalizer/);
+  });
+
+  it("rejects agent: \"kiro-acp\" on a review state without normalizer", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            agent: "kiro-acp"
+          }
+        }
+      })
+    ).toThrow(/agent kiro-acp requires states\.<name>\.normalizer/);
+  });
+
+  it("accepts partial review agents when normalizer is claude or codex", () => {
+    for (const agent of ["gemini", "kiro", "kiro-acp"]) {
+      for (const normalizer of ["claude", "codex"]) {
+        const config = TychonicConfigSchema.parse({
+          version: "tychonic.config.v1",
+          states: {
+            review: {
+              type: "review",
+              agent,
+              normalizer
+            }
+          }
+        });
+        expect(config.states?.review?.agent).toBe(agent);
+        expect(config.states?.review?.normalizer).toBe(normalizer);
+      }
+    }
+  });
+
+  it("rejects normalizer on direct structured review agents", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            agent: "claude",
+            normalizer: "codex"
+          }
+        }
+      })
+    ).toThrow(/normalizer is only valid when the review agent is gemini, kiro, or kiro-acp/);
+  });
+
+  it("rejects normalizer on command review states", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            command: "node review.js",
+            normalizer: "claude"
+          }
+        }
+      })
+    ).toThrow(/normalizer is only valid with a review agent, not command/);
   });
 
   it("accepts agent: \"claude\" on a review state", () => {
@@ -494,17 +517,15 @@ describe("review-state agent restrictions", () => {
     expect(config.states?.review?.agent).toBe("codex");
   });
 
-  it("still accepts gemini and kiro on work and auto_continue states", () => {
-    for (const name of ["gemini", "kiro"]) {
+  it("still accepts partial adapters on work states", () => {
+    for (const name of ["gemini", "kiro", "kiro-acp"]) {
       const config = TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
-          work: { type: "work", agent: name },
-          loop: { type: "auto_continue", agent: name }
+          work: { type: "work", agent: name }
         }
       });
       expect(config.states?.work?.agent).toBe(name);
-      expect(config.states?.loop?.agent).toBe(name);
     }
   });
 });

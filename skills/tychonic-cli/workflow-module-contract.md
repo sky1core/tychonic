@@ -15,11 +15,22 @@ export const defaultProfile = {
   version: "tychonic.config.v1",
   states: {
     work: { type: "work", agent: "codex" },
-    verify: { type: "verify", command: "npm test" },
+    verify: {
+      type: "verify",
+      command: `npm run typecheck
+npm run build
+npm test`
+    },
     review: { type: "review", agent: "claude" }
   }
 };
 ```
+
+At workflow start, Tychonic injects the effective profile into the workflow
+input's reserved `profile` field. Workflow code passes that profile to
+activities. Operators pass workflow input as a JSON object and replace config
+with `tychonic run --config <file>`, not by putting `profile` in workflow JSON
+input.
 
 The bundle may include `README.md`, `package.json`, lockfiles, helper modules,
 assets, and `node_modules`. If `workflow.mjs` imports a package, install that
@@ -47,10 +58,13 @@ Use one execution selector per executable state:
 
 Do not set both. Do not create any second execution channel.
 
-Built-in adapters are `claude`, `codex`, `gemini`, and `kiro`. `claude` and
-`codex` can serve review states; `gemini` and `kiro` cannot. Vendor-owned
-settings such as model name and reasoning effort stay in the external CLI
-configuration or an explicit `command`.
+Built-in adapters are `claude`, `codex`, `gemini`, `kiro`, and `kiro-acp`.
+`claude` and `codex` can serve review states directly. `gemini`, `kiro`, and
+`kiro-acp` can serve review states only with `normalizer: claude` or
+`normalizer: codex`; the normalizer structures the primary review output and
+must not invent findings. Vendor-owned settings such as model name and
+reasoning effort stay in the external CLI configuration or an explicit
+`command`.
 
 `resume` is a numeric budget a workflow may read when it explicitly chooses to
 continue a recorded session. Omit it unless the workflow needs same-session
@@ -65,12 +79,8 @@ Available activities:
 - `startRunActivity`
 - `collectGitFactsActivity`
 - `createWorktreeActivity`
-- `runLintActivity`
-- `runUnitTestActivity`
-- `runIntegrationActivity`
 - `runVerifyActivity`
 - `runWorkerActivity`
-- `runAutoContinueActivity`
 - `runReviewActivity`
 - `finalizeRunActivity`
 

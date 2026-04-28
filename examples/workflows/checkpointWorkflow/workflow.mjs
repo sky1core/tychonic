@@ -10,8 +10,9 @@
 // See docs/plugin-workflows.md for the authoring guide.
 //
 // Single-pass deterministic gates (lint -> unit_test -> integration) plus
-// two structured reviews (semantic_review, test_review). Composes the
-// host's per-TYPE activities the same way pipelineWorkflow does.
+// two structured reviews (semantic_review, test_review). Deterministic gates
+// all use the `verify` TYPE; their state NAMEs carry the workflow-specific
+// meaning.
 
 import { proxyActivities } from "@temporalio/workflow";
 
@@ -24,9 +25,7 @@ const act = proxyActivities({
 const {
   startRunActivity,
   collectGitFactsActivity,
-  runLintActivity,
-  runUnitTestActivity,
-  runIntegrationActivity,
+  runVerifyActivity,
   runReviewActivity,
   finalizeRunActivity
 } = act;
@@ -34,9 +33,9 @@ const {
 export const defaultProfile = {
   version: "tychonic.config.v1",
   states: {
-    lint: { type: "lint", command: "npm run lint", timeout: "10m" },
-    unit_test: { type: "unit_test", command: "npm test", timeout: "30m" },
-    integration: { type: "integration", command: "npm run integration", timeout: "45m" },
+    lint: { type: "verify", command: "npm run lint", timeout: "10m" },
+    unit_test: { type: "verify", command: "npm test", timeout: "30m" },
+    integration: { type: "verify", command: "npm run integration", timeout: "45m" },
     semantic_review: {
       type: "review",
       agent: "codex",
@@ -113,7 +112,8 @@ export function validateIntegrationPolicy(policies) {
 /**
  * `checkpointWorkflow` — deterministic gates plus structured reviews.
  *
- * Input: { cwd, profile?, goal? }
+ * Input: { cwd, goal? }
+ * Host-injected: profile?: TychonicConfig
  */
 const CHECKPOINT_WORKFLOW_INPUT_FIELDS = new Set(["cwd", "profile", "goal"]);
 
@@ -146,7 +146,7 @@ export async function checkpointWorkflow(input) {
 
   // Stage: lint
   if (profile?.states?.lint) {
-    const res = await runLintActivity({
+    const res = await runVerifyActivity({
       stateName: "lint", run,
       ...(profile ? { profile } : {}),
       cwd: input.cwd
@@ -156,7 +156,7 @@ export async function checkpointWorkflow(input) {
 
   // Stage: unit_test
   if (profile?.states?.unit_test) {
-    const res = await runUnitTestActivity({
+    const res = await runVerifyActivity({
       stateName: "unit_test", run,
       ...(profile ? { profile } : {}),
       cwd: input.cwd
@@ -166,7 +166,7 @@ export async function checkpointWorkflow(input) {
 
   // Stage: integration (pre-review when policy says before_ai_review)
   if (integrationPosition === "before_ai_review" && profile?.states?.integration) {
-    const res = await runIntegrationActivity({
+    const res = await runVerifyActivity({
       stateName: "integration", run,
       ...(profile ? { profile } : {}),
       cwd: input.cwd
@@ -198,7 +198,7 @@ export async function checkpointWorkflow(input) {
 
   // Stage: integration (final_gate, the default)
   if (integrationPosition === "final_gate" && profile?.states?.integration) {
-    const res = await runIntegrationActivity({
+    const res = await runVerifyActivity({
       stateName: "integration", run,
       ...(profile ? { profile } : {}),
       cwd: input.cwd
@@ -262,14 +262,8 @@ function structuredReviewPrompt(scope) {
   return [
     `Review ${scope} for correctness, regressions, missing tests, and risky assumptions.`,
     "",
-    "Return only one JSON object matching this contract. Do not wrap it in markdown.",
-    "{",
-    '  "status": "pass|fail",',
-    '  "summary": "short result summary",',
-    '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
-    "  ]",
-    "}",
+    "Report a semantic review verdict with status, summary, and findings.",
+    "Each finding needs severity, title, and actionable detail.",
     "Add target only when you can identify a file or state.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
   ].join("\n");

@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -141,6 +141,70 @@ describe("runWorkerActivity", () => {
     }
   });
 
+  it("resumes an existing worker session when sessionId is explicit", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-resume-pass-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-resume-wt-"));
+    const run = baseRunWithSession("run_worker_resume_pass", "sess_1");
+    const runBefore = structuredClone(run);
+    const restorePath = await installFakeCodex();
+
+    let result;
+    try {
+      result = await runWorkerActivity({
+        stateName: ACTIVITY_NAME,
+        run,
+        cwd,
+        profile: profileWithAgent("codex"),
+        worktreePath,
+        prompt: "continue please",
+        sessionId: "sess_1"
+      });
+    } finally {
+      restorePath();
+    }
+
+    expect(run).toEqual(runBefore);
+    expect(result.delta.states?.[0]?.status).toBe("succeeded");
+    expect(result.delta.activityAttempts?.[0]?.kind).toBe("resume_work");
+    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("sess_1");
+    if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
+    expect(result.workerOutcome.resumedSessionId).toBe("sess_1");
+    expect(result.workerOutcome.agentSessions).toHaveLength(0);
+  });
+
+  it("throws ApplicationFailure when explicit sessionId references a non-resumable session", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-resume-nores-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-resume-wt2-"));
+    const run = baseRunWithSession("run_worker_resume_nores", "sess_nores", { resumable: false });
+
+    await expect(
+      runWorkerActivity({
+        stateName: ACTIVITY_NAME,
+        run,
+        cwd,
+        profile: profileWithAgent("codex"),
+        worktreePath,
+        sessionId: "sess_nores"
+      })
+    ).rejects.toThrow(/not resumable/);
+  });
+
+  it("throws ApplicationFailure when explicit sessionId is absent from run.agent_sessions", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-resume-404-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-resume-wt3-"));
+
+    await expect(
+      runWorkerActivity({
+        stateName: ACTIVITY_NAME,
+        run: baseRunWithSession("run_worker_resume_404", "sess_other"),
+        cwd,
+        profile: profileWithAgent("codex"),
+        worktreePath,
+        sessionId: "sess_missing"
+      })
+    ).rejects.toThrow(/sess_missing/);
+  });
+
   it("rejects an unvalidated work profile block before command resolution", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-command-missing-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-wt-command-missing-"));
@@ -203,6 +267,18 @@ function profileWith(command: string): TychonicConfig {
   };
 }
 
+function profileWithAgent(agent: string): TychonicConfig {
+  return {
+    version: "tychonic.config.v1",
+    states: {
+      [ACTIVITY_NAME]: {
+        type: "work",
+        agent
+      }
+    }
+  };
+}
+
 function baseRun(id: string): WorkflowRunRecord {
   return {
     schema_version: "tychonic.run.v1",
@@ -218,5 +294,43 @@ function baseRun(id: string): WorkflowRunRecord {
     artifacts: [],
     findings: [],
     inbox: []
+  };
+}
+
+function baseRunWithSession(
+  id: string,
+  sessionId: string,
+  options: { resumable?: boolean } = {}
+): WorkflowRunRecord {
+  return {
+    ...baseRun(id),
+    agent_sessions: [
+      {
+        id: sessionId,
+        agent: "codex",
+        role: "worker",
+        cwd: "/ignored",
+        status: "succeeded",
+        ...(options.resumable === false ? {} : { resumable: true }),
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:10.000Z"
+      }
+    ]
+  };
+}
+
+async function installFakeCodex(): Promise<() => void> {
+  const binDir = await mkdtemp(join(tmpdir(), "tychonic-fake-codex-"));
+  const binPath = join(binDir, "codex");
+  await writeFile(binPath, "#!/bin/sh\necho '{\"session_id\":\"external-session-1\"}'\n", "utf8");
+  await chmod(binPath, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+  return () => {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
   };
 }

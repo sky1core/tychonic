@@ -15,7 +15,6 @@ run with interactive gates or straight through in auto mode, depending on
 | Field | Required | Purpose |
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
-| `profile` | no | Whole-profile replacement for this run. |
 | `goal` | no | Goal threaded into architect and builder prompts. |
 | `architectPrompt` | no | Prompt override for `architect`. |
 | `builderPrompt` | no | Prompt override for `builder`. |
@@ -46,3 +45,8 @@ tychonic modify <workflow-id> --note "..."
 
 After the run reaches a terminal `waiting_user` status, those signals no longer
 resume it. Recovery is a fresh run with adjusted input or config.
+
+## Config Override
+
+`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+does not merge with the bundle default.
