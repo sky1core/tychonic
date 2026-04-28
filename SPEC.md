@@ -94,8 +94,8 @@ Allowed configuration content:
   knobs. The host config schema treats `policies` as an opaque object
   keyed by string; each workflow bundle defines, validates, and
   consumes the policy keys it cares about. Common bundle-defined keys
-  include `policies.loop`, `policies.integration`,
-  `policies.self_repair_workflow`, and `policies.interaction`.
+  include `policies.loop`, `policies.integration`, and
+  `policies.interaction`.
 
 Ordering, branching, loops, fan-out, joins, retry, and
 multi-activity aggregation belong in Temporal workflow code. If a
@@ -264,7 +264,8 @@ The bundle contract is fixed:
   workflow name users pass to `tychonic run <name>`) and a `defaultProfile`
   object (see below).
 - a bundle may also be a normal package directory: `README.md`, `package.json`,
-  lockfiles, `node_modules`, helper modules, and pre-bundled assets are allowed.
+  lockfiles, `node_modules`, relative support modules, and pre-bundled assets
+  are allowed.
   Dependencies are installed separately by the operator before
   `tychonic workflows install`; Tychonic copies the directory tree verbatim and
   does not run a package manager during install.
@@ -379,7 +380,7 @@ Configuration has exactly two top-level groups. No others.
   object with string keys; each workflow bundle defines, validates, and
   consumes the policy keys it cares about. The example bundles under
   `examples/workflows/` use `policies.loop`, `policies.integration`,
-  `policies.self_repair_workflow`, and `policies.interaction`; their
+  and `policies.interaction`; their
   shapes are documented in those bundles' READMEs.
 
 There is no `agents.<name>` top-level, no `commands.<name>` top-level, no
@@ -790,7 +791,7 @@ them is not interactive from the point of view of `tychonic approve`,
 `tychonic reject`, and `tychonic modify`.
 
 The host does **not** assign semantics to `policies.interaction` and does not
-require a workflow to use any helper named `waitForStateApproval`.
+require a workflow to use any utility named `waitForStateApproval`.
 `policies.interaction`, reject accumulation, per-state reject caps, signal
 parking, and whether interaction replaces or composes with auto retry loops are
 bundle-owned workflow contracts documented by the bundle that implements them.
@@ -815,22 +816,19 @@ its own recovery path and documents that behavior in the bundle's README.
 
 ### Integration policy
 
-`policies.integration.mode` is explicit:
+`policies.integration` is bundle-owned workflow policy. The host schema treats
+it as opaque data and does not assign integration behavior.
 
-- `disabled`: do not run and record a skipped reason
-- `manual`: create a waiting/inbox state when integration appears necessary
-- `auto_on_relevant_changes`: run only when deterministic facts and resource
-  policy allow it
-- `required`: make integration a final success condition
-
-`policies.integration.position` is also explicit:
+The checkpoint example uses only `policies.integration.position`:
 
 - `before_ai_review`: run before semantic review
 - `after_ai_review`: defer until after semantic review
 - `final_gate`: run after a workflow's review loop as the final gate
 
-A workflow that respects this policy reads `profile.policies.integration`
-and routes its integration state NAME to `runVerifyActivity` accordingly.
+A workflow that uses this policy reads `profile.policies.integration.position`
+and routes its own integration state NAME to `runVerifyActivity` accordingly.
+Other workflows may define a different `policies.integration` shape, but they
+must document and validate the keys they consume.
 
 ## Runtime
 
@@ -998,7 +996,7 @@ Each bundle directory contains at minimum:
 - `workflow.mjs`
 
 It may also contain `README.md`, `package.json`, lockfiles, `node_modules`,
-helper modules, and pre-bundled assets. This mirrors the install-time bundle
+relative support modules, and pre-bundled assets. This mirrors the install-time bundle
 contract in "Workflow Modules": dependencies resolve through the installed
 bundle directory's standard package layout. Tychonic does not add host
 `node_modules`, symlinks, or private resolver state when the worker bundles

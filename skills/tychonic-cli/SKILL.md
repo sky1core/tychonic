@@ -138,6 +138,11 @@ Use `kiro-acp` rather than `kiro` for Kiro worker states when the installed
 Kiro CLI supports ACP. The plain `kiro` adapter is the legacy chat-wrapper
 path.
 
+The plain `kiro` adapter runs non-interactively. If a Kiro state must inspect
+or edit files, set `trust_all_tools: true` only for that state and only in an
+isolated worktree. Without tool trust, Kiro can stop on tool approval instead
+of completing the workflow.
+
 `TYCHONIC_AGENT_PATH` prepends directories to the agent CLI lookup path. Use it
 when a smoke test or local setup needs Tychonic to find agent binaries outside
 the normal `PATH`, for example a temporary stub directory or a locally installed

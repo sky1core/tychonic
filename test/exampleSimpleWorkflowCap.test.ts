@@ -1,19 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-// Bundle integration tests for the simpleWorkflow cap loop. The helpers
-// under test live in `examples/workflows/simpleWorkflow/workflow.mjs` and
-// are exported as test-only named exports. Tests inject mock activity
-// dispatchers so the loop can be driven end-to-end without a real Temporal
-// worker. The assertions exercise the resume-cap state-machine transitions
-// (counter, inbox writes) against the canonical contract documented in the
-// bundle README.
+// Bundle integration tests for the simpleWorkflow cap loop. Tests inject mock
+// activity dispatchers so the loop can be driven end-to-end without a real
+// Temporal worker. The assertions exercise the resume-cap state-machine
+// transitions against the canonical contract documented in the bundle README.
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - bundle modules export plain JS, no TS types.
 import {
   appendReviewFindingsAndInboxForTests,
   runAutoContinueLoop
-} from "../examples/workflows/simpleWorkflow/workflow.mjs";
+} from "../examples/workflows/simpleWorkflow/reviewLoop.mjs";
 
 interface MockSession {
   id: string;
@@ -489,7 +486,7 @@ describe("simpleWorkflow cap loop", () => {
   it("effective profile snapshot at workflow start is the source of truth (mid-run profile mutation does not change the running cap value)", async () => {
     // The cap loop reads `states.work.resume` from `input.profile` (the
     // start-time snapshot). Once the loop is running, no path inside this
-    // helper re-reads policies from anywhere else — so even if a caller
+    // review loop module re-reads policies from anywhere else — so even if a caller
     // mutates a separate profile object after invoking the loop, the
     // running cap stays locked to what was passed in at start.
     const initialWorker = makeWorkerSession("session_w0");

@@ -19,8 +19,8 @@ describe("Temporal bridge", () => {
   it("resolves a packaged CLI path back to the tychonic package root", async () => {
     const fixture = await makePackagedCliFixture(
       await mkdtemp(join(tmpdir(), "tychonic-temporal-cli-root-")),
-      "selfRepairWorkflow",
-      bundleSource("selfRepairWorkflow", "fixture")
+      "sampleWorkflow",
+      bundleSource("sampleWorkflow", "fixture")
     );
     await expect(resolveTychonicPackageRootFromCli(fixture.cliPath)).resolves.toBe(fixture.packageRoot);
   });

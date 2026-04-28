@@ -123,6 +123,11 @@ function apply(run, result) {
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
       agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
     };
+    if (result.reviewOutcome.kind === "parsed" && result.reviewOutcome.result.status === "fail") {
+      // Workflow code owns how review findings become run-level records and
+      // state finding_ids; the review activity only returns the parsed verdict.
+      next = appendReviewFindings(next, result);
+    }
   }
   if (result.workerOutcome?.kind === "executed") {
     next = {
@@ -132,6 +137,57 @@ function apply(run, result) {
     };
   }
   return next;
+}
+
+function appendReviewFindings(run, result) {
+  const outcome = result.reviewOutcome;
+  const sourceState = result.delta?.states?.[0];
+  if (!sourceState || outcome?.kind !== "parsed" || outcome.result.status !== "fail") return run;
+
+  let next = run;
+  const findingIds = [];
+  for (const finding of outcome.result.findings) {
+    const id = nextLocalId(next, "finding");
+    findingIds.push(id);
+    next = {
+      ...next,
+      findings: [
+        ...next.findings,
+        {
+          id,
+          status: "new",
+          severity: finding.severity,
+          title: finding.title,
+          detail: finding.detail,
+          ...(finding.target ? { target: finding.target } : {}),
+          source_state_id: sourceState.id,
+          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
+          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
+          created_at: new Date().toISOString()
+        }
+      ]
+    };
+  }
+
+  return {
+    ...next,
+    states: next.states.map((state) =>
+      state.id === sourceState.id
+        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
+        : state
+    )
+  };
+}
+
+function nextLocalId(run, prefix) {
+  const counter =
+    run.states.length +
+    run.activity_attempts.length +
+    run.artifacts.length +
+    run.findings.length +
+    run.inbox.length +
+    run.agent_sessions.length;
+  return `${prefix}_${counter + 1}`;
 }
 ```
 
@@ -180,7 +236,7 @@ Temporal workflow code runs in a deterministic sandbox.
   `node:net` inside `workflow.mjs`.
 - Do not make workflow decisions from non-deterministic top-level values.
 - Put file, shell, and network work inside activities.
-- Use only `@temporalio/workflow`, copied relative helper modules, or real
+- Use only `@temporalio/workflow`, copied relative support modules, or real
   package dependencies installed in the bundle.
 
 Tychonic installs the bundle directory as-is. It does not run `npm install`,
@@ -206,5 +262,8 @@ directly in the workflow:
 
 - [SPEC.md](../SPEC.md): authoritative product contract
 - [skills/tychonic-cli/workflow-module-contract.md](../skills/tychonic-cli/workflow-module-contract.md): compact authoring contract
+- [examples/workflows/verifyOnlyWorkflow](../examples/workflows/verifyOnlyWorkflow): minimal no-agent verify example
 - [examples/workflows/pipelineWorkflow](../examples/workflows/pipelineWorkflow): multi-stage example
-- [examples/workflows/architectBuilderQaWorkflow](../examples/workflows/architectBuilderQaWorkflow): interactive example
+- [examples/workflows/architectBuilderQaWorkflow](../examples/workflows/architectBuilderQaWorkflow): default architect/builder/QA example
+- [examples/workflows/architectBuilderKiroQaWorkflow](../examples/workflows/architectBuilderKiroQaWorkflow): Kiro review with normalizer
+- [examples/workflows/architectBuilderKiroRepairQaWorkflow](../examples/workflows/architectBuilderKiroRepairQaWorkflow): Kiro pre-review and repair before final QA

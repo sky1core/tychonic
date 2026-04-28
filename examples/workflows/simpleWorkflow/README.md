@@ -4,6 +4,12 @@
 fails and the worker session is resumable, the workflow can continue that same
 session until review passes or the configured loop budget is exhausted.
 
+## Purpose
+
+Use this as the reference for a normal delegated coding loop: one worker state,
+one deterministic verification gate, one structured review, and optional
+same-session continuation when review finds fixable issues.
+
 ## States
 
 - `work` — `work`

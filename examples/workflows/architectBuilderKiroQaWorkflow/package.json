@@ -1,5 +1,5 @@
 {
-  "name": "@tychonic/example-self-repair-workflow",
+  "name": "@tychonic/example-architect-builder-kiro-qa-workflow",
   "private": true,
   "type": "module",
   "dependencies": {

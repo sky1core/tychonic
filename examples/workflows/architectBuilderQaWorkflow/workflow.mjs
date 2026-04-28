@@ -42,6 +42,10 @@ import {
   proxyActivities,
   setHandler
 } from "@temporalio/workflow";
+import {
+  validateInteractionPolicy,
+  validateLoopPolicy
+} from "./workflowPolicies.mjs";
 
 const APPROVE_SIGNAL_NAME = "tychonic.interaction.approve_state";
 const REJECT_SIGNAL_NAME = "tychonic.interaction.reject_state";
@@ -70,7 +74,6 @@ export const defaultProfile = {
     architect: {
       type: "work",
       agent: "claude",
-      resume: 0,
       timeout: "30m",
       permission_mode: "plan"
     },
@@ -90,90 +93,10 @@ export const defaultProfile = {
     }
   },
   policies: {
-    interaction: { mode: "interactive", max_reject_iterations: 5 }
+    interaction: { mode: "auto" },
+    loop: { max_review_iterations: 3 }
   }
 };
-
-/**
- * Validate the bundle-owned `policies.interaction` block. The host
- * config schema treats `policies` as opaque; this workflow validates
- * the keys it actually consumes.
- *
- * Rules:
- *  - unknown keys under `policies.interaction` are rejected
- *  - `mode` must be 'auto' or 'interactive'
- *  - `max_reject_iterations` is a positive integer, only allowed when
- *    `mode` is 'interactive'
- */
-export function validateInteractionPolicy(policies) {
-  if (!policies || policies.interaction === undefined) return;
-  const block = policies.interaction;
-  if (typeof block !== "object" || block === null || Array.isArray(block)) {
-    throw new Error("policies.interaction must be an object");
-  }
-  const allowedKeys = new Set(["mode", "max_reject_iterations"]);
-  for (const key of Object.keys(block)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(
-        `policies.interaction.${key} is not a recognised key for architectBuilderQaWorkflow`
-      );
-    }
-  }
-  if (block.mode === undefined) {
-    throw new Error("policies.interaction.mode is required when the block is present");
-  }
-  if (block.mode !== "auto" && block.mode !== "interactive") {
-    throw new Error(
-      `policies.interaction.mode must be 'auto' or 'interactive'; got ${JSON.stringify(block.mode)}`
-    );
-  }
-  if (block.max_reject_iterations !== undefined) {
-    if (
-      !Number.isInteger(block.max_reject_iterations) ||
-      block.max_reject_iterations <= 0
-    ) {
-      throw new Error(
-        "policies.interaction.max_reject_iterations must be a positive integer"
-      );
-    }
-    if (block.mode === "auto") {
-      throw new Error(
-        "policies.interaction.max_reject_iterations is only allowed when mode is 'interactive'"
-      );
-    }
-  }
-}
-
-/**
- * Validate the bundle-owned `policies.loop` block as consumed by this
- * workflow. Only `max_review_iterations` is read; other knobs are
- * rejected so a typo never silently regresses the auto-mode loop cap.
- */
-export function validateLoopPolicy(policies) {
-  if (!policies || policies.loop === undefined) return;
-  const block = policies.loop;
-  if (typeof block !== "object" || block === null || Array.isArray(block)) {
-    throw new Error("policies.loop must be an object");
-  }
-  const allowedKeys = new Set(["max_review_iterations"]);
-  for (const key of Object.keys(block)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(
-        `policies.loop.${key} is not a recognised key for architectBuilderQaWorkflow`
-      );
-    }
-  }
-  if (block.max_review_iterations !== undefined) {
-    if (
-      !Number.isInteger(block.max_review_iterations) ||
-      block.max_review_iterations <= 0
-    ) {
-      throw new Error(
-        "policies.loop.max_review_iterations must be a positive integer"
-      );
-    }
-  }
-}
 
 const ARCHITECT_BUILDER_QA_INPUT_FIELDS = new Set([
   "cwd",
@@ -413,6 +336,7 @@ function apply(run, result) {
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
       agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
     };
+    next = appendReviewFindings(next, result);
   }
   if (result.workerOutcome?.kind === "executed") {
     next = {
@@ -422,6 +346,47 @@ function apply(run, result) {
     };
   }
   return next;
+}
+
+function appendReviewFindings(run, result) {
+  const outcome = result?.reviewOutcome;
+  if (!outcome || outcome.kind !== "parsed" || outcome.result.status !== "fail") return run;
+  const sourceState = result.delta?.states?.[0];
+  if (!sourceState) return run;
+
+  let next = run;
+  const findingIds = [];
+  for (const finding of outcome.result.findings) {
+    const id = nextLocalId(next, "finding");
+    findingIds.push(id);
+    next = {
+      ...next,
+      findings: [
+        ...next.findings,
+        {
+          id,
+          status: "new",
+          severity: finding.severity,
+          title: finding.title,
+          detail: finding.detail,
+          ...(finding.target ? { target: finding.target } : {}),
+          source_state_id: sourceState.id,
+          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
+          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
+          created_at: nowIso()
+        }
+      ]
+    };
+  }
+
+  return {
+    ...next,
+    states: next.states.map((state) =>
+      state.id === sourceState.id
+        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
+        : state
+    )
+  };
 }
 
 function applyDelta(run, delta) {
@@ -443,12 +408,27 @@ function applyDelta(run, delta) {
   return next;
 }
 
+function nextLocalId(run, prefix) {
+  const counter =
+    run.states.length +
+    run.activity_attempts.length +
+    run.artifacts.length +
+    run.findings.length +
+    run.inbox.length +
+    run.agent_sessions.length;
+  return `${prefix}_${counter + 1}`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
 const TERMINAL_STATE_STATUSES = ["succeeded", "failed", "skipped", "blocked", "timed_out"];
 
 // Overlay a StateRecordPatch on the latest state record with the given name.
 // Mirrors src/workflows/runMerge.ts:applyModifyStateDecision so the plugin
 // preserves the same id/attempt/artifact/finding bookkeeping as built-in
-// workflows (checkpoint, simple_workflow, self_repair).
+// workflows such as checkpoint and simpleWorkflow.
 function applyStatePatch(run, stateName, patch) {
   let latestIndex = -1;
   for (let i = run.states.length - 1; i >= 0; i -= 1) {

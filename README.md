@@ -91,6 +91,9 @@ node dist/cli/main.js run simpleWorkflow --input-file ./simple-workflow-input.js
 
 Each workflow owns its own input shape, policy keys, artifacts, and recovery
 flow. Read that bundle's `README.md` before writing non-trivial input or config.
+For a no-agent runtime smoke, install `examples/workflows/verifyOnlyWorkflow`.
+For architect/builder/QA patterns, start with `architectBuilderQaWorkflow`; use
+the Kiro variants when Kiro should handle review or pre-review repair work.
 
 Useful inspection commands:
 

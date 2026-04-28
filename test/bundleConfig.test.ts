@@ -24,7 +24,6 @@ states:
     command: npm run verify:worker
 policies:
   integration:
-    mode: disabled
     position: final_gate
 `;
 
@@ -48,7 +47,7 @@ describe("bundleConfig loader", () => {
     const resolved = await resolveEffectiveBundleConfig({ bundleDir, overridePath });
     expect(resolved.source).toEqual({ override: overridePath });
     expect(resolved.profile.states?.verify?.command).toBe("npm run verify:worker");
-    expect(resolved.profile.policies?.integration).toMatchObject({ mode: "disabled" });
+    expect(resolved.profile.policies?.integration).toMatchObject({ position: "final_gate" });
   });
 
   it("rejects a bundle defaultProfile that declares a pass-through vendor field", async () => {

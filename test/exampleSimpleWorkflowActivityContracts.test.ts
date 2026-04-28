@@ -14,13 +14,17 @@ import { describe, expect, it } from "vitest";
 // @ts-ignore - bundle modules export plain JS, no TS types.
 import {
   buildReviewPrompt,
-  defaultActivities,
-  runAutoContinueLoop,
+  runAutoContinueLoop
+} from "../examples/workflows/simpleWorkflow/reviewLoop.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore - bundle modules export plain JS, no TS types.
+import {
   simpleWorkflow
 } from "../examples/workflows/simpleWorkflow/workflow.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLE_PATH = join(__dirname, "..", "examples", "workflows", "simpleWorkflow", "workflow.mjs");
+const REVIEW_LOOP_PATH = join(__dirname, "..", "examples", "workflows", "simpleWorkflow", "reviewLoop.mjs");
 
 interface RecordedCall {
   name: "worker" | "verify" | "review";
@@ -378,7 +382,10 @@ describe("simpleWorkflow workflow source — every runReviewActivity call passes
   // explicit prompt. A regex over the bundle source catches drift the
   // injection-driven test cannot reach (call sites in runMainPipeline,
   // runContinuation, etc. that use proxied activities directly).
-  const source = readFileSync(BUNDLE_PATH, "utf8");
+  const source = [
+    readFileSync(BUNDLE_PATH, "utf8"),
+    readFileSync(REVIEW_LOOP_PATH, "utf8")
+  ].join("\n");
 
   function findCallSites(source: string, callee: string): string[] {
     const matches: string[] = [];
@@ -454,21 +461,6 @@ describe("simpleWorkflow workflow source — every runReviewActivity call passes
     }
   });
 
-});
-
-describe("simpleWorkflow defaultActivities surface", () => {
-  it("returns the proxied activity dispatch table the cap loop expects", () => {
-    const surface = defaultActivities();
-    expect(typeof surface.runWorker).toBe("function");
-    expect(typeof surface.runVerify).toBe("function");
-    expect(typeof surface.runReview).toBe("function");
-    // The dispatch surface now has exactly the three TYPE activity entries.
-    expect(Object.keys(surface).sort()).toEqual([
-      "runReview",
-      "runVerify",
-      "runWorker"
-    ]);
-  });
 });
 
 // Rejection contract: input outside this workflow's declared surface fails

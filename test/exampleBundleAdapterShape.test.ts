@@ -10,16 +10,41 @@ import { describe, expect, it } from "vitest";
 import { defaultProfile as simpleDefault } from "../examples/workflows/simpleWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { defaultProfile as selfRepairDefault } from "../examples/workflows/selfRepairWorkflow/workflow.mjs";
+import * as simpleWorkflowModule from "../examples/workflows/simpleWorkflow/workflow.mjs";
+import { defaultProfile as checkpointDefault } from "../examples/workflows/checkpointWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { defaultProfile as checkpointDefault } from "../examples/workflows/checkpointWorkflow/workflow.mjs";
+import * as checkpointWorkflowModule from "../examples/workflows/checkpointWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { defaultProfile as pipelineDefault } from "../examples/workflows/pipelineWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
+import * as pipelineWorkflowModule from "../examples/workflows/pipelineWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
 import { defaultProfile as architectDefault } from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import * as architectWorkflowModule from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { defaultProfile as architectKiroQaDefault } from "../examples/workflows/architectBuilderKiroQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import * as architectKiroQaWorkflowModule from "../examples/workflows/architectBuilderKiroQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { defaultProfile as architectKiroRepairQaDefault } from "../examples/workflows/architectBuilderKiroRepairQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import * as architectKiroRepairQaWorkflowModule from "../examples/workflows/architectBuilderKiroRepairQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { defaultProfile as verifyOnlyDefault } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import * as verifyOnlyWorkflowModule from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
 
 import { TychonicConfigSchema } from "../src/catalog/types.js";
 
@@ -30,19 +55,34 @@ const ESCAPE_HATCH_TYPES = new Set(["verify"]);
 interface Bundle {
   name: string;
   profile: any;
+  module: Record<string, unknown>;
 }
 
 const BUNDLES: readonly Bundle[] = [
-  { name: "simpleWorkflow", profile: simpleDefault },
-  { name: "selfRepairWorkflow", profile: selfRepairDefault },
-  { name: "checkpointWorkflow", profile: checkpointDefault },
-  { name: "pipelineWorkflow", profile: pipelineDefault },
-  { name: "architectBuilderQaWorkflow", profile: architectDefault }
+  { name: "simpleWorkflow", profile: simpleDefault, module: simpleWorkflowModule },
+  { name: "checkpointWorkflow", profile: checkpointDefault, module: checkpointWorkflowModule },
+  { name: "pipelineWorkflow", profile: pipelineDefault, module: pipelineWorkflowModule },
+  { name: "architectBuilderQaWorkflow", profile: architectDefault, module: architectWorkflowModule },
+  {
+    name: "architectBuilderKiroQaWorkflow",
+    profile: architectKiroQaDefault,
+    module: architectKiroQaWorkflowModule
+  },
+  {
+    name: "architectBuilderKiroRepairQaWorkflow",
+    profile: architectKiroRepairQaDefault,
+    module: architectKiroRepairQaWorkflowModule
+  },
+  { name: "verifyOnlyWorkflow", profile: verifyOnlyDefault, module: verifyOnlyWorkflowModule }
 ];
 
 describe("example bundle defaultProfile shape (Step 4 flip)", () => {
   for (const bundle of BUNDLES) {
     describe(bundle.name, () => {
+      it("exports only defaultProfile and the workflow function", () => {
+        expect(Object.keys(bundle.module).sort()).toEqual(["defaultProfile", bundle.name].sort());
+      });
+
       it("validates against the host TychonicConfigSchema", () => {
         const result = TychonicConfigSchema.safeParse(bundle.profile);
         expect(result.success, JSON.stringify(result.error?.issues ?? null, null, 2)).toBe(true);
@@ -133,5 +173,33 @@ describe("simpleWorkflow defaultProfile.states.work.resume", () => {
     expect(typeof work?.resume).toBe("number");
     expect(Number.isInteger(work.resume)).toBe(true);
     expect(work.resume).toBeGreaterThan(0);
+  });
+});
+
+describe("Kiro-oriented example profiles", () => {
+  it("uses Kiro as the primary QA reviewer with a normalizer in the normalized QA variant", () => {
+    const qa = (architectKiroQaDefault as any).states?.qa;
+    expect(qa).toMatchObject({
+      type: "review",
+      agent: "kiro",
+      normalizer: "codex",
+      trust_all_tools: true
+    });
+  });
+
+  it("keeps Kiro repair as prose work before a structured final QA gate", () => {
+    const states = (architectKiroRepairQaDefault as any).states;
+    expect(states?.kiro_pre_review).toMatchObject({
+      type: "work",
+      agent: "kiro",
+      trust_all_tools: true
+    });
+    expect(states?.kiro_fix).toMatchObject({
+      type: "work",
+      agent: "kiro",
+      trust_all_tools: true
+    });
+    expect(states?.final_qa).toMatchObject({ type: "review", agent: "claude" });
+    expect(states?.final_qa?.normalizer).toBeUndefined();
   });
 });

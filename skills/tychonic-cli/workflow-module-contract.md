@@ -32,9 +32,10 @@ activities. Operators pass workflow input as a JSON object and replace config
 with `tychonic run --config <file>`, not by putting `profile` in workflow JSON
 input.
 
-The bundle may include `README.md`, `package.json`, lockfiles, helper modules,
-assets, and `node_modules`. If `workflow.mjs` imports a package, install that
-package in the bundle directory or pre-bundle it into `workflow.mjs`.
+The bundle may include `README.md`, `package.json`, lockfiles, relative modules
+imported by `workflow.mjs`, assets, and `node_modules`. If `workflow.mjs`
+imports a package, install that package in the bundle directory or pre-bundle it
+into `workflow.mjs`.
 Tychonic does not synthesize resolver state during install.
 
 ## Boundaries
@@ -89,8 +90,11 @@ profile, cwd, worktree path, prompt text, session id, and similar values. They
 must not choose which command or agent runs.
 
 Activities return `ActivityResult`. They do not mutate `input.run`; workflow
-code must merge returned states, attempts, artifacts, sessions, findings, inbox
-items, and status into its local run copy.
+code must merge returned states, attempts, artifacts, sessions, inbox items, and
+status into its local run copy. Parsed review findings are returned under
+`reviewOutcome.result.findings`; workflow code appends them to `run.findings`
+and the source state's `finding_ids` when the workflow wants run-level finding
+records.
 
 ## Workflow Sandbox
 
@@ -100,8 +104,8 @@ Temporal workflow code is deterministic.
   workflow code.
 - Do not make workflow decisions from top-level non-deterministic values.
 - Put file, shell, network, and OS work in activities.
-- Use only `@temporalio/workflow`, copied relative helpers, and installed bundle
-  dependencies.
+- Use only `@temporalio/workflow`, relative modules shipped in the bundle, and
+  installed bundle dependencies.
 
 ## Signals
 

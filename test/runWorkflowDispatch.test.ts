@@ -25,7 +25,7 @@ describe("run workflow dispatch", () => {
 
     expect(failure.stderr).toMatch(/input\.profile is reserved for Tychonic config injection/);
     expect(failure.stderr).not.toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
-    expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build|self_repair_workflow/i);
+    expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build/i);
   }, 20_000);
 
   it("uses the generic run path without local shipped-workflow preflight", async () => {
@@ -58,7 +58,7 @@ describe("run workflow dispatch", () => {
     );
 
     expect(failure.stderr).toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
-    expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build|self_repair_workflow/i);
+    expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build/i);
   }, 20_000);
 });
 

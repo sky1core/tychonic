@@ -7,19 +7,14 @@ import { describe, expect, it } from "vitest";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - bundle modules export plain JS, no TS types.
-import { validateLoopPolicy } from "../examples/workflows/simpleWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { validateSelfRepairPolicy } from "../examples/workflows/selfRepairWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { validateIntegrationPolicy } from "../examples/workflows/checkpointWorkflow/workflow.mjs";
+import { validateLoopPolicy } from "../examples/workflows/simpleWorkflow/reviewLoop.mjs";
+import { validateIntegrationPolicy } from "../examples/workflows/checkpointWorkflow/integrationPolicy.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import {
   validateInteractionPolicy as validateAbqInteractionPolicy,
   validateLoopPolicy as validateAbqLoopPolicy
-} from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
+} from "../examples/workflows/architectBuilderQaWorkflow/workflowPolicies.mjs";
 
 describe("simpleWorkflow validateLoopPolicy", () => {
   it("accepts an absent policies block", () => {
@@ -80,62 +75,24 @@ describe("simpleWorkflow validateLoopPolicy", () => {
   });
 });
 
-describe("selfRepairWorkflow validateSelfRepairPolicy", () => {
-  it("accepts an absent policies block", () => {
-    expect(() => validateSelfRepairPolicy(undefined)).not.toThrow();
-    expect(() => validateSelfRepairPolicy({})).not.toThrow();
-  });
-
-  it("accepts a positive integer max_iterations", () => {
-    expect(() =>
-      validateSelfRepairPolicy({ self_repair_workflow: { max_iterations: 4 } })
-    ).not.toThrow();
-  });
-
-  it("rejects unknown keys", () => {
-    expect(() =>
-      validateSelfRepairPolicy({ self_repair_workflow: { max_iterations: 3, bogus: 1 } })
-    ).toThrow(/is not a recognised key/);
-  });
-
-  it("rejects non-positive max_iterations", () => {
-    expect(() =>
-      validateSelfRepairPolicy({ self_repair_workflow: { max_iterations: 0 } })
-    ).toThrow(/must be a positive integer/);
-    expect(() =>
-      validateSelfRepairPolicy({ self_repair_workflow: { max_iterations: -1 } })
-    ).toThrow(/must be a positive integer/);
-    expect(() =>
-      validateSelfRepairPolicy({ self_repair_workflow: { max_iterations: 1.5 } })
-    ).toThrow(/must be a positive integer/);
-  });
-});
-
 describe("checkpointWorkflow validateIntegrationPolicy", () => {
   it("accepts an absent block", () => {
     expect(() => validateIntegrationPolicy(undefined)).not.toThrow();
     expect(() => validateIntegrationPolicy({})).not.toThrow();
   });
 
-  it("accepts each documented mode + position", () => {
-    for (const mode of ["disabled", "manual", "auto_on_relevant_changes", "required"]) {
-      for (const position of ["before_ai_review", "after_ai_review", "final_gate"]) {
-        expect(() =>
-          validateIntegrationPolicy({ integration: { mode, position } })
-        ).not.toThrow();
-      }
+  it("accepts each documented position", () => {
+    for (const position of ["before_ai_review", "after_ai_review", "final_gate"]) {
+      expect(() =>
+        validateIntegrationPolicy({ integration: { position } })
+      ).not.toThrow();
     }
   });
 
-  it("rejects unknown mode and position values", () => {
+  it("rejects unknown position values", () => {
     expect(() =>
       validateIntegrationPolicy({
-        integration: { mode: "bogus", position: "final_gate" }
-      })
-    ).toThrow(/policies\.integration\.mode/);
-    expect(() =>
-      validateIntegrationPolicy({
-        integration: { mode: "required", position: "first_gate" }
+        integration: { position: "first_gate" }
       })
     ).toThrow(/policies\.integration\.position/);
   });
@@ -143,19 +100,13 @@ describe("checkpointWorkflow validateIntegrationPolicy", () => {
   it("rejects unknown keys", () => {
     expect(() =>
       validateIntegrationPolicy({
-        integration: { mode: "required", position: "final_gate", bogus: 1 }
+        integration: { position: "final_gate", bogus: 1 }
       })
     ).toThrow(/is not a recognised key/);
   });
 
-  it("requires both mode and position when the block is present", () => {
+  it("requires position when the block is present", () => {
     expect(() => validateIntegrationPolicy({ integration: {} })).toThrow();
-    expect(() =>
-      validateIntegrationPolicy({ integration: { mode: "required" } })
-    ).toThrow(/position/);
-    expect(() =>
-      validateIntegrationPolicy({ integration: { position: "final_gate" } })
-    ).toThrow(/mode/);
   });
 });
 

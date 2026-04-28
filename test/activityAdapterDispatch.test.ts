@@ -366,6 +366,16 @@ describe("runReviewActivity adapter dispatch", () => {
       "codex"
     ]);
     expect(result.reviewOutcome.agentSessions.at(-1)?.id).toBe("codex-structured-thread-id");
+
+    const normalizerPromptArtifact = result.reviewOutcome.artifacts.find(
+      (artifact) => artifact.kind === `${REVIEW_NAME}_normalizer_prompt`
+    );
+    if (!normalizerPromptArtifact) throw new Error("expected normalizer prompt artifact");
+    const normalizerPrompt = await readFile(join(cwd, normalizerPromptArtifact.path), "utf8");
+    expect(normalizerPrompt).toContain("Top-level keys are exactly: status, summary, findings.");
+    expect(normalizerPrompt).toContain("severity, title, detail");
+    expect(normalizerPrompt).toContain("Use the exact key detail");
+    expect(normalizerPrompt).toContain('"detail":"..."');
   });
 
   it("rejects an unvalidated review agent before skip handling", async () => {

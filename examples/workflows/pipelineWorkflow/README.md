@@ -4,6 +4,12 @@
 state NAMEs using the same activity TYPE, especially `review_1` and `review_2`
 as separate `review` states.
 
+## Purpose
+
+Use this as a reference for a longer one-pass delivery pipeline where each
+stage has an explicit NAME, failures stop later stages, and the same TYPE can
+appear more than once without adding new activity kinds.
+
 ## States
 
 - `work` — `work`

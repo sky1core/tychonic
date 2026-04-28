@@ -28,8 +28,8 @@ describe("named workflow Temporal client behavior", () => {
 
     const mod = await import("../src/temporal/client.js");
     await mod.startNamedTemporalWorkflow({
-      workflowType: "selfRepairWorkflow",
-      input: { cwd: "/repo", goal: "repair" },
+      workflowType: "sampleWorkflow",
+      input: { cwd: "/repo", goal: "sample" },
       address: "127.0.0.1:7233",
       namespace: "default",
       taskQueue: "tychonic"
@@ -44,11 +44,11 @@ describe("named workflow Temporal client behavior", () => {
 
     expect(start).toHaveBeenNthCalledWith(
       1,
-      "selfRepairWorkflow",
+      "sampleWorkflow",
       expect.objectContaining({
-        args: [{ cwd: "/repo", goal: "repair" }],
+        args: [{ cwd: "/repo", goal: "sample" }],
         taskQueue: "tychonic",
-        workflowId: expect.stringMatching(/^tychonic_selfRepairWorkflow_/)
+        workflowId: expect.stringMatching(/^tychonic_sampleWorkflow_/)
       })
     );
     expect(start).toHaveBeenNthCalledWith(
@@ -68,7 +68,7 @@ describe("named workflow Temporal client behavior", () => {
       yield {
         workflowId: "temporal-generated-id",
         runId: "run-unprefixed",
-        type: "selfRepairWorkflow",
+        type: "sampleWorkflow",
         taskQueue: "tychonic",
         status: { code: 1, name: "RUNNING" },
         historyLength: 4,
@@ -78,9 +78,9 @@ describe("named workflow Temporal client behavior", () => {
         raw: {}
       };
       yield {
-        workflowId: "tychonic_selfRepairWorkflow_test",
+        workflowId: "tychonic_sampleWorkflow_test",
         runId: "run-packaged",
-        type: "selfRepairWorkflow",
+        type: "sampleWorkflow",
         taskQueue: "tychonic",
         status: { code: 1, name: "RUNNING" },
         historyLength: 5,
@@ -124,8 +124,8 @@ describe("named workflow Temporal client behavior", () => {
 
     expect(result.workflows).toEqual([
       expect.objectContaining({
-        workflowId: "tychonic_selfRepairWorkflow_test",
-        type: "selfRepairWorkflow",
+        workflowId: "tychonic_sampleWorkflow_test",
+        type: "sampleWorkflow",
         status: "RUNNING"
       }),
       expect.objectContaining({

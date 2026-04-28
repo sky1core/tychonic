@@ -19,9 +19,8 @@
   "files": [
     "dist",
     "docs",
-    "examples/workflow-helpers",
     "examples/workflows/*/README.md",
-    "examples/workflows/*/workflow.mjs",
+    "examples/workflows/*/*.mjs",
     "examples/workflows/*/package.json",
     "skills",
     "README.md",

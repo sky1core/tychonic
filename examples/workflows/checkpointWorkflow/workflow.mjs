@@ -15,6 +15,7 @@
 // meaning.
 
 import { proxyActivities } from "@temporalio/workflow";
+import { validateIntegrationPolicy } from "./integrationPolicy.mjs";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -50,64 +51,8 @@ export const defaultProfile = {
       timeout: "20m"
     }
   },
-  policies: { integration: { mode: "required", position: "final_gate" } }
+  policies: { integration: { position: "final_gate" } }
 };
-
-/**
- * Validate the bundle-owned `policies.integration` block. The host
- * config schema treats `policies` as opaque; this workflow validates
- * the keys it actually consumes.
- *
- * Rules:
- *  - unknown keys under `policies.integration` are rejected
- *  - `mode` must be one of disabled / manual / auto_on_relevant_changes / required
- *  - `position` must be one of before_ai_review / after_ai_review / final_gate
- *  - both `mode` and `position` are required when the block is present
- */
-export function validateIntegrationPolicy(policies) {
-  if (!policies || policies.integration === undefined) return;
-  const block = policies.integration;
-  if (typeof block !== "object" || block === null || Array.isArray(block)) {
-    throw new Error("policies.integration must be an object");
-  }
-  const allowedKeys = new Set(["mode", "position"]);
-  for (const key of Object.keys(block)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(
-        `policies.integration.${key} is not a recognised key for checkpointWorkflow`
-      );
-    }
-  }
-  const allowedModes = new Set([
-    "disabled",
-    "manual",
-    "auto_on_relevant_changes",
-    "required"
-  ]);
-  if (block.mode === undefined) {
-    throw new Error("policies.integration.mode is required when the block is present");
-  }
-  if (!allowedModes.has(block.mode)) {
-    throw new Error(
-      `policies.integration.mode must be one of ${[...allowedModes].join(", ")}; got ${JSON.stringify(block.mode)}`
-    );
-  }
-  const allowedPositions = new Set([
-    "before_ai_review",
-    "after_ai_review",
-    "final_gate"
-  ]);
-  if (block.position === undefined) {
-    throw new Error(
-      "policies.integration.position is required when the block is present"
-    );
-  }
-  if (!allowedPositions.has(block.position)) {
-    throw new Error(
-      `policies.integration.position must be one of ${[...allowedPositions].join(", ")}; got ${JSON.stringify(block.position)}`
-    );
-  }
-}
 
 /**
  * `checkpointWorkflow` — deterministic gates plus structured reviews.
@@ -185,6 +130,16 @@ export async function checkpointWorkflow(input) {
     run = applyResult(run, res);
   }
 
+  // Stage: integration (after semantic review, before test review).
+  if (integrationPosition === "after_ai_review" && profile?.states?.integration) {
+    const res = await runVerifyActivity({
+      stateName: "integration", run,
+      ...(profile ? { profile } : {}),
+      cwd: input.cwd
+    });
+    run = applyResult(run, res);
+  }
+
   // Stage: test_review
   if (profile?.states?.test_review) {
     const res = await runReviewActivity({
@@ -228,6 +183,7 @@ function applyResult(run, result) {
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
       agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
     };
+    next = appendReviewFindings(next, result);
   }
   if (result?.workerOutcome?.kind === "executed") {
     next = {
@@ -237,6 +193,47 @@ function applyResult(run, result) {
     };
   }
   return next;
+}
+
+function appendReviewFindings(run, result) {
+  const outcome = result?.reviewOutcome;
+  if (!outcome || outcome.kind !== "parsed" || outcome.result.status !== "fail") return run;
+  const sourceState = result.delta?.states?.[0];
+  if (!sourceState) return run;
+
+  let next = run;
+  const findingIds = [];
+  for (const finding of outcome.result.findings) {
+    const id = nextLocalId(next, "finding");
+    findingIds.push(id);
+    next = {
+      ...next,
+      findings: [
+        ...next.findings,
+        {
+          id,
+          status: "new",
+          severity: finding.severity,
+          title: finding.title,
+          detail: finding.detail,
+          ...(finding.target ? { target: finding.target } : {}),
+          source_state_id: sourceState.id,
+          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
+          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
+          created_at: nowIso()
+        }
+      ]
+    };
+  }
+
+  return {
+    ...next,
+    states: next.states.map((state) =>
+      state.id === sourceState.id
+        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
+        : state
+    )
+  };
 }
 
 function applyDelta(run, delta) {
@@ -256,6 +253,21 @@ function applyDelta(run, delta) {
   if (delta.summary !== undefined) next.summary = delta.summary;
   else if (run.summary !== undefined) next.summary = run.summary;
   return next;
+}
+
+function nextLocalId(run, prefix) {
+  const counter =
+    run.states.length +
+    run.activity_attempts.length +
+    run.artifacts.length +
+    run.findings.length +
+    run.inbox.length +
+    run.agent_sessions.length;
+  return `${prefix}_${counter + 1}`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
 }
 
 function structuredReviewPrompt(scope) {

@@ -33,8 +33,8 @@ describe("activity-centric config schema", () => {
       },
       policies: {
         loop: { auto_continue: true, max_review_iterations: 2 },
-        integration: { mode: "disabled", position: "final_gate" },
-        self_repair_workflow: { max_iterations: 4 }
+        integration: { position: "final_gate" },
+        custom_workflow: { max_iterations: 4 }
       }
     });
 

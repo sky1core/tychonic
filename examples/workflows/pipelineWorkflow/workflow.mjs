@@ -34,7 +34,6 @@ export const defaultProfile = {
     work: {
       type: "work",
       agent: "claude",
-      resume: 0,
       permission_mode: "acceptEdits"
     },
     static: { type: "verify", command: "npm run lint" },
@@ -149,13 +148,17 @@ export async function pipelineWorkflow(input) {
   }
 
   // Stage 5: integration.
-  run = apply(run, await runVerifyActivity({
+  const integration = await runVerifyActivity({
     stateName: "integration",
     run,
     cwd: input.cwd,
     profile,
     worktreePath
-  }));
+  });
+  run = apply(run, integration);
+  if (integration.delta.states?.[0]?.status !== "succeeded") {
+    return done(run, input.cwd, "stage integration failed");
+  }
 
   // Stage 6: review_2 (review TYPE, second NAME — same activity function).
   const review2 = await runReviewActivity({
@@ -174,13 +177,17 @@ export async function pipelineWorkflow(input) {
   }
 
   // Stage 7: security gate (verify TYPE, user-chosen NAME).
-  run = apply(run, await runVerifyActivity({
+  const security = await runVerifyActivity({
     stateName: "security",
     run,
     cwd: input.cwd,
     profile,
     worktreePath
-  }));
+  });
+  run = apply(run, security);
+  if (security.delta.states?.[0]?.status !== "succeeded") {
+    return done(run, input.cwd, "stage security failed");
+  }
 
   return done(run, input.cwd, `pipeline_7stage finished: ${run.states.map((s) => `${s.name}=${s.status}`).join(", ")}`);
 }
@@ -199,6 +206,7 @@ function apply(run, result) {
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
       agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
     };
+    next = appendReviewFindings(next, result);
   }
   if (result.workerOutcome?.kind === "executed") {
     next = {
@@ -208,6 +216,47 @@ function apply(run, result) {
     };
   }
   return next;
+}
+
+function appendReviewFindings(run, result) {
+  const outcome = result?.reviewOutcome;
+  if (!outcome || outcome.kind !== "parsed" || outcome.result.status !== "fail") return run;
+  const sourceState = result.delta?.states?.[0];
+  if (!sourceState) return run;
+
+  let next = run;
+  const findingIds = [];
+  for (const finding of outcome.result.findings) {
+    const id = nextLocalId(next, "finding");
+    findingIds.push(id);
+    next = {
+      ...next,
+      findings: [
+        ...next.findings,
+        {
+          id,
+          status: "new",
+          severity: finding.severity,
+          title: finding.title,
+          detail: finding.detail,
+          ...(finding.target ? { target: finding.target } : {}),
+          source_state_id: sourceState.id,
+          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
+          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
+          created_at: nowIso()
+        }
+      ]
+    };
+  }
+
+  return {
+    ...next,
+    states: next.states.map((state) =>
+      state.id === sourceState.id
+        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
+        : state
+    )
+  };
 }
 
 function applyDelta(run, delta) {
@@ -227,6 +276,21 @@ function applyDelta(run, delta) {
   if (delta.summary !== undefined) next.summary = delta.summary;
   else if (run.summary !== undefined) next.summary = run.summary;
   return next;
+}
+
+function nextLocalId(run, prefix) {
+  const counter =
+    run.states.length +
+    run.activity_attempts.length +
+    run.artifacts.length +
+    run.findings.length +
+    run.inbox.length +
+    run.agent_sessions.length;
+  return `${prefix}_${counter + 1}`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
 }
 
 async function done(run, cwd, summary) {
