@@ -5,8 +5,8 @@
  * undefined). Isolated dev instances are activated by `--instance <name>`
  * on any CLI command, or by `TYCHONIC_INSTANCE=<name>` in the shell
  * environment. When an instance is active, this module derives the
- * isolation vectors (state dir, log dir, Temporal API/dev-UI port,
- * address, task queue, web port) from `<name>`.
+ * isolation vectors (state dir, log dir, Temporal API address/port,
+ * task queue, web port) from `<name>`.
  *
  * Only these primitives live here:
  * - `validateInstanceName` — regex + reserved-word validation.
@@ -32,7 +32,6 @@ const RESERVED_INSTANCE_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 const DEFAULT_TEMPORAL_API_PORT = 7233;
-const DEFAULT_TEMPORAL_DEV_UI_PORT = 8233;
 const DEFAULT_TEMPORAL_NAMESPACE = "default";
 const DEFAULT_TEMPORAL_TASK_QUEUE = "tychonic";
 const DEFAULT_WEB_PORT = 8765;
@@ -85,7 +84,7 @@ function fnv1a32(input: string): number {
 
 /**
  * Derive the Temporal API port for `name`. Deterministic.
- * Range: [17000, 17999]. Temporal dev-UI port is caller-computed as `+ 1`.
+ * Range: [17000, 17999].
  */
 export function deriveInstancePort(name: string): number {
   validateInstanceName(name);
@@ -143,7 +142,6 @@ export interface ResolveInstanceRuntimeExplicit {
   logHome?: string;
   address?: string;
   apiPort?: number;
-  devUiPort?: number;
   taskQueue?: string;
   namespace?: string;
   webPort?: number;
@@ -165,7 +163,6 @@ export interface ResolvedInstanceRuntimeTemporal {
   namespace: string;
   taskQueue: string;
   apiPort: number;
-  devUiPort: number;
 }
 
 export interface ResolvedInstanceRuntime {
@@ -245,21 +242,6 @@ export function resolveInstanceRuntime(
     apiPort = DEFAULT_TEMPORAL_API_PORT;
   }
 
-  // Temporal dev-UI port: explicit > (resolved apiPort + 1) > default.
-  // When apiPort is explicit, ui derives from that explicit value —
-  // still a deterministic "+ 1" rule, just anchored on the explicit port.
-  let devUiPort: number;
-  if (explicit.devUiPort !== undefined) {
-    devUiPort = explicit.devUiPort;
-  } else if (
-    explicit.apiPort !== undefined ||
-    instance !== undefined
-  ) {
-    devUiPort = apiPort + 1;
-  } else {
-    devUiPort = DEFAULT_TEMPORAL_DEV_UI_PORT;
-  }
-
   // Temporal address: explicit > derived from resolved API port > default
   let address: string;
   if (explicit.address !== undefined) {
@@ -301,8 +283,7 @@ export function resolveInstanceRuntime(
       address,
       namespace,
       taskQueue,
-      apiPort,
-      devUiPort
+      apiPort
     },
     webPort,
     warnings

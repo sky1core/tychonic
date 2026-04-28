@@ -280,8 +280,8 @@ export async function architectBuilderQaWorkflow(input) {
   //   "failed" per SPEC §Activity Result And Evidence Invariants), loop
   //   back to builder with the qa reason threaded into the next prompt. Capped by
   //   `policies.loop.max_review_iterations` (default 3). At the cap the run
-  //   enters `waiting_user` with an inbox item so an operator (or external
-  //   agent via one-shot signals) can decide the next step.
+  //   enters terminal `waiting_user`; recovery is a fresh run with adjusted
+  //   input/config, not another signal into this completed workflow.
   const maxReviewIterations =
     input.profile?.policies?.loop?.max_review_iterations ?? DEFAULT_MAX_REVIEW_ITERATIONS;
   const qaFeedbacks = [];
@@ -506,7 +506,7 @@ function rejectCapInboxItem(stateName) {
     id: `inbox_reject_cap_${stateName}`,
     status: "open",
     title: "Interactive reject limit reached",
-    detail: `state '${stateName}' reached the interactive reject iteration cap; approve or modify to continue`,
+    detail: `state '${stateName}' reached the interactive reject iteration cap; inspect artifacts and start a fresh run with adjusted input/config`,
     action: { kind: "triage", reason: `interactive reject cap for state '${stateName}'` },
     created_at: new Date().toISOString()
   };
@@ -519,8 +519,7 @@ function reviewCapInboxItem() {
     title: "Auto-mode review iteration cap reached",
     detail:
       "qa stage did not report pass within policies.loop.max_review_iterations; builder did not converge. " +
-      "Inspect run.states and run.findings, then approve/modify/reject the latest qa state via interactive signals, " +
-      "or abandon the run.",
+      "Inspect run.states and run.findings, then start a fresh run with adjusted input/config.",
     action: { kind: "triage", reason: "qa review loop cap reached in auto mode" },
     created_at: new Date().toISOString()
   };
@@ -597,13 +596,13 @@ function qaPrompt({ runId, worktreePath }) {
     "",
     "Return only one JSON object matching this contract. Do not wrap it in markdown.",
     "{",
-    '  "schema_version": "tychonic.review.v1",',
     '  "status": "pass|fail",',
     '  "summary": "short result summary",',
     '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation", "target": "file, state, or session", "target_session_id": ""}',
+    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
     "  ]",
     "}",
+    "Add target or target_session_id only when you can identify one.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
   ].join("\n");
 }

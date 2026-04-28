@@ -367,15 +367,16 @@ describe("simpleWorkflow runAutoContinueLoop activity-call contracts", () => {
 });
 
 describe("simpleWorkflow buildReviewPrompt", () => {
-  it("returns a non-empty prompt that embeds the review JSON contract", () => {
+  it("returns a non-empty prompt that asks for semantic review payload only", () => {
     const run = makeBaseRun(makeWorkerSession("session_w0"));
     const prompt = buildReviewPrompt(run, "scope-label");
     expect(typeof prompt).toBe("string");
     expect(prompt.length).toBeGreaterThan(0);
-    expect(prompt).toContain("tychonic.review.v1");
+    expect(prompt).not.toContain("tychonic.review.v1");
+    expect(prompt).not.toContain("schema_version");
     expect(prompt).toContain("scope-label");
     expect(prompt).toContain("session_w0");
-    expect(prompt).toContain('"target_session_id": "session_w0"');
+    expect(prompt).toContain('set target_session_id to "session_w0"');
   });
 });
 

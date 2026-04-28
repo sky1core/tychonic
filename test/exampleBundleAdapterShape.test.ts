@@ -99,9 +99,10 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
         }
       });
 
-      // gemini and kiro are partial adapters: neither produces the
-      // structured `tychonic.review.v1` output a reviewer must emit, so
-      // example bundles must not pin them on a review state.
+      // gemini and kiro are partial adapters: neither exposes a stable
+      // structured-review payload the host can normalize into
+      // `tychonic.review.v1`, so example bundles must not pin them on a
+      // review state.
       it("never declares agent gemini or kiro on a review state", () => {
         for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
           const b = block as any;

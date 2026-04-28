@@ -132,8 +132,7 @@ describe("resolveInstanceRuntime — operational (instance unset)", () => {
         address: "127.0.0.1:7233",
         namespace: "default",
         taskQueue: "tychonic",
-        apiPort: 7233,
-        devUiPort: 8233
+        apiPort: 7233
       },
       webPort: 8765,
       warnings: []
@@ -157,9 +156,8 @@ describe("resolveInstanceRuntime — operational (instance unset)", () => {
     expect(resolved.temporal.address).toBe("127.0.0.1:9999");
     expect(resolved.temporal.taskQueue).toBe("tychonic-custom");
     expect(resolved.webPort).toBe(9000);
-    // api/devUi stayed on operational defaults.
+    // API port stayed on operational default.
     expect(resolved.temporal.apiPort).toBe(7233);
-    expect(resolved.temporal.devUiPort).toBe(8233);
     expect(resolved.warnings).toEqual([]);
   });
 });
@@ -176,7 +174,6 @@ describe("resolveInstanceRuntime — instance set, no explicit", () => {
     expect(resolved.logDir).toBe(`${DEFAULT_LOG}/instances/abq-patch`);
     // Locked deterministic values from fnv1a32("abq-patch") mod 1000 = 706.
     expect(resolved.temporal.apiPort).toBe(17706);
-    expect(resolved.temporal.devUiPort).toBe(17707);
     expect(resolved.temporal.address).toBe("127.0.0.1:17706");
     expect(resolved.temporal.namespace).toBe("default");
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");
@@ -204,9 +201,8 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
       explicit: { address: "127.0.0.1:9999" }
     });
     expect(resolved.temporal.address).toBe("127.0.0.1:9999");
-    // api/devUi remain derived — explicit.address is a separate field.
+    // apiPort remains derived — explicit.address is a separate field.
     expect(resolved.temporal.apiPort).toBe(17706);
-    expect(resolved.temporal.devUiPort).toBe(17707);
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");
     expect(resolved.stateDir).toBe(`${DEFAULT_STATE}/instances/abq-patch`);
     expect(resolved.warnings).toEqual([]);
@@ -281,7 +277,7 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
     expect(resolved.warnings).toEqual([]);
   });
 
-  it("uses explicit apiPort and computes devUiPort as apiPort + 1 when devUiPort is omitted", () => {
+  it("uses explicit apiPort to derive the default address when address is omitted", () => {
     const resolved = resolveInstanceRuntime({
       instance: "abq-patch",
       defaultStateDir: DEFAULT_STATE,
@@ -289,20 +285,9 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
       explicit: { apiPort: 19000 }
     });
     expect(resolved.temporal.apiPort).toBe(19000);
-    expect(resolved.temporal.devUiPort).toBe(19001);
     // Address defaults to 127.0.0.1:<explicit apiPort> when address
     // is omitted but apiPort is explicit.
     expect(resolved.temporal.address).toBe("127.0.0.1:19000");
-  });
-
-  it("lets explicit devUiPort override the API port + 1 rule", () => {
-    const resolved = resolveInstanceRuntime({
-      instance: "abq-patch",
-      defaultStateDir: DEFAULT_STATE,
-      defaultLogDir: DEFAULT_LOG,
-      explicit: { apiPort: 19000, devUiPort: 19500 }
-    });
-    expect(resolved.temporal.devUiPort).toBe(19500);
   });
 
   it("keeps explicit address independent of apiPort resolution", () => {
@@ -316,7 +301,6 @@ describe("resolveInstanceRuntime — field-level explicit override", () => {
     });
     expect(resolved.temporal.address).toBe("example.invalid:1234");
     expect(resolved.temporal.apiPort).toBe(17556); // derived from "dev"
-    expect(resolved.temporal.devUiPort).toBe(17557);
   });
 });
 
@@ -329,7 +313,6 @@ describe("resolveInstanceRuntime — smoke reproduction (abq-patch)", () => {
     });
     expect(resolved.instance).toBe("abq-patch");
     expect(resolved.temporal.apiPort).toBe(17706);
-    expect(resolved.temporal.devUiPort).toBe(17707);
     expect(resolved.temporal.address).toBe("127.0.0.1:17706");
     expect(resolved.temporal.namespace).toBe("default");
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");

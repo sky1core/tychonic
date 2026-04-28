@@ -267,13 +267,13 @@ function detectBugsPrompt(goal) {
     "",
     "Return only one JSON object matching this contract:",
     "{",
-    '  "schema_version": "tychonic.review.v1",',
     '  "status": "pass|fail",',
     '  "summary": "short summary",',
     '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation", "target": "file or symbol"}',
+    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
     "  ]",
     "}",
+    "Add target only when you can identify a file or symbol.",
     "Use status fail when at least one bug-shaped finding exists."
   ].join("\n");
 }
@@ -283,7 +283,7 @@ function writeRegressionTestsPrompt() {
 }
 
 function reviewRegressionTestsPrompt() {
-  return "Review the newly added regression tests for correctness and coverage. Return one tychonic.review.v1 JSON object.";
+  return "Review the newly added regression tests for correctness and coverage. Return one semantic review JSON object with status, summary, and findings.";
 }
 
 function fixBugsPrompt() {
@@ -291,5 +291,5 @@ function fixBugsPrompt() {
 }
 
 function finalReviewPrompt() {
-  return "Final review: confirm the bugs are fixed, regression tests pass, and no regressions are introduced. Return tychonic.review.v1 JSON.";
+  return "Final review: confirm the bugs are fixed, regression tests pass, and no regressions are introduced. Return semantic review JSON with status, summary, and findings.";
 }

@@ -27,6 +27,35 @@ import type {
 } from "./types.js";
 
 const BIN = "claude";
+const REVIEW_FINDING_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    severity: { enum: ["critical", "high", "medium", "low"] },
+    title: { type: "string", minLength: 1 },
+    detail: { type: "string", minLength: 1 },
+    target: { type: "string", minLength: 1 },
+    target_session_id: { type: "string" }
+  },
+  required: ["severity", "title", "detail"]
+} as const;
+
+// Claude StructuredOutput currently rejects top-level oneOf/allOf/anyOf.
+// The adapter asks for the semantic payload only; the parser normalizes
+// schema_version and ReviewResultSchema validates host invariants.
+const TYCHONIC_REVIEW_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: { enum: ["pass", "fail"] },
+    summary: { type: "string", minLength: 1 },
+    findings: {
+      type: "array",
+      items: REVIEW_FINDING_JSON_SCHEMA
+    }
+  },
+  required: ["status", "summary", "findings"]
+} as const;
 
 function rolePermissionMode(role: AdapterRunInput["role"]): AdapterPermissionMode {
   return role === "review" ? "plan" : "acceptEdits";
@@ -34,7 +63,7 @@ function rolePermissionMode(role: AdapterRunInput["role"]): AdapterPermissionMod
 
 function buildBaseArgs(input: AdapterRunInput): string[] {
   const permissionMode = input.permissionMode ?? rolePermissionMode(input.role);
-  return [
+  const args = [
     BIN,
     "-p",
     "--output-format",
@@ -43,10 +72,23 @@ function buildBaseArgs(input: AdapterRunInput): string[] {
     "--permission-mode",
     permissionMode
   ];
+  if (input.role === "review") {
+    args.push(
+      "--tools",
+      "Read,Grep,Glob",
+      "--json-schema",
+      shellQuote(JSON.stringify(TYCHONIC_REVIEW_JSON_SCHEMA))
+    );
+  }
+  return args;
 }
 
 function joinArgs(args: string[]): string {
   return args.join(" ");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export const claudeAdapter: AgentAdapter = {

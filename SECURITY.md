@@ -1,16 +1,15 @@
 # Security Policy
 
-Tychonic `0.1.x` is a macOS single-user local alpha.
+Tychonic is a macOS single-user local alpha.
 
-The Web UI/API is local-only. It has no login and can change workflows, so use
+The local Web API has no login and can change workflows, so use
 it on `127.0.0.1` only. Do not bind it to `0.0.0.0`, a public IP, or a shared
 network. `--allow-network-bind` is only for trusted private-network experiments
 and still does not add login.
 
-Do not place tokens, passwords, or private keys in workflow profile commands,
-resume commands, or activity commands. Commands may be recorded in Temporal
-history and artifacts. Keep credentials in each external agent CLI's auth store
-or inherited environment.
+Do not place tokens, passwords, or private keys in workflow or activity
+commands. Commands may be recorded in Temporal history and artifacts. Keep
+credentials in each external agent CLI's auth store or inherited environment.
 
 Unsupported in public alpha:
 

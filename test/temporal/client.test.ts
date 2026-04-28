@@ -25,15 +25,13 @@ describe("normalizeTemporalConfig + active instance", () => {
     expect(cfg.taskQueue).toBe("tychonic");
     expect(cfg.namespace).toBe("default");
     expect(cfg.apiPort).toBe(7233);
-    expect(cfg.devUiPort).toBe(8233);
   });
 
-  it("derives address, ports, and task queue when an instance is active", () => {
+  it("derives address, API port, and task queue when an instance is active", () => {
     setActiveInstance("p2net");
     const cfg = normalizeTemporalConfig({});
     const port = deriveInstancePort("p2net");
     expect(cfg.apiPort).toBe(port);
-    expect(cfg.devUiPort).toBe(port + 1);
     expect(cfg.address).toBe(`127.0.0.1:${port}`);
     expect(cfg.taskQueue).toBe("tychonic-p2net");
     // Instance must not change the Temporal namespace.
@@ -64,7 +62,6 @@ describe("normalizeTemporalConfig + active instance", () => {
     expect(cfg).toMatchObject({
       address: "127.0.0.1:7233",
       apiPort: 7233,
-      devUiPort: 8233,
       taskQueue: "tychonic",
       namespace: "default"
     });

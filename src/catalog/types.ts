@@ -334,11 +334,11 @@ function validateSingleExecutionSelector(block: ActivityBlock, ctx: z.Refinement
 }
 
 /**
- * `gemini` and `kiro` are partial adapters: their CLIs do not produce
- * the structured `tychonic.review.v1` output the host requires from a
- * reviewer. Reject them on `type: "review"` at install time. Operators
- * pick `claude` or `codex` for review states, or use an explicit
- * `command` escape hatch with their own reviewer wrapper.
+ * `gemini` and `kiro` are partial adapters: their CLIs do not expose a stable
+ * structured-review payload the host can normalize into `tychonic.review.v1`.
+ * Reject them on `type: "review"` at install time. Operators pick `claude` or
+ * `codex` for review states, or use an explicit `command` escape hatch with
+ * their own reviewer wrapper.
  */
 function validateReviewerCapableAgent(block: ActivityBlock, ctx: z.RefinementCtx): void {
   if (block.type !== "review") return;

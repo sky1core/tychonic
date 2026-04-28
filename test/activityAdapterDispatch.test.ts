@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -156,10 +156,8 @@ describe("runReviewActivity adapter dispatch", () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-claude-"));
 
     // Adapter dispatches `claude ... --permission-mode plan`. The stub claude
-    // binary exits 0 with empty output, so the review body returns
-    // `command_failed` (no review payload to parse). What we care about is
-    // that the SPAWNED command came from the adapter, which we read off the
-    // attempt record regardless of outcome.
+    // binary emits a session id but no review payload, so the review body
+    // blocks on parsing while still preserving the adapter-owned session id.
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
       run: baseRun("disp_review_claude"),
@@ -177,9 +175,75 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toBe(
-      "claude -p --output-format stream-json --verbose --permission-mode plan"
+    expect(command).toContain("claude -p --output-format stream-json --verbose --permission-mode plan");
+    expect(command).toContain("--tools Read,Grep,Glob");
+    expect(command).toContain("--json-schema");
+    expect(command).not.toContain("tychonic.review.v1");
+    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("stub-session-id");
+    expect(result.reviewOutcome?.kind).toBe("unparseable");
+    if (result.reviewOutcome?.kind !== "unparseable") throw new Error("expected unparseable outcome");
+    expect(result.reviewOutcome.reviewerSessionId).toBe("stub-session-id");
+    expect(result.reviewOutcome.agentSessions[0]?.id).toBe("stub-session-id");
+  });
+
+  it("block.agent built-in (claude) parses structured_output through the review activity path", async () => {
+    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"));
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-claude-structured-"));
+
+    const result = await runReviewActivity({
+      stateName: REVIEW_NAME,
+      run: baseRun("disp_review_claude_structured"),
+      cwd,
+      profile: reviewProfile({ agent: "claude" }),
+      prompt: "review please"
+    });
+
+    const command = result.delta.activityAttempts?.[0]?.command ?? "";
+    expect(command).toContain("claude -p --output-format stream-json --verbose --permission-mode plan");
+    expect(command).toContain("--tools Read,Grep,Glob");
+    expect(command).toContain("--json-schema");
+    expect(result.delta.states?.[0]?.status).toBe("succeeded");
+    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("structured-session-id");
+    expect(result.reviewOutcome?.kind).toBe("parsed");
+    if (result.reviewOutcome?.kind !== "parsed") throw new Error("expected parsed outcome");
+    expect(result.reviewOutcome.result.status).toBe("pass");
+    expect(result.reviewOutcome.reviewerSessionId).toBe("structured-session-id");
+    expect(result.reviewOutcome.agentSessions[0]?.id).toBe("structured-session-id");
+
+    const parsedArtifact = result.reviewOutcome.artifacts.find(
+      (artifact) => artifact.kind === `${REVIEW_NAME}_parsed`
     );
+    if (!parsedArtifact) throw new Error("expected parsed review artifact");
+    const parsedArtifactText = await readFile(join(cwd, parsedArtifact.path), "utf8");
+    expect(JSON.parse(parsedArtifactText)).toMatchObject({
+      schema_version: "tychonic.review.v1",
+      status: "pass",
+      summary: "structured review passed",
+      findings: []
+    });
+  });
+
+  it("block.agent built-in (codex) parses semantic agent_message JSON through the review activity path", async () => {
+    await writeCodexSemanticReviewStubBinary(join(stubBinDir, "codex"));
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-codex-semantic-"));
+
+    const result = await runReviewActivity({
+      stateName: REVIEW_NAME,
+      run: baseRun("disp_review_codex_semantic"),
+      cwd,
+      profile: reviewProfile({ agent: "codex" }),
+      prompt: "review please"
+    });
+
+    const command = result.delta.activityAttempts?.[0]?.command ?? "";
+    expect(command).toBe("codex -a never exec --skip-git-repo-check --json --sandbox read-only -");
+    expect(result.delta.states?.[0]?.status).toBe("succeeded");
+    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("codex-structured-thread-id");
+    expect(result.reviewOutcome?.kind).toBe("parsed");
+    if (result.reviewOutcome?.kind !== "parsed") throw new Error("expected parsed outcome");
+    expect(result.reviewOutcome.result.status).toBe("pass");
+    expect(result.reviewOutcome.result.schema_version).toBe("tychonic.review.v1");
+    expect(result.reviewOutcome.reviewerSessionId).toBe("codex-structured-thread-id");
   });
 
   it("rejects a partial built-in adapter on a review state before dispatch", async () => {
@@ -336,6 +400,60 @@ function baseRun(id: string): WorkflowRunRecord {
 async function writeStubBinary(path: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, "#!/bin/sh\ncat > /dev/null\necho '{\"session_id\":\"stub-session-id\"}'\n", "utf8");
+  await chmod(path, 0o755);
+}
+
+async function writeClaudeStructuredReviewStubBinary(path: string): Promise<void> {
+  await mkdir(join(path, ".."), { recursive: true });
+  const systemEvent = JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: "structured-session-id"
+  });
+  const resultEvent = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "structured review emitted",
+    structured_output: {
+      status: "pass",
+      summary: "structured review passed",
+      findings: []
+    },
+    session_id: "structured-session-id"
+  });
+  await writeFile(
+    path,
+    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", systemEvent, resultEvent, "JSON"].join("\n"),
+    "utf8"
+  );
+  await chmod(path, 0o755);
+}
+
+async function writeCodexSemanticReviewStubBinary(path: string): Promise<void> {
+  await mkdir(join(path, ".."), { recursive: true });
+  const threadEvent = JSON.stringify({
+    type: "thread.started",
+    thread_id: "codex-structured-thread-id"
+  });
+  const messageEvent = JSON.stringify({
+    type: "item.completed",
+    item: {
+      id: "item_1",
+      type: "agent_message",
+      text: JSON.stringify({
+        status: "pass",
+        summary: "codex semantic review passed",
+        findings: []
+      })
+    }
+  });
+  const completedEvent = JSON.stringify({ type: "turn.completed" });
+  await writeFile(
+    path,
+    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", threadEvent, messageEvent, completedEvent, "JSON"].join("\n"),
+    "utf8"
+  );
   await chmod(path, 0o755);
 }
 

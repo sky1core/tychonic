@@ -44,8 +44,8 @@ describe("launchd service installer", () => {
       expect(temporalPlist).toContain(join(stateHome, "temporal", "temporal.db"));
       expect(temporalPlist).toContain("<string>--port</string>");
       expect(temporalPlist).toContain("<string>9233</string>");
-      expect(temporalPlist).toContain("<string>--ui-port</string>");
-      expect(temporalPlist).toContain("<string>9234</string>");
+      expect(temporalPlist).toContain("<string>--headless</string>");
+      expect(temporalPlist).not.toContain("<string>--ui-port</string>");
       const workerPlist = await readFile(installed.plists.worker, "utf8");
       expect(workerPlist).toContain("<string>worker</string>");
       expect(workerPlist).toContain("<string>--temporal-mode</string>");

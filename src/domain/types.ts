@@ -93,7 +93,7 @@ export interface FindingRecord {
   severity: "critical" | "high" | "medium" | "low";
   title: string;
   detail: string;
-  target: string;
+  target?: string;
   source_state_id: string;
   source_review_session_id?: string;
   target_work_session_id?: string;

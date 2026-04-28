@@ -290,13 +290,13 @@ function structuredReviewPrompt(scope) {
     "",
     "Return only one JSON object matching this contract. Do not wrap it in markdown.",
     "{",
-    '  "schema_version": "tychonic.review.v1",',
     '  "status": "pass|fail",',
     '  "summary": "short result summary",',
     '  "findings": [',
-    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation", "target": "file, state, or session", "target_session_id": ""}',
+    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
     "  ]",
     "}",
+    "Add target or target_session_id only when you can identify one.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
   ].join("\n");
 }

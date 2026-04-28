@@ -327,7 +327,7 @@ export function rejectCapInboxItem(
     title: "Interactive reject limit reached",
     detail:
       options.detail ??
-      `state '${stateName}' reached the interactive reject iteration cap; approve or modify to continue, or send rejectState to register another reject (recorded only)`,
+      `state '${stateName}' reached the interactive reject iteration cap; inspect artifacts and start a fresh run with adjusted input/config`,
     action: { kind: "triage", reason: `interactive reject cap for state '${stateName}'` },
     created_at: options.createdAt
   };

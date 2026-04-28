@@ -22,7 +22,6 @@ export interface TemporalConfig {
   mode?: TemporalMode;
   host?: string;
   apiPort?: number;
-  devUiPort?: number;
   address?: string;
   namespace?: string;
   taskQueue?: string;
@@ -35,7 +34,6 @@ export interface NormalizedTemporalConfig {
   mode: TemporalMode;
   host: string;
   apiPort: number;
-  devUiPort: number;
   address: string;
   namespace: string;
   taskQueue: string;
@@ -209,8 +207,6 @@ export class TemporalManager {
       addCheck(report, "temporal_cli", "ok", `Found temporal CLI at ${status.cliPath}`);
     }
 
-    let managedLocalRunning = false;
-
     if (this.config.mode === "external") {
       addCheck(
         report,
@@ -223,25 +219,12 @@ export class TemporalManager {
     } else if (!status.portOpen) {
       addCheck(report, "api_port", "ok", `Managed-local Temporal API port is free at ${this.config.address}`);
     } else if (status.pid && (await this.managedTemporalPID(status.pid))) {
-      managedLocalRunning = true;
       addCheck(report, "api_port", "ok", `Tychonic-managed Temporal appears reachable with pid ${status.pid}`);
     } else if (status.pid) {
       addCheck(report, "pid_file", "warn", `PID file exists but process ${status.pid} is not a live Temporal process`);
       addCheck(report, "api_port", "warn", "Temporal API port is open but managed PID is stale or not Temporal");
     } else {
       addCheck(report, "api_port", "fail", `Temporal API port is occupied by an unmanaged process at ${this.config.address}`);
-    }
-
-    if (this.config.mode === "managed-local" && !managedLocalRunning) {
-      const startSideAddress = managedDevUiAddress(this.config);
-      if (await this.portOpen(startSideAddress)) {
-        addCheck(
-          report,
-          "start_dev_side_port",
-          "fail",
-          `Managed-local Temporal start-dev side port is occupied at ${startSideAddress}; choose a different --temporal-port or use external mode`
-        );
-      }
     }
 
     if (this.config.mode === "managed-local") {
@@ -374,13 +357,6 @@ export class TemporalManager {
       );
     }
 
-    const startSideAddress = managedDevUiAddress(this.config);
-    if (await this.portOpen(startSideAddress)) {
-      throw new Error(
-        `managed-local Temporal start-dev side port ${startSideAddress} is already occupied; choose a different --temporal-port or use external mode`
-      );
-    }
-
     const cli = await this.deps.lookup("temporal");
     if (!cli) {
       throw new Error("temporal CLI is not installed; install it or use external mode");
@@ -445,17 +421,16 @@ export function normalizeTemporalConfig(config: TemporalConfig): NormalizedTempo
   const host = config.host ?? "127.0.0.1";
   const dirs = tychonicRuntimeDirs();
 
-  // Delegate instance-aware derivation of address / apiPort / devUiPort /
+  // Delegate instance-aware derivation of address / apiPort /
   // taskQueue to `resolveInstanceRuntime`. This keeps the field-level
   // explicit-override precedence (§9) in exactly one place. When no
-  // instance is active, the resolver reproduces the historical defaults
-  // (7233 / 8233 / 127.0.0.1:7233 / tychonic), so behavior is
-  // byte-identical to the pre-instance code path.
+  // instance is active, the resolver reproduces the operational defaults
+  // (7233 / 127.0.0.1:7233 / tychonic). Temporal start args are owned by
+  // `temporalStartArgs`, which runs managed-local Temporal headless.
   const instance = getActiveInstance();
   const explicit: ResolveInstanceRuntimeExplicit = {};
   if (config.address !== undefined) explicit.address = config.address;
   if (config.apiPort !== undefined) explicit.apiPort = config.apiPort;
-  if (config.devUiPort !== undefined) explicit.devUiPort = config.devUiPort;
   if (config.namespace !== undefined) explicit.namespace = config.namespace;
   if (config.taskQueue !== undefined) explicit.taskQueue = config.taskQueue;
   const resolvedOptions: ResolveInstanceRuntimeOptions = {
@@ -470,7 +445,6 @@ export function normalizeTemporalConfig(config: TemporalConfig): NormalizedTempo
     mode,
     host,
     apiPort: resolved.temporal.apiPort,
-    devUiPort: resolved.temporal.devUiPort,
     address: resolved.temporal.address,
     namespace: resolved.temporal.namespace,
     taskQueue: resolved.temporal.taskQueue,
@@ -547,8 +521,7 @@ export function temporalStartArgs(config: NormalizedTemporalConfig): string[] {
     config.host,
     "--port",
     String(config.apiPort),
-    "--ui-port",
-    String(config.devUiPort),
+    "--headless",
     "--namespace",
     config.namespace,
     "--db-filename",
@@ -731,10 +704,6 @@ function splitHostPort(address: string): [string, string] {
     throw new Error(`invalid address: ${address}`);
   }
   return [address.slice(0, index), address.slice(index + 1)];
-}
-
-function managedDevUiAddress(config: NormalizedTemporalConfig): string {
-  return `${config.host}:${config.devUiPort}`;
 }
 
 function addCheck(

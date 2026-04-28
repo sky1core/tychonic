@@ -1,7 +1,7 @@
 import { parseReviewResult, type ReviewResult } from "./schema.js";
 
 export function parseReviewOutput(output: string): ReviewResult | undefined {
-  const candidates = collectReviewCandidates(output.trim());
+  const candidates = collectReviewCandidates(output.trim(), { normalizeBuiltInEnvelopes: false });
   for (let i = candidates.length - 1; i >= 0; i--) {
     const candidate = candidates[i];
     if (candidate === undefined) continue;
@@ -11,19 +11,34 @@ export function parseReviewOutput(output: string): ReviewResult | undefined {
   return undefined;
 }
 
-function collectReviewCandidates(output: string): string[] {
+export function parseBuiltInReviewOutput(output: string): ReviewResult | undefined {
+  const candidates = collectReviewCandidates(output.trim(), { normalizeBuiltInEnvelopes: true });
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const candidate = candidates[i];
+    if (candidate === undefined) continue;
+    const parsed = tryParseAsReview(candidate);
+    if (parsed) return parsed;
+  }
+  return undefined;
+}
+
+interface ReviewCandidateOptions {
+  normalizeBuiltInEnvelopes: boolean;
+}
+
+function collectReviewCandidates(output: string, options: ReviewCandidateOptions): string[] {
   if (output.length === 0) {
     return [];
   }
 
   const wholeObject = parseJsonObjectLine(output);
   if (wholeObject !== undefined) {
-    return [output, ...extractDocumentedEnvelopeCandidates(wholeObject)];
+    return [output, ...extractDocumentedEnvelopeCandidates(wholeObject, options)];
   }
 
   const lines = output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
   if (lines.length === 1) {
-    return candidatesFromJsonLine(lines[0] ?? "");
+    return candidatesFromJsonLine(lines[0] ?? "", options);
   }
 
   const parsedLines: Array<{ line: string; parsed: Record<string, unknown> }> = [];
@@ -44,15 +59,15 @@ function collectReviewCandidates(output: string): string[] {
       candidates.push(line);
     }
 
-    candidates.push(...extractDocumentedEnvelopeCandidates(parsed));
+    candidates.push(...extractDocumentedEnvelopeCandidates(parsed, options));
   }
   return candidates;
 }
 
-function candidatesFromJsonLine(line: string): string[] {
+function candidatesFromJsonLine(line: string, options: ReviewCandidateOptions): string[] {
   const parsed = parseJsonObjectLine(line);
   if (parsed === undefined) return [];
-  return [line, ...extractDocumentedEnvelopeCandidates(parsed)];
+  return [line, ...extractDocumentedEnvelopeCandidates(parsed, options)];
 }
 
 function parseJsonObjectLine(line: string): Record<string, unknown> | undefined {
@@ -67,9 +82,15 @@ function parseJsonObjectLine(line: string): Record<string, unknown> | undefined 
   return parsed as Record<string, unknown>;
 }
 
-function extractDocumentedEnvelopeCandidates(value: Record<string, unknown>): string[] {
+function extractDocumentedEnvelopeCandidates(
+  value: Record<string, unknown>,
+  options: ReviewCandidateOptions
+): string[] {
   const out: string[] = [];
   const obj = value as Record<string, unknown>;
+  if (!options.normalizeBuiltInEnvelopes) {
+    return out;
+  }
 
   // Codex exec --json stream: { type:"item.completed", item:{ type:"agent_message", text:"..." } }
   if (obj.type === "item.completed") {
@@ -77,17 +98,38 @@ function extractDocumentedEnvelopeCandidates(value: Record<string, unknown>): st
     if (item && typeof item === "object" && !Array.isArray(item)) {
       const itemObj = item as Record<string, unknown>;
       const text = itemObj.text;
-      if (itemObj.type === "agent_message" && typeof text === "string") out.push(text.trim());
+      if (itemObj.type === "agent_message" && typeof text === "string") {
+        out.push(text.trim());
+        const parsedText = parseJsonObjectLine(text.trim());
+        if (parsedText !== undefined) {
+          out.push(JSON.stringify(normalizeBuiltInStructuredOutput(parsedText)));
+        }
+      }
     }
   }
 
-  // Claude --output-format stream-json terminal line: { type:"result", result:"..." }
+  // Claude --output-format stream-json terminal line:
+  // { type:"result", result:"...", structured_output:{...} }
   if (obj.type === "result") {
     const text = obj.result;
     if (typeof text === "string") out.push(text);
+    const structuredOutput = obj.structured_output;
+    if (structuredOutput && typeof structuredOutput === "object" && !Array.isArray(structuredOutput)) {
+      out.push(JSON.stringify(normalizeBuiltInStructuredOutput(structuredOutput as Record<string, unknown>)));
+    }
   }
 
   return out;
+}
+
+function normalizeBuiltInStructuredOutput(value: Record<string, unknown>): Record<string, unknown> {
+  if (value.schema_version !== undefined) {
+    return value;
+  }
+  return {
+    schema_version: "tychonic.review.v1",
+    ...value
+  };
 }
 
 function tryParseAsReview(candidate: string): ReviewResult | undefined {

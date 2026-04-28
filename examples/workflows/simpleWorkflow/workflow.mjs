@@ -489,7 +489,7 @@ function appendReviewFindingsAndInbox(run, reviewRes) {
       severity: finding.severity,
       title: finding.title,
       detail: finding.detail,
-      target: finding.target,
+      ...(finding.target ? { target: finding.target } : {}),
       source_state_id: sourceStateId,
       ...(sourceReviewSessionId ? { source_review_session_id: sourceReviewSessionId } : {}),
       ...(targetSessionId ? { target_work_session_id: targetSessionId } : {}),
@@ -609,7 +609,6 @@ export function buildReviewPrompt(run, scope) {
     .reverse()
     .find((s) => s.role === "worker");
   const sessionLabel = lastWorker ? lastWorker.id : "(no worker session recorded)";
-  const targetSessionExample = lastWorker ? lastWorker.id : "";
   const openFindings = run.findings.filter((f) => f.status !== "resolved" && f.status !== "dismissed");
   const findingsLine =
     openFindings.length > 0
@@ -628,13 +627,13 @@ export function buildReviewPrompt(run, scope) {
     "Inspect the worktree, validate the worker's claimed result, and decide pass/fail.",
     "Return only one JSON object matching this contract. Do not wrap it in markdown.",
     "{",
-    '  "schema_version": "tychonic.review.v1",',
     '  "status": "pass|fail",',
     '  "summary": "short result summary",',
     '  "findings": [',
-    `    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation", "target": "file, state, or session", "target_session_id": "${targetSessionExample}"}`,
+    '    {"severity": "critical|high|medium|low", "title": "finding title", "detail": "actionable explanation"}',
     "  ]",
     "}",
+    "Add target when you can identify a file, state, or session.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists.",
     lastWorker
       ? `For findings about the worker output under review, set target_session_id to "${lastWorker.id}".`

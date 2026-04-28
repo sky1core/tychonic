@@ -118,9 +118,26 @@ describe("tychonic runtime up --detach (gating)", () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
     const instance = `missing-deps-${process.pid}`;
+    const bundleDir = join(fakeHome, "missingDepsWorkflow");
+    await mkdir(bundleDir, { recursive: true });
+    await writeFile(
+      join(bundleDir, "workflow.mjs"),
+      [
+        'import { proxyActivities } from "@temporalio/workflow";',
+        "proxyActivities({ startToCloseTimeout: \"1 minute\" });",
+        "export const defaultProfile = {",
+        '  version: "tychonic.config.v1",',
+        "  states: { work: { type: \"work\", agent: \"claude\" } }",
+        "};",
+        "export async function missingDepsWorkflow(input) {",
+        "  return { status: \"succeeded\", input };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
 
     const install = await runCli(
-      ["--instance", instance, "workflows", "install", "examples/workflows/simpleWorkflow"],
+      ["--instance", instance, "workflows", "install", bundleDir],
       { env }
     );
     expect(install.exitCode).toBe(0);

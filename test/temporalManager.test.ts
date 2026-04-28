@@ -23,7 +23,6 @@ describe("normalizeTemporalConfig", () => {
 
     expect(cfg.mode).toBe("managed-local");
     expect(cfg.address).toBe("127.0.0.1:7233");
-    expect(cfg.devUiPort).toBe(8233);
     expect(cfg.dbFilename).toBe(join(tychonicRuntimeDirs().stateDir, "temporal", "temporal.db"));
     expect(cfg.logFile).toBe(join(tychonicRuntimeDirs().logDir, "temporal.log"));
     expect(cfg.pidFile).toBe(join(tychonicRuntimeDirs().stateDir, "temporal", "temporal.pid"));
@@ -43,7 +42,6 @@ describe("normalizeTemporalConfig", () => {
     const cfg = normalizeTemporalConfig({
       host: "127.0.0.2",
       apiPort: 17233,
-      devUiPort: 18233,
       namespace: "work",
       dbFilename: "state/temporal.db"
     });
@@ -55,8 +53,7 @@ describe("normalizeTemporalConfig", () => {
       "127.0.0.2",
       "--port",
       "17233",
-      "--ui-port",
-      "18233",
+      "--headless",
       "--namespace",
       "work",
       "--db-filename",
@@ -106,7 +103,6 @@ describe("tychonicRuntimeDirs / normalizeTemporalConfig with active instance", (
     const cfg = normalizeTemporalConfig({});
     const port = deriveInstancePort("p2net");
     expect(cfg.apiPort).toBe(port);
-    expect(cfg.devUiPort).toBe(port + 1);
     expect(cfg.address).toBe(`127.0.0.1:${port}`);
     expect(cfg.taskQueue).toBe("tychonic-p2net");
     // Namespace stays default — instance does not change it.
@@ -117,7 +113,6 @@ describe("tychonicRuntimeDirs / normalizeTemporalConfig with active instance", (
     // No setActiveInstance call; active instance is undefined.
     const cfg = normalizeTemporalConfig({});
     expect(cfg.apiPort).toBe(7233);
-    expect(cfg.devUiPort).toBe(8233);
     expect(cfg.address).toBe("127.0.0.1:7233");
     expect(cfg.taskQueue).toBe("tychonic");
     expect(cfg.namespace).toBe("default");
@@ -212,63 +207,7 @@ describe("TemporalManager", () => {
     await expect(manager.start()).rejects.toThrow(/already occupied/);
   });
 
-  it("refuses an occupied managed-local start-dev side port before starting Temporal", async () => {
-    let started = false;
-    const manager = managerWith(
-      {
-        lookup: async () => "/bin/temporal",
-        dial: async (address) => {
-          if (address === "127.0.0.1:18233") {
-            return undefined;
-          }
-          throw new Error("connection refused");
-        },
-        start: async () => {
-          started = true;
-          return 12345;
-        }
-      },
-      {
-        apiPort: 17233,
-        devUiPort: 18233
-      }
-    );
-
-    await expect(manager.start()).rejects.toThrow(
-      /managed-local Temporal start-dev side port 127\.0\.0\.1:18233 is already occupied/
-    );
-    expect(started).toBe(false);
-  });
-
-  it("reports occupied managed-local start-dev side port in doctor", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-ui-doctor-"));
-    const manager = managerWith(
-      {
-        lookup: async () => "/bin/temporal",
-        dial: async (address) => {
-          if (address === "127.0.0.1:18233") {
-            return undefined;
-          }
-          throw new Error("connection refused");
-        }
-      },
-      {
-        apiPort: 17233,
-        devUiPort: 18233,
-        dbFilename: join(dir, "temporal.db"),
-        logFile: join(dir, "temporal.log"),
-        pidFile: join(dir, "temporal.pid")
-      }
-    );
-
-    const report = await manager.doctor();
-    expect(report.overall).toBe("fail");
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({ name: "start_dev_side_port", status: "fail" })
-    );
-  });
-
-  it("does not expose the start-dev side port when the managed Temporal PID is live", async () => {
+  it("reports only the API port when the managed Temporal PID is live", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-ui-managed-"));
     const pidFile = join(dir, "temporal.pid");
     await writeFile(pidFile, "2468\n", "utf8");
@@ -289,9 +228,6 @@ describe("TemporalManager", () => {
     const report = await manager.doctor();
     expect(report.checks).toContainEqual(
       expect.objectContaining({ name: "api_port", status: "ok" })
-    );
-    expect(report.checks).not.toContainEqual(
-      expect.objectContaining({ name: "start_dev_side_port" })
     );
   });
 
@@ -321,9 +257,6 @@ describe("TemporalManager", () => {
     expect(report.overall).toBe("ok");
     expect(report.checks).toContainEqual(
       expect.objectContaining({ name: "api_port", status: "ok" })
-    );
-    expect(report.checks).not.toContainEqual(
-      expect.objectContaining({ name: "start_dev_side_port" })
     );
 
     await expect(manager.start()).resolves.toMatchObject({

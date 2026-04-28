@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReviewOutput } from "../src/review/parse.js";
+import { parseBuiltInReviewOutput, parseReviewOutput } from "../src/review/parse.js";
 
 const passReview = `{"schema_version":"tychonic.review.v1","status":"pass","summary":"ok","findings":[]}`;
 const failReview = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"one bug","findings":[{"severity":"high","title":"t","detail":"d","target":"src/x.ts"}]}`;
@@ -15,6 +15,13 @@ describe("parseReviewOutput — raw JSON", () => {
     const parsed = parseReviewOutput(failReview);
     expect(parsed?.status).toBe("fail");
     expect(parsed?.findings[0]?.title).toBe("t");
+  });
+
+  it("parses fail findings without target when the reviewer cannot identify a concrete file", () => {
+    const noTarget = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"one issue","findings":[{"severity":"medium","title":"unclear behavior","detail":"needs investigation"}]}`;
+    const parsed = parseReviewOutput(noTarget);
+    expect(parsed?.status).toBe("fail");
+    expect(parsed?.findings[0]?.target).toBeUndefined();
   });
 
   it("parses a pretty-printed review JSON object", () => {
@@ -41,6 +48,32 @@ describe("parseReviewOutput — raw JSON", () => {
     expect(parseReviewOutput(bad)).toBeUndefined();
   });
 
+  it("rejects raw semantic payload without schema_version", () => {
+    const semanticOnly = `{"status":"pass","summary":"ok","findings":[]}`;
+    expect(parseReviewOutput(semanticOnly)).toBeUndefined();
+  });
+
+  it("rejects built-in adapter envelopes on the command/wire-only parser", () => {
+    const codexSemanticEnvelope = [
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\\"status\\":\\"pass\\",\\"summary\\":\\"ok\\",\\"findings\\":[]}"}}`,
+      `{"type":"turn.completed"}`
+    ].join("\n");
+    const claudeSemanticEnvelope = JSON.stringify({
+      type: "result",
+      result: "ok",
+      structured_output: { status: "pass", summary: "ok", findings: [] }
+    });
+    const claudeWireEnvelope = JSON.stringify({
+      type: "result",
+      result: passReview
+    });
+
+    expect(parseReviewOutput(codexSemanticEnvelope)).toBeUndefined();
+    expect(parseReviewOutput(claudeSemanticEnvelope)).toBeUndefined();
+    expect(parseReviewOutput(claudeWireEnvelope)).toBeUndefined();
+  });
+
   it("rejects plain text", () => {
     expect(parseReviewOutput("High: missing verification\nDetail: tests are not run")).toBeUndefined();
   });
@@ -51,7 +84,7 @@ describe("parseReviewOutput — raw JSON", () => {
   });
 });
 
-describe("parseReviewOutput — codex exec --json stream envelope", () => {
+describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () => {
   it("unwraps a terminal item.completed/agent_message containing raw review JSON", () => {
     const stream = [
       `{"type":"thread.started","thread_id":"t"}`,
@@ -60,8 +93,32 @@ describe("parseReviewOutput — codex exec --json stream envelope", () => {
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
       `{"type":"turn.completed","usage":{"input_tokens":1}}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
+  });
+
+  it("normalizes semantic-only agent_message JSON from the built-in codex envelope", () => {
+    const semanticPass = `{"status":"pass","summary":"semantic pass","findings":[]}`;
+    const stream = [
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"turn.started"}`,
+      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(semanticPass)}}}`,
+      `{"type":"turn.completed"}`
+    ].join("\n");
+    const parsed = parseBuiltInReviewOutput(stream);
+    expect(parsed?.schema_version).toBe("tychonic.review.v1");
+    expect(parsed?.status).toBe("pass");
+    expect(parsed?.summary).toBe("semantic pass");
+  });
+
+  it("rejects a codex agent_message JSON object with a wrong schema_version", () => {
+    const wrongVersion = `{"schema_version":"tychonic.review.v2","status":"pass","summary":"wrong","findings":[]}`;
+    const stream = [
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(wrongVersion)}}}`,
+      `{"type":"turn.completed"}`
+    ].join("\n");
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("selects the LAST agent_message when earlier ones contain non-matching JSON", () => {
@@ -71,7 +128,7 @@ describe("parseReviewOutput — codex exec --json stream envelope", () => {
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
     expect(parsed?.findings).toEqual([]);
   });
@@ -82,7 +139,7 @@ describe("parseReviewOutput — codex exec --json stream envelope", () => {
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(fenced)}}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    expect(parseReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("returns undefined when no agent_message contains a conforming review", () => {
@@ -92,7 +149,7 @@ describe("parseReviewOutput — codex exec --json stream envelope", () => {
       `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls"}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    expect(parseReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("ignores non-JSON adapter warning lines while still unwrapping documented codex envelopes", () => {
@@ -103,29 +160,30 @@ describe("parseReviewOutput — codex exec --json stream envelope", () => {
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
   });
 
 });
 
-describe("parseReviewOutput — gemini envelope is not unwrapped", () => {
+describe("parseBuiltInReviewOutput — gemini envelope is not unwrapped", () => {
   it("does not treat gemini --output-format json as a built-in reviewer contract", () => {
-    // SPEC §structured-review: only `codex` and `claude` emit
-    // `tychonic.review.v1` by default. A real gemini --output-format json
-    // object has `{ response: "<stringified review>", ... }`. The parser
-    // must NOT unwrap that envelope; if an operator wants gemini as a
-    // reviewer they must emit the contract directly.
+    // SPEC §structured-review: only documented adapter envelopes are
+    // normalized by the host. A real gemini --output-format json object has
+    // `{ response: "<stringified review>", ... }`. The parser must NOT unwrap
+    // that envelope; if an operator wants gemini as a reviewer they must use a
+    // command wrapper that emits the wire contract directly.
     const geminiLike = JSON.stringify({
       session_id: "sess_test",
       response: passReview,
       stats: { models: { "gemini-test": {} } }
     });
     expect(parseReviewOutput(geminiLike)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(geminiLike)).toBeUndefined();
   });
 });
 
-describe("parseReviewOutput — claude --print --output-format stream-json", () => {
+describe("parseBuiltInReviewOutput — claude --print --output-format stream-json", () => {
   it("unwraps the final result field containing raw review JSON", () => {
     const stream = [
       `{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-7"}`,
@@ -133,8 +191,69 @@ describe("parseReviewOutput — claude --print --output-format stream-json", () 
       `{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"found nothing"}]}}`,
       `{"type":"result","subtype":"success","is_error":false,"duration_ms":12,"result":${JSON.stringify(passReview)},"session_id":"s1"}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
+  });
+
+  it("unwraps the terminal structured_output object when result is prose", () => {
+    const semanticFailReview = {
+      status: "fail",
+      summary: "one bug",
+      findings: [{ severity: "high", title: "t", detail: "d" }]
+    };
+    const stream = [
+      `{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-7"}`,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "Reviewed the change and produced structured output.",
+        structured_output: semanticFailReview,
+        session_id: "s1"
+      })
+    ].join("\n");
+    const parsed = parseBuiltInReviewOutput(stream);
+    expect(parsed?.schema_version).toBe("tychonic.review.v1");
+    expect(parsed?.status).toBe("fail");
+    expect(parsed?.findings[0]?.title).toBe("t");
+    expect(parsed?.findings[0]?.target).toBeUndefined();
+  });
+
+  it("rejects structured_output that does not match the review contract", () => {
+    const stream = [
+      `{"type":"system","subtype":"init","session_id":"s1"}`,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "looks fine",
+        structured_output: {
+          status: "pass",
+          summary: "contradictory payload",
+          findings: [{ severity: "low", title: "t", detail: "d" }]
+        },
+        session_id: "s1"
+      })
+    ].join("\n");
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+  });
+
+  it("rejects structured_output that supplies a wrong schema_version", () => {
+    const stream = [
+      `{"type":"system","subtype":"init","session_id":"s1"}`,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "Reviewed the change and produced structured output.",
+        structured_output: {
+          schema_version: "tychonic.review.v2",
+          status: "pass",
+          summary: "wrong version",
+          findings: []
+        },
+        session_id: "s1"
+      })
+    ].join("\n");
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("rejects a result field with fenced code block around review JSON", () => {
@@ -143,7 +262,7 @@ describe("parseReviewOutput — claude --print --output-format stream-json", () 
       `{"type":"system","subtype":"init","session_id":"s1"}`,
       `{"type":"result","subtype":"success","result":${JSON.stringify(fenced)},"session_id":"s1"}`
     ].join("\n");
-    expect(parseReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("rejects assistant.message.content text when result field is absent", () => {
@@ -151,7 +270,7 @@ describe("parseReviewOutput — claude --print --output-format stream-json", () 
       `{"type":"system","subtype":"init","session_id":"s1"}`,
       `{"type":"assistant","message":{"id":"m","role":"assistant","content":[{"type":"text","text":${JSON.stringify(passReview)}}]}}`
     ].join("\n");
-    expect(parseReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("selects the LAST terminal result over earlier terminal results", () => {
@@ -161,7 +280,7 @@ describe("parseReviewOutput — claude --print --output-format stream-json", () 
       `{"type":"result","subtype":"success","result":${JSON.stringify(earlier)},"session_id":"s1"}`,
       `{"type":"result","subtype":"success","result":${JSON.stringify(passReview)},"session_id":"s1"}`
     ].join("\n");
-    const parsed = parseReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
   });
 
@@ -171,7 +290,7 @@ describe("parseReviewOutput — claude --print --output-format stream-json", () 
       `{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"i am working on it"}]}}`,
       `{"type":"result","subtype":"success","result":"looked good to me","session_id":"s1"}`
     ].join("\n");
-    expect(parseReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 });
 

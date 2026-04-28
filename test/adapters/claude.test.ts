@@ -22,9 +22,44 @@ describe("claudeAdapter", () => {
 
   it("runNew(review) flips permission mode to plan", () => {
     const { command } = claudeAdapter.runNew({ ...BASE, role: "review" });
-    expect(command).toBe(
-      "claude -p --output-format stream-json --verbose --permission-mode plan"
-    );
+    expect(command).toContain("--permission-mode plan");
+    expect(command).toContain("--tools Read,Grep,Glob");
+    expect(command).toContain("--json-schema");
+    expect(command).not.toContain("tychonic.review.v1");
+  });
+
+  it("runNew(review) embeds a schema for semantic review payloads only", () => {
+    const { command } = claudeAdapter.runNew({ ...BASE, role: "review" });
+    const schema = extractReviewJsonSchema(command);
+    expect(schema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        status: { enum: ["pass", "fail"] },
+        summary: { type: "string", minLength: 1 },
+        findings: { type: "array" }
+      },
+      required: ["status", "summary", "findings"]
+    });
+    expect(objectField(schema, "properties")).not.toHaveProperty("schema_version");
+    expect(schema).not.toHaveProperty("oneOf");
+    expect(schema).not.toHaveProperty("allOf");
+    expect(schema).not.toHaveProperty("anyOf");
+
+    const properties = objectField(schema, "properties");
+    const findings = objectField(properties, "findings");
+    const findingItems = objectField(findings, "items");
+    expect(findingItems).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        severity: { enum: ["critical", "high", "medium", "low"] },
+        title: { type: "string", minLength: 1 },
+        detail: { type: "string", minLength: 1 },
+        target: { type: "string", minLength: 1 },
+        target_session_id: { type: "string" }
+      },
+      required: ["severity", "title", "detail"]
+    });
   });
 
   it("runNew honours an explicit permissionMode override", () => {
@@ -53,6 +88,8 @@ describe("claudeAdapter", () => {
       sessionId: "abc"
     });
     expect(command).toContain("--permission-mode plan");
+    expect(command).toContain("--tools Read,Grep,Glob");
+    expect(command).toContain("--json-schema");
     expect(command).toContain("--resume abc");
   });
 
@@ -86,3 +123,19 @@ describe("claudeAdapter", () => {
     expect(claudeAdapter.parseResult("hello world\n", "", 0)).toEqual({});
   });
 });
+
+function extractReviewJsonSchema(command: string): Record<string, unknown> {
+  const match = /--json-schema '([^']+)'/.exec(command);
+  if (!match?.[1]) {
+    throw new Error(`expected --json-schema argument in command: ${command}`);
+  }
+  return JSON.parse(match[1]) as Record<string, unknown>;
+}
+
+function objectField(value: Record<string, unknown>, key: string): Record<string, unknown> {
+  const field = value[key];
+  if (!field || typeof field !== "object" || Array.isArray(field)) {
+    throw new Error(`expected object field ${key}`);
+  }
+  return field as Record<string, unknown>;
+}

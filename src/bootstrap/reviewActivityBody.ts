@@ -4,6 +4,7 @@ import {
   optionalStateConfig
 } from "../catalog/types.js";
 import type { TychonicConfig } from "../catalog/types.js";
+import type { AdapterDispatch } from "../adapters/resolveAdapter.js";
 import type {
   ActivityAttemptRecord,
   AgentSessionRecord,
@@ -11,7 +12,7 @@ import type {
   WorkflowStateRecord
 } from "../domain/types.js";
 import { resolveCommand } from "../adapters/resolveAdapter.js";
-import { parseReviewOutput } from "../review/parse.js";
+import { parseBuiltInReviewOutput, parseReviewOutput } from "../review/parse.js";
 import type { ReviewActivityOutcome } from "../review/outcome.js";
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
@@ -25,6 +26,7 @@ import { runCommand, withPeriodicProgress } from "./commandRunner.js";
 export interface ResolvedReviewOptions {
   command: string;
   agent: string;
+  adapterDispatch?: AdapterDispatch;
 }
 
 export interface ReviewActivityResources {
@@ -161,8 +163,14 @@ export async function runReviewActivityBody(
   artifacts.push(outputArtifact);
   state.artifact_ids.push(outputArtifact.id);
 
+  const syntheticSessionId = `${run.id}_${nextId("session")}`;
+  const parsedSessionId = reviewOptions.adapterDispatch?.adapter.parseResult(
+    result.output,
+    "",
+    result.exitCode ?? 0
+  ).sessionId;
   const session: AgentSessionRecord = {
-    id: `${run.id}_${nextId("session")}`,
+    id: parsedSessionId ?? syntheticSessionId,
     agent: reviewOptions.agent,
     role: "reviewer",
     cwd: executionCwd,
@@ -174,7 +182,9 @@ export async function runReviewActivityBody(
   };
 
   attempt.agent_session_id = session.id;
-  const parsed = parseReviewOutput(result.output);
+  const parsed = reviewOptions.adapterDispatch
+    ? parseBuiltInReviewOutput(result.output)
+    : parseReviewOutput(result.output);
 
   if (!parsed) {
     state.status = "blocked";
@@ -262,7 +272,8 @@ export async function resolveNamedReviewOptions(options: {
       : review.agent ?? resolved.agentLabel ?? "review";
   return {
     command: resolved.command,
-    agent: agentLabel
+    agent: agentLabel,
+    ...(resolved.kind === "adapter" ? { adapterDispatch: resolved } : {})
   };
 }
 

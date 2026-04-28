@@ -87,6 +87,45 @@ describe("runReviewActivity", () => {
     expect(result.reviewOutcome.agentSessions).toHaveLength(1);
   });
 
+  it("treats command reviewer semantic-only JSON as unparseable because commands must emit the wire contract", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-command-semantic-"));
+    const run = baseRun("run_review_command_semantic");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command: "node -e \"console.log(JSON.stringify({status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("unparseable");
+    if (result.reviewOutcome?.kind !== "unparseable") throw new Error("unreachable");
+    expect(result.delta.states[0]?.status).toBe("blocked");
+  });
+
+  it("treats command reviewer adapter envelopes as unparseable because commands must emit the wire contract directly", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-command-envelope-"));
+    const run = baseRun("run_review_command_envelope");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"console.log(JSON.stringify({type:'result',result:'ok',structured_output:{status:'pass',summary:'ok',findings:[]}}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("unparseable");
+    if (result.reviewOutcome?.kind !== "unparseable") throw new Error("unreachable");
+    expect(result.delta.states[0]?.status).toBe("blocked");
+  });
+
   it("returns command_failed outcome with no artifacts/sessions when the reviewer command fails", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-failcmd-"));
     const run = baseRun("run_review_failcmd");

@@ -684,14 +684,25 @@ produce the shared `tychonic.review.v1` object documented under
 
 ## Structured Reviewer Contract
 
-`tychonic.review.v1` is the wire format Tychonic recognises for review-type
-activity output. A workflow that runs a `review`-TYPE state must arrange for
-its reviewer activity to emit one machine-readable `tychonic.review.v1`
-object.
+Structured review output has two layers:
 
-Required object fields are `schema_version`, `status`, `summary`, and
-`findings`. Finding objects must include `severity`, `title`, `detail`, and
-a target when the reviewer can identify one.
+- the **semantic review payload** the reviewer decides: `status`, `summary`,
+  and `findings`
+- the normalized **Tychonic wire result** the host records:
+  `schema_version: "tychonic.review.v1"` plus that semantic payload
+
+Built-in adapters must not make the model responsible for Tychonic bookkeeping
+fields such as `schema_version`. The adapter may ask the model for the semantic
+payload and then normalize it into the `tychonic.review.v1` wire result before
+host validation. An escape-hatch `command` reviewer has no adapter-owned
+normalization layer, so its stdout must emit the full `tychonic.review.v1`
+wire result directly.
+
+The semantic payload required fields are `status`, `summary`, and `findings`.
+Finding objects must include `severity`, `title`, and `detail`. A finding may
+also include `target` when the reviewer can identify a file, state, session, or
+other concrete subject. It may include `target_session_id` only when it can
+identify a recorded worker session.
 
 Rules:
 
@@ -701,9 +712,10 @@ Rules:
 - finding severity is `critical`, `high`, `medium`, or `low`
 - malformed reviewer output is not a pass and must create evidence for triage
 
-This is a wire contract on the reviewer's stdout, not a host-driven workflow
-feature. Workflows decide on their own whether to gate, retry, or branch on a
-`pass`/`fail` verdict.
+The model is not responsible for workflow control, resume decisions, internal
+ids, schema versioning, or artifact bookkeeping. Those belong to the workflow,
+adapter, and host layers. Workflows decide on their own whether to gate, retry,
+or branch on a `pass`/`fail` verdict.
 
 ## Workflow Loop Semantics
 

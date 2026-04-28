@@ -4,7 +4,7 @@ export const ReviewFindingSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low"]),
   title: z.string().min(1),
   detail: z.string().min(1),
-  target: z.string().min(1),
+  target: z.string().min(1).optional(),
   // Agents (notably Codex) commonly emit `target_session_id: ""` as a
   // placeholder when the finding is not tied to a resumable session.
   // Normalize empty string to `undefined` on input so callers reading

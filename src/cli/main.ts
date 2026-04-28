@@ -133,7 +133,8 @@ workflowsCommand
           name: bundle.name,
           path: bundle.path,
           workflowPath: bundle.workflowPath,
-          workflowExports: inspection.exportNames,
+          workflowNames: inspection.workflowFunctionNames,
+          moduleExports: inspection.exportNames,
           defaultProfile: inspection.defaultProfile
         };
       })
@@ -171,7 +172,8 @@ workflowsCommand
             ok: true,
             bundle: {
               directory,
-              workflowExports: inspection.exportNames,
+              workflowNames: inspection.workflowFunctionNames,
+              moduleExports: inspection.exportNames,
               defaultProfile: inspection.defaultProfile
             }
           },

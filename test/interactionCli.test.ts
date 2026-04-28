@@ -112,11 +112,15 @@ describe("tychonic workflows validate", () => {
   it("accepts a bundle directory path with a trailing slash", async () => {
     const result = await runCli(["workflows", "validate", "examples/workflows/pipelineWorkflow/"]);
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({
       ok: true,
       bundle: {
-        directory: "examples/workflows/pipelineWorkflow/"
+        directory: "examples/workflows/pipelineWorkflow/",
+        workflowNames: ["pipelineWorkflow"]
       }
     });
+    expect(parsed.bundle.moduleExports).toContain("defaultProfile");
+    expect(parsed.bundle).not.toHaveProperty("workflowExports");
   });
 });

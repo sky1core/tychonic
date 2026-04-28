@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,7 @@ try {
     throw new Error(`unexpected tychonic --version output: ${version}`);
   }
   await execFileAsync(bin, ["--help"], { encoding: "utf8" });
+  await access(join(app, "node_modules", "tychonic", "docs", "plugin-workflows.md"));
   console.log(JSON.stringify({ ok: true, version: version.trim() }, null, 2));
 } finally {
   await rm(tmp, { recursive: true, force: true });

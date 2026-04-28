@@ -21,7 +21,8 @@ describe("pipelineWorkflow bundle example", () => {
   it("uses a structured review contract by default", async () => {
     const source = await readFile(WORKFLOW_PATH, "utf8");
     expect(source).toContain("structuredReviewPrompt(\"work stages 1-3\")");
-    expect(source).toContain("\"schema_version\": \"tychonic.review.v1\"");
+    expect(source).toContain("\"status\": \"pass|fail\"");
+    expect(source).not.toContain("\"schema_version\": \"tychonic.review.v1\"");
   });
 
   it("declares its workflow-default profile via the defaultProfile export", async () => {
