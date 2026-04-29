@@ -71,10 +71,16 @@ import { productVersion } from "../version.js";
 const program = new Command();
 
 program.name(productName).description("Local AI work operations manager").version(productVersion);
+program.addHelpText(
+  "after",
+  "\nBasic flow: install a workflow, run `tychonic runtime up`, then run `tychonic run <workflow-name> --input-file <input.json> --wait`."
+);
 
-program.option(
-  "--instance <name>",
-  "isolated dev instance name; derives state dir, Temporal API port, and task queue from <name>. Falls back to $TYCHONIC_INSTANCE when omitted. Unset targets the operational paths."
+program.addOption(
+  new Option(
+    "--instance <name>",
+    "isolated dev instance name; derives state dir, Temporal API port, and task queue from <name>. Falls back to $TYCHONIC_INSTANCE when omitted. Unset targets the operational paths."
+  ).hideHelp()
 );
 
 program.hook("preAction", (thisCommand) => {
@@ -122,6 +128,14 @@ function hiddenTemporalNamespaceOption(): Option {
 
 function hiddenTemporalTaskQueueOption(): Option {
   return new Option("--temporal-task-queue <name>", "advanced runtime task queue").hideHelp();
+}
+
+function hiddenInlineInputOption(): Option {
+  return new Option("--input <json>", "advanced inline JSON object to pass as workflow input").hideHelp();
+}
+
+function hiddenVisibilityQueryOption(): Option {
+  return new Option("--visibility-query <query>", "advanced Temporal visibility filter for listing workflows").hideHelp();
 }
 
 /**
@@ -487,7 +501,7 @@ runtimeCommand
   );
 
 runtimeCommand
-  .command("reset")
+  .command("reset", { hidden: true })
   .option("--yes", "skip the interactive confirmation prompt", false)
   .description(
     "Terminate the runtime for --instance <name> (SIGTERM → 10s → SIGKILL) and remove its state/log directories. Refuses to operate without --instance."
@@ -497,7 +511,7 @@ runtimeCommand
   });
 
 runtimeCommand
-  .command("stop")
+  .command("stop", { hidden: true })
   .description("Gracefully stop the isolated runtime for --instance <name> with SIGTERM only")
   .action(async () => {
     await handleRuntimeStop();
@@ -506,7 +520,7 @@ runtimeCommand
 program
   .command("run")
   .argument("<workflow-name>", "installed workflow name")
-  .option("--input <json>", "JSON object to pass as workflow input")
+  .addOption(hiddenInlineInputOption())
   .option("--input-file <file>", "path to a JSON object file containing the workflow input")
   .option(
     "--config <file>",
@@ -557,16 +571,16 @@ program
   );
 
 program
-  .command("signal")
+  .command("signal", { hidden: true })
   .argument("<workflow-id>", "Temporal workflow id")
   .argument("<signal-name>", "Temporal signal name registered by the workflow")
   .option("--run-id <id>", "Temporal run id")
   .option("--payload-file <path>", "JSON file whose parsed contents are the signal payload")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
   .description("Send an arbitrary Temporal signal with optional JSON payload to a running workflow")
   .action(
     async (
@@ -635,17 +649,17 @@ program
 
 program
   .command("status")
-  .option("--workflow-id <id>", "Temporal workflow id to describe")
-  .option("--run-id <id>", "Temporal run id to describe")
-  .option("--include-result", "include completed workflow result from Temporal history")
+  .option("--workflow-id <id>", "workflow id to describe")
+  .option("--run-id <id>", "workflow run id to describe")
+  .option("--include-result", "include completed workflow result when available")
   .option("--limit <n>", "maximum workflows to list", (value) => Number(value), 20)
-  .option("--visibility-query <query>", "advanced Temporal visibility filter for listing workflows")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .description("Inspect Tychonic workflow status through Temporal")
+  .addOption(hiddenVisibilityQueryOption())
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("Inspect workflow status")
   .action(
     async (options: {
       workflowId?: string;
@@ -696,15 +710,15 @@ program
 
 program
   .command("approve")
-  .argument("<workflow-id>", "Temporal workflow id")
+  .argument("<workflow-id>", "workflow id")
   .option("--state <name>", "workflow state name to approve; when omitted, queried from the workflow")
-  .option("--run-id <id>", "Temporal run id")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .description("Approve the currently gated interactive state through Temporal")
+  .option("--run-id <id>", "workflow run id")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("Approve the currently gated interactive state")
   .action(
     async (
       workflowId: string,
@@ -736,15 +750,15 @@ program
 
 program
   .command("reject")
-  .argument("<workflow-id>", "Temporal workflow id")
+  .argument("<workflow-id>", "workflow id")
   .requiredOption("--feedback <text>", "non-empty feedback string delivered to the retried state")
   .option("--state <name>", "workflow state name to reject; when omitted, queried from the workflow")
-  .option("--run-id <id>", "Temporal run id")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
+  .option("--run-id <id>", "workflow run id")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
   .description("Reject the currently gated interactive state with feedback")
   .action(
     async (
@@ -782,18 +796,18 @@ program
 
 program
   .command("modify")
-  .argument("<workflow-id>", "Temporal workflow id")
+  .argument("<workflow-id>", "workflow id")
   .option("--state <name>", "workflow state name to modify; when omitted, queried from the workflow")
   .option("--status <status>", "set state.status (succeeded|failed|skipped|blocked|timed_out)")
   .option("--reason <text>", "set state.reason")
   .option("--note <text>", "append a short note (becomes reason when reason is absent)")
   .option("--patch-file <path>", "JSON file containing state patch fields (status/reason/note/artifacts/findings)")
-  .option("--run-id <id>", "Temporal run id")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
+  .option("--run-id <id>", "workflow run id")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
   .description("Patch the pending interactive state")
   .action(
     async (
@@ -837,15 +851,15 @@ program
 
 program
   .command("artifacts")
-  .requiredOption("--workflow-id <id>", "Temporal workflow id")
-  .option("--run-id <id>", "Temporal run id")
+  .requiredOption("--workflow-id <id>", "workflow id")
+  .option("--run-id <id>", "workflow run id")
   .option("--artifact <id>", "artifact id to print")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .description("List or print workflow artifacts through Temporal result metadata")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("List or print workflow artifacts")
   .action(async (options: RequiredTemporalResultCommandOptions & { artifact?: string }) => {
     const result = await loadTemporalWorkflowResult(options);
     if (options.artifact) {
@@ -869,15 +883,15 @@ program
 
 program
   .command("logs")
-  .requiredOption("--workflow-id <id>", "Temporal workflow id")
-  .option("--run-id <id>", "Temporal run id")
+  .requiredOption("--workflow-id <id>", "workflow id")
+  .option("--run-id <id>", "workflow run id")
   .option("--attempt <id>", "activity attempt id to print")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .description("List or print live activity logs through Temporal result metadata")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("List or print activity logs")
   .action(async (options: RequiredTemporalResultCommandOptions & { attempt?: string }) => {
     const result = await loadTemporalWorkflowResult(options);
     if (options.attempt) {
@@ -901,14 +915,14 @@ program
 
 const inboxCommand = program
   .command("inbox")
-  .option("--workflow-id <id>", "Temporal workflow id")
-  .option("--run-id <id>", "Temporal run id")
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .description("List decision inbox items through Temporal result metadata")
+  .option("--workflow-id <id>", "workflow id")
+  .option("--run-id <id>", "workflow run id")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("List decision inbox items")
   .action(async (options: TemporalResultCommandOptions) => {
     requireWorkflowId(options);
     const result = await loadTemporalWorkflowResult(options);
@@ -927,7 +941,9 @@ const inboxCommand = program
     );
   });
 
-const serviceCommand = program.command("service").description("Manage macOS launchd services for local Tychonic");
+const serviceCommand = program
+  .command("service", { hidden: true })
+  .description("Manage macOS launchd services for local Tychonic");
 
 serviceCommand
   .command("install")
@@ -1022,7 +1038,9 @@ serviceCommand
     );
   });
 
-const temporalCommand = program.command("temporal").description("Manage local Temporal runtime");
+const temporalCommand = program
+  .command("temporal", { hidden: true })
+  .description("Manage local Temporal runtime");
 
 temporalCommand
   .command("status")
@@ -1052,7 +1070,7 @@ temporalCommand
   });
 
 temporalCommand
-  .command("start")
+  .command("start", { hidden: true })
   .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
   .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
   .option("--temporal-address <address>", "Temporal API address")
@@ -1067,7 +1085,7 @@ temporalCommand
   });
 
 temporalCommand
-  .command("stop")
+  .command("stop", { hidden: true })
   .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local only")
   .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
   .option("--temporal-address <address>", "Temporal API address")
@@ -1084,7 +1102,7 @@ temporalCommand
   });
 
 temporalCommand
-  .command("worker")
+  .command("worker", { hidden: true })
   .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
   .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
   .option("--temporal-address <address>", "Temporal API address")
@@ -1108,15 +1126,15 @@ temporalCommand
 
 const sessionsCommand = program
   .command("sessions")
-  .option("--workflow-id <id>", "Temporal workflow id")
-  .option("--run-id <id>", "Temporal run id")
+  .option("--workflow-id <id>", "workflow id")
+  .option("--run-id <id>", "workflow run id")
   .option("--limit <n>", "maximum number of sessions", (value) => Number(value), 20)
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .description("List recorded agent sessions through Temporal result metadata")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("List recorded agent sessions")
   .action(async (options: TemporalResultCommandOptions & { limit: number }) => {
     requireWorkflowId(options);
     if (!Number.isInteger(options.limit) || options.limit < 1) {
