@@ -50,7 +50,7 @@ describe("bundleConfig loader", () => {
     expect(resolved.profile.policies?.integration).toMatchObject({ position: "final_gate" });
   });
 
-  it("rejects a bundle defaultProfile that declares a pass-through vendor field", async () => {
+  it("accepts a bundle defaultProfile that declares supported agent settings", async () => {
     const bundleDir = await makeBundleDir(`
 export const defaultProfile = {
   version: "tychonic.config.v1",
@@ -58,7 +58,29 @@ export const defaultProfile = {
     review: {
       type: "review",
       agent: "claude",
-      model: "claude-opus-4"
+      model: "opus",
+      reasoning_effort: "max"
+    }
+  }
+};
+export async function bundle() { return "ok"; }
+`);
+    const profile = await loadBundleDefaultProfile(bundleDir);
+    expect(profile.states?.review).toMatchObject({
+      model: "opus",
+      reasoning_effort: "max"
+    });
+  });
+
+  it("rejects a bundle defaultProfile that declares an unsupported vendor field", async () => {
+    const bundleDir = await makeBundleDir(`
+export const defaultProfile = {
+  version: "tychonic.config.v1",
+  states: {
+    review: {
+      type: "review",
+      agent: "claude",
+      thinking_budget: "2000"
     }
   }
 };

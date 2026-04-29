@@ -21,6 +21,16 @@ describe("geminiAdapter", () => {
     );
   });
 
+  it("runNew passes an explicit model setting", () => {
+    const { command } = geminiAdapter.runNew({
+      ...BASE,
+      model: "gemini-2.5-pro"
+    });
+    expect(command).toBe(
+      'gemini --approval-mode yolo --model \'gemini-2.5-pro\' --sandbox --output-format stream-json -p ""'
+    );
+  });
+
   it("runNew honours an explicit permissionMode override of plan", () => {
     const { command } = geminiAdapter.runNew({
       ...BASE,

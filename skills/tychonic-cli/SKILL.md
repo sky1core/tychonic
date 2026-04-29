@@ -96,7 +96,7 @@ For architect/builder/QA workflows, architect and builder states are `work`.
 The QA gate is `review`. A prose Kiro pre-review or repair step is still
 `work`; only the structured pass/fail gate is `review`.
 
-Minimal state profile shape:
+Recommended state profile shape:
 
 ```yaml
 version: tychonic.config.v1
@@ -104,6 +104,8 @@ states:
   work:
     type: work
     agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
   verify:
     type: verify
     command: |
@@ -113,17 +115,89 @@ states:
   review:
     type: review
     agent: claude
+    model: opus
+    reasoning_effort: max
 ```
 
-Use optional fields only when they express behavior the workflow actually
-needs. Do not add `resume`, permission, sandbox, timeout, or policy knobs just
-because the schema accepts them.
+For repeatable workflows, pin `model` on agent states instead of relying on a
+changing CLI default. Set `reasoning_effort` on Claude/Codex states whose
+quality depends on reasoning depth. These are recommended agent settings, not
+cargo-cult knobs.
 
-Allowed state-block fields are `type`, `agent`, `normalizer`, `command`, `resume`,
-`timeout`, `sandbox`, `approval`, `permission_mode`, and `trust_all_tools`.
-Vendor-owned values such as model name, reasoning effort, thinking budget, and
-provider approval mode belong in the external CLI config or in an explicit
-`command`.
+Do not add `resume`, permission, sandbox, timeout, trust, or policy knobs just
+because the schema accepts them. Those are orchestration controls, not the same
+category as model/reasoning agent settings; use orchestration controls only
+when the workflow behavior needs that control.
+
+Allowed state-block fields are `type`, `agent`, `normalizer`, `command`,
+`model`, `reasoning_effort`, `resume`, `timeout`, `sandbox`, `approval`,
+`permission_mode`, and `trust_all_tools`.
+
+`model` applies to the primary `agent`. `reasoning_effort` is supported by
+`claude` and `codex`. Omitted fields become omitted CLI flags/config
+overrides; omission delegates to the selected external CLI's default or
+auto-selection behavior.
+For `agent: claude`, model values are Claude CLI model values, not Kiro model
+ids. Use one of two forms:
+
+- Versionless alias: use the installed Claude CLI's alias, such as `opus`,
+  when you want that CLI to select the current model behind the alias.
+- Exact versioned name: use a full model name only after verifying this
+  installed Claude CLI accepts that exact string, for example
+  `claude-opus-4-7` after a successful smoke in this environment.
+
+Example Claude state using a versionless alias:
+
+```yaml
+review:
+  type: review
+  agent: claude
+  model: opus
+  reasoning_effort: max
+```
+
+Example Claude state using an exact versioned name:
+
+```yaml
+review:
+  type: review
+  agent: claude
+  model: claude-opus-4-7
+  reasoning_effort: max
+```
+
+Do not copy Kiro model ids or stale versioned strings into Claude states.
+Do not rely on memory or `--help` text alone when pinning or documenting a
+Claude exact versioned name; run a small `claude -p --model <name>` smoke first.
+Tychonic only passes the string through.
+
+High-model examples by agent:
+
+```yaml
+codex_build:
+  type: work
+  agent: codex
+  model: gpt-5.5
+  reasoning_effort: xhigh
+
+gemini_work:
+  type: work
+  agent: gemini
+  model: gemini-3.1-pro-preview
+
+kiro_work:
+  type: work
+  agent: kiro
+  model: claude-sonnet-4.5
+  trust_all_tools: true
+```
+
+Kiro states may set `model`, but not `reasoning_effort`;
+the installed Kiro CLI ACP surface exposes no stable reasoning/effort/thinking
+option.
+Do not add normalizer model fields; Tychonic supplies the lightweight
+normalizer model flag internally (`claude` gets `haiku`; `codex` gets
+`gpt-5.3-codex-spark`).
 
 ## Agents
 
@@ -133,25 +207,25 @@ Use `agent: "<name>"` for built-in adapters:
 |---|---:|---:|---:|
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
-| `kiro-acp` | yes | with normalizer | yes |
 | `kiro` | yes | with normalizer | yes |
 | `gemini` | yes | with normalizer | no |
 
 Use `command` only as an escape hatch for custom CLIs, unusual flags, or test
 stubs. A state sets exactly one of `agent` or `command`.
 
-For review states, `gemini`, `kiro`, and `kiro-acp` require `normalizer:
+For review states, `gemini` and `kiro` require `normalizer:
 claude` or `normalizer: codex`. The primary agent performs the review; the
 normalizer structures that output into the semantic review payload.
 
-Use `kiro-acp` rather than `kiro` for Kiro worker states when the installed
-Kiro CLI supports ACP. The plain `kiro` adapter is the legacy chat-wrapper
-path.
+`kiro` uses ACP `sessionId` from `session/new` and resumes through
+`session/load`.
 
-The plain `kiro` adapter runs non-interactively. If a Kiro state must inspect
-or edit files, set `trust_all_tools: true` only for that state and only in an
-isolated worktree. Without tool trust, Kiro can stop on tool approval instead
-of completing the workflow.
+The `kiro` adapter runs non-interactively. If a Kiro state must inspect files
+or run checks, set `trust_all_tools: true` only for that state and only in an
+isolated worktree. QA/review may execute checks, but must not edit code; the
+Kiro review path rejects direct file writes and fails if tracked files change
+during the review turn. Without tool trust, Kiro can stop on tool approval
+instead of completing the workflow.
 
 `TYCHONIC_AGENT_PATH` prepends directories to the agent CLI lookup path. Use it
 when a smoke test or local setup needs Tychonic to find agent binaries outside

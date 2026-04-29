@@ -1,7 +1,7 @@
 /**
  * Gemini built-in adapter (PARTIAL — `runNew` only).
  *
- * Open-question resolution from architect §10.8:
+ * Documented Gemini CLI limitation:
  *
  *   `gemini --help` exposes `-r/--resume <value>` but `<value>` is a
  *   1-based INDEX into `--list-sessions` (or the literal string
@@ -25,9 +25,11 @@
  *   help line says "Appended to input on stdin (if any)", so passing
  *   `-p ""` lets us deliver the actual prompt on stdin uniformly with
  *   the other adapters.
+ * - `--model <model>` is included only when the state config declares
+ *   `model`.
  * - `--approval-mode`: `default | auto_edit | yolo | plan`. Worker uses
  *   `yolo`; an explicit `permissionMode` override of `plan` is honoured
- *   (architect §5.5 leaves the orchestration override path open).
+ *   through the shared adapter override contract.
  * - `--sandbox` is a boolean flag in gemini (no policy value).
  */
 
@@ -39,6 +41,7 @@ import type {
   AgentAdapter
 } from "./types.js";
 import { AdapterUnsupported } from "./types.js";
+import { shellQuote } from "./shell.js";
 
 const BIN = "gemini";
 
@@ -54,6 +57,9 @@ function roleApprovalMode(input: AdapterRunInput): string {
 
 function buildBaseArgs(input: AdapterRunInput): string[] {
   const args: string[] = [BIN, "--approval-mode", roleApprovalMode(input)];
+  if (input.model !== undefined) {
+    args.push("--model", shellQuote(input.model));
+  }
   // Gemini's `--sandbox` is boolean, not a policy enum. Workers run with
   // sandbox enabled so model-issued shell commands are constrained.
   args.push("--sandbox");
@@ -76,7 +82,7 @@ export const geminiAdapter: AgentAdapter = {
 
   runResume(_input: AdapterResumeInput): AdapterCommand {
     // `gemini --resume` accepts an index, not a stable session id; see
-    // file header. Throwing here is the safe option per architect §10.8.
+    // file header. Throwing here is the safe option.
     throw new AdapterUnsupported(
       "gemini",
       "runResume",

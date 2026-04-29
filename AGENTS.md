@@ -72,7 +72,7 @@ Workflows reference activities by name and call each activity explicitly.
 ## Agent Principle
 
 Tychonic ships **built-in adapters for the supported agent CLI paths**:
-`claude`, `codex`, `gemini`, `kiro`, `kiro-acp`. The host owns command
+`claude`, `codex`, `gemini`, `kiro`. The host owns command
 synthesis, session resume where the adapter supports same-session resume,
 agent-specific flags, and session-id handling for these paths. Users select an
 adapter by setting `agent: "<name>"` in workflow input — no need to hand-write
@@ -96,16 +96,12 @@ behind adapter boundaries; shared workflow code depends on common activity
 contracts, not on provider-specific command strings.
 
 `gemini` is the exception for built-in automatic resume: its resume surface is
-not a stable session id. The legacy `kiro` adapter supports worker resume only
-through the adapter's same-process `/chat save` capture path: the fresh run
-must export its own `conversation_id`, and Tychonic must not infer identity
-from `kiro-cli chat --list-sessions` before/after diffs. The `kiro-acp`
-adapter uses Kiro's ACP `sessionId` from `session/new` and resumes through
-`session/load`; it is the preferred Kiro path when ACP works in the operator's
-environment.
+not a stable session id. The `kiro` adapter uses Kiro's ACP `sessionId` from
+`session/new` and resumes through `session/load`. Tychonic must not infer Kiro
+identity from `kiro-cli chat --list-sessions` before/after diffs.
 
-For review states, `gemini`, `kiro`, and `kiro-acp` are prose-review primary
-agents only. They require `normalizer: claude` or `normalizer: codex`; the
+For review states, `gemini` and `kiro` are prose-review primary agents only.
+They require `normalizer: claude` or `normalizer: codex`; the
 normalizer structures the primary review output and must not invent findings.
 
 Retry and multi-attempt behavior belong in workflow code with explicit state
@@ -116,8 +112,9 @@ If a workflow needs multiple attempts, the workflow code must call explicit
 states by NAME and expose the behavior as that workflow's own contract.
 
 Permissions must match the role and execution boundary: coding work needs enough
-permission to edit and test inside an isolated worktree, while review work
-should stay constrained.
+permission to edit and test inside an isolated worktree. QA/review work may
+inspect files and run verification commands, but it must not modify source code
+or act as a hidden repair step.
 
 Structured reviewers must emit the documented review contract.
 

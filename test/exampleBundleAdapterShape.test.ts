@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-// Step 4 contract: every example bundle's `defaultProfile` worker / review
+// Example bundle contract: every `defaultProfile` worker / review
 // state runs through a built-in adapter (`agent: "<name>"`), not through a
 // hand-rolled `command` / `resume_command`. The deterministic `verify` type
 // is the legitimate escape-hatch path and keeps `command`.
@@ -48,7 +48,7 @@ import * as verifyOnlyWorkflowModule from "../examples/workflows/verifyOnlyWorkf
 
 import { TychonicConfigSchema } from "../src/catalog/types.js";
 
-const BUILTIN_AGENTS = new Set(["claude", "codex", "gemini", "kiro", "kiro-acp"]);
+const BUILTIN_AGENTS = new Set(["claude", "codex", "gemini", "kiro"]);
 const ADAPTER_TYPES = new Set(["work", "review"]);
 const ESCAPE_HATCH_TYPES = new Set(["verify"]);
 
@@ -76,7 +76,7 @@ const BUNDLES: readonly Bundle[] = [
   { name: "verifyOnlyWorkflow", profile: verifyOnlyDefault, module: verifyOnlyWorkflowModule }
 ];
 
-describe("example bundle defaultProfile shape (Step 4 flip)", () => {
+describe("example bundle defaultProfile shape", () => {
   for (const bundle of BUNDLES) {
     describe(bundle.name, () => {
       it("exports only defaultProfile and the workflow function", () => {
@@ -98,7 +98,7 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
           ).toBeDefined();
           expect(
             BUILTIN_AGENTS.has(b.agent),
-            `${bundle.name}.${stateName} agent must be one of claude/codex/gemini/kiro/kiro-acp, got ${b.agent}`
+            `${bundle.name}.${stateName} agent must be one of claude/codex/gemini/kiro, got ${b.agent}`
           ).toBe(true);
         }
       });
@@ -138,7 +138,7 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
         }
       });
 
-      // gemini, kiro, and kiro-acp are partial review adapters: they need a
+      // gemini and kiro are partial review adapters: they need a
       // normalizer if a bundle pins them on a review state.
       it("never declares a partial adapter on a review state without normalizer", () => {
         for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
@@ -147,16 +147,12 @@ describe("example bundle defaultProfile shape (Step 4 flip)", () => {
           if (b.normalizer !== undefined) continue;
           expect(
             b.agent,
-            `${bundle.name}.${stateName} (review) must not use gemini, kiro, or kiro-acp`
+            `${bundle.name}.${stateName} (review) must not use gemini or kiro`
           ).not.toBe("gemini");
           expect(
             b.agent,
-            `${bundle.name}.${stateName} (review) must not use gemini, kiro, or kiro-acp`
+            `${bundle.name}.${stateName} (review) must not use gemini or kiro`
           ).not.toBe("kiro");
-          expect(
-            b.agent,
-            `${bundle.name}.${stateName} (review) must not use gemini, kiro, or kiro-acp`
-          ).not.toBe("kiro-acp");
         }
       });
     });
@@ -182,6 +178,7 @@ describe("Kiro-oriented example profiles", () => {
     expect(qa).toMatchObject({
       type: "review",
       agent: "kiro",
+      model: "claude-sonnet-4.5",
       normalizer: "codex",
       trust_all_tools: true
     });
@@ -192,14 +189,21 @@ describe("Kiro-oriented example profiles", () => {
     expect(states?.kiro_pre_review).toMatchObject({
       type: "work",
       agent: "kiro",
+      model: "claude-sonnet-4.5",
       trust_all_tools: true
     });
     expect(states?.kiro_fix).toMatchObject({
       type: "work",
       agent: "kiro",
+      model: "claude-sonnet-4.5",
       trust_all_tools: true
     });
-    expect(states?.final_qa).toMatchObject({ type: "review", agent: "claude" });
+    expect(states?.final_qa).toMatchObject({
+      type: "review",
+      agent: "claude",
+      model: "opus",
+      reasoning_effort: "max"
+    });
     expect(states?.final_qa?.normalizer).toBeUndefined();
   });
 });

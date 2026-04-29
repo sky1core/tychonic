@@ -5,6 +5,8 @@ import { BUILTIN_AGENT_NAMES, isBuiltInAgentName } from "../adapters/index.js";
 const ActivityNameSchema = z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);
 const AgentLabelSchema = z.string().min(1);
 const ReviewNormalizerSchema = z.enum(["claude", "codex"]);
+const AgentModelSchema = z.string().min(1);
+const ReasoningEffortSchema = z.string().min(1);
 const CommandStringSchema = z.string().min(1).refine((value) => !hasInlineSecrets(value), {
   message: "command must not contain inline secret values; use external CLI auth or inherited environment references"
 });
@@ -43,11 +45,19 @@ export const activityTypeContracts = {
   },
   work: {
     requiredOneOf: [["command", "agent"]],
-    allowed: ["agent", "command", "timeout", ...ORCHESTRATION_FIELDS]
+    allowed: ["agent", "command", "model", "reasoning_effort", "timeout", ...ORCHESTRATION_FIELDS]
   },
   review: {
     requiredOneOf: [["command", "agent"]],
-    allowed: ["agent", "normalizer", "command", "timeout", ...ORCHESTRATION_FIELDS]
+    allowed: [
+      "agent",
+      "normalizer",
+      "command",
+      "model",
+      "reasoning_effort",
+      "timeout",
+      ...ORCHESTRATION_FIELDS
+    ]
   }
 } as const satisfies Record<
   ActivityType,
@@ -62,6 +72,8 @@ type ActivityBlockField =
   | "agent"
   | "normalizer"
   | "command"
+  | "model"
+  | "reasoning_effort"
   | "resume"
   | "timeout"
   | "sandbox"
@@ -76,10 +88,14 @@ type ActivityBlockField =
  * - `work` and `review` require either `agent` or `command`
  * - when `agent` is set on a `work` / `review` block it
  *   must name one of the built-in adapters (`claude`, `codex`,
- *   `gemini`, `kiro`, `kiro-acp`); the host dispatches the CLI argv, resume invocation,
+ *   `gemini`, `kiro`); the host dispatches the CLI argv, resume invocation,
  *   and session-id capture for those names
  * - `normalizer` is review-only. It is required when a review state selects
- *   `gemini`, `kiro`, or `kiro-acp`, and must be `claude` or `codex`.
+ *   `gemini` or `kiro`, and must be `claude` or `codex`.
+ * - `model` is an optional built-in adapter setting. The host passes it
+ *   to the selected agent only when declared.
+ * - `reasoning_effort` is an optional built-in adapter setting for agents
+ *   whose CLI exposes a reasoning/effort surface.
  * - `agent` and `command` are mutually exclusive execution selectors
  * - `resume` is a non-negative integer workflow-readable budget. `0` or
  *   an absent value disables in-session resume by convention. The schema
@@ -96,6 +112,8 @@ export const StateConfigBlockSchema = z
     agent: AgentLabelSchema.optional(),
     normalizer: ReviewNormalizerSchema.optional(),
     command: CommandStringSchema.optional(),
+    model: AgentModelSchema.optional(),
+    reasoning_effort: ReasoningEffortSchema.optional(),
     resume: z.number().int().min(0).optional(),
     timeout: TimeoutValueSchema.optional(),
     sandbox: SandboxSchema.optional(),
@@ -267,13 +285,15 @@ function validateActivityBlock(block: ActivityBlock, ctx: z.RefinementCtx): void
   validateAgentName(block, ctx);
   validateSingleExecutionSelector(block, ctx);
   validateReviewerCapableAgent(block, ctx);
+  validateAgentSettings(block, ctx);
 }
 
 /**
  * Built-in adapters that need a review normalizer. They can produce prose
  * review output, but not the structured payload the host accepts directly.
  */
-const NON_REVIEWER_BUILTIN_AGENTS = new Set<string>(["gemini", "kiro", "kiro-acp"]);
+const NON_REVIEWER_BUILTIN_AGENTS = new Set<string>(["gemini", "kiro"]);
+const REASONING_EFFORT_BUILTIN_AGENTS = new Set<string>(["claude", "codex"]);
 
 /**
  * When `agent` is set on an adapter-capable activity type, restrict it
@@ -313,7 +333,7 @@ function validateSingleExecutionSelector(block: ActivityBlock, ctx: z.Refinement
 }
 
 /**
- * `gemini`, `kiro`, and `kiro-acp` review states must name a built-in
+ * `gemini` and `kiro` review states must name a built-in
  * normalizer (`claude` or `codex`). Direct structured reviewers (`claude`,
  * `codex`) must not set a normalizer because they already emit the semantic
  * review payload the host normalizes.
@@ -345,8 +365,44 @@ function validateReviewerCapableAgent(block: ActivityBlock, ctx: z.RefinementCtx
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message:
-        "states.<name>.normalizer is only valid when the review agent is gemini, kiro, or kiro-acp",
+        "states.<name>.normalizer is only valid when the review agent is gemini or kiro",
       path: ["normalizer"]
+    });
+  }
+}
+
+function validateAgentSettings(block: ActivityBlock, ctx: z.RefinementCtx): void {
+  if (block.model !== undefined) {
+    validatePrimaryAgentSetting(block, ctx, "model");
+  }
+  if (block.reasoning_effort !== undefined) {
+    validatePrimaryAgentSetting(block, ctx, "reasoning_effort");
+    if (
+      block.agent !== undefined &&
+      isBuiltInAgentName(block.agent) &&
+      !REASONING_EFFORT_BUILTIN_AGENTS.has(block.agent)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `agent ${block.agent} does not support states.<name>.reasoning_effort; ` +
+          "supported agents are claude and codex",
+        path: ["reasoning_effort"]
+      });
+    }
+  }
+}
+
+function validatePrimaryAgentSetting(
+  block: ActivityBlock,
+  ctx: z.RefinementCtx,
+  key: "model" | "reasoning_effort"
+): void {
+  if (block.agent === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `states.<name>.${key} is only valid with agent, not command`,
+      path: [key]
     });
   }
 }
@@ -356,6 +412,8 @@ function activityBlockFieldNames(): ActivityBlockField[] {
     "agent",
     "normalizer",
     "command",
+    "model",
+    "reasoning_effort",
     "resume",
     "timeout",
     "sandbox",

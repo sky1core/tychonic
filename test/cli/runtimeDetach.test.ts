@@ -15,6 +15,7 @@
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -59,6 +60,24 @@ function makeIsolatedEnv(fakeHome: string): NodeJS.ProcessEnv {
   delete env.XDG_STATE_HOME;
   delete env.TYCHONIC_INSTANCE;
   return env;
+}
+
+async function getUnusedLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw new Error("failed to allocate a loopback port");
+  }
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return port;
 }
 
 describe("tychonic runtime up --detach (gating)", () => {
@@ -118,6 +137,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
     const instance = `missing-deps-${process.pid}`;
+    const temporalPort = await getUnusedLoopbackPort();
     const bundleDir = join(fakeHome, "missingDepsWorkflow");
     await mkdir(bundleDir, { recursive: true });
     await writeFile(
@@ -143,7 +163,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(install.exitCode).toBe(0);
 
     const result = await runCli(
-      ["--instance", instance, "runtime", "up", "--no-web"],
+      ["--instance", instance, "runtime", "up", "--no-web", "--temporal-port", String(temporalPort)],
       { env }
     );
     expect(result.exitCode).not.toBe(0);
@@ -151,7 +171,10 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(output).toMatch(/Can't resolve '@temporalio\/workflow'/);
     expect(output).not.toMatch(/"mode": "foreground"/);
 
-    const status = await runCli(["--instance", instance, "temporal", "status"], { env });
+    const status = await runCli(
+      ["--instance", instance, "temporal", "status", "--temporal-port", String(temporalPort)],
+      { env }
+    );
     expect(status.exitCode).toBe(0);
     expect(status.stdout).toContain('"portOpen": false');
     expect(status.stdout).toContain('"health": "stopped"');

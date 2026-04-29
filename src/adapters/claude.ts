@@ -3,6 +3,8 @@
  *
  * CLI surface verified against `claude --help` (Claude Code v2.x):
  * - `claude -p [prompt]`         — non-interactive print mode. Required.
+ * - `--model <model>` / `--effort <level>` are included only when the
+ *   state config declares `model` / `reasoning_effort`.
  * - `--output-format stream-json --verbose` — emits JSONL events; the
  *   first `system.init` event contains `session_id` (UUID).
  * - `--permission-mode <mode>`   — choices include `acceptEdits`,
@@ -25,6 +27,7 @@ import type {
   AdapterRunResult,
   AgentAdapter
 } from "./types.js";
+import { shellQuote } from "./shell.js";
 
 const BIN = "claude";
 const REVIEW_FINDING_JSON_SCHEMA = {
@@ -65,13 +68,21 @@ function buildBaseArgs(input: AdapterRunInput): string[] {
   const permissionMode = input.permissionMode ?? rolePermissionMode(input.role);
   const args = [
     BIN,
-    "-p",
+    "-p"
+  ];
+  if (input.model !== undefined) {
+    args.push("--model", shellQuote(input.model));
+  }
+  if (input.reasoningEffort !== undefined) {
+    args.push("--effort", shellQuote(input.reasoningEffort));
+  }
+  args.push(
     "--output-format",
     "stream-json",
     "--verbose",
     "--permission-mode",
     permissionMode
-  ];
+  );
   if (input.role === "review") {
     args.push(
       "--tools",
@@ -87,10 +98,6 @@ function joinArgs(args: string[]): string {
   return args.join(" ");
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 export const claudeAdapter: AgentAdapter = {
   name: "claude",
 
@@ -100,7 +107,7 @@ export const claudeAdapter: AgentAdapter = {
 
   runResume(input: AdapterResumeInput): AdapterCommand {
     const args = buildBaseArgs(input);
-    args.push("--resume", input.sessionId);
+    args.push("--resume", shellQuote(input.sessionId));
     return { command: joinArgs(args) };
   },
 

@@ -1,5 +1,7 @@
 # Tychonic
 
+[한국어 README](README.ko.md)
+
 Tychonic is a macOS-local work-operations manager for delegated AI work. It
 runs existing agent CLIs and deterministic checks through Temporal, records
 evidence, and lets workflows continue through work, verify, and review states.
@@ -144,8 +146,11 @@ states:
     agent: claude
 ```
 
-Start with the smallest profile that expresses the workflow. Add optional
-fields only when the workflow actually needs the behavior.
+For repeatable agent workflows, pin `model` on agent states and set
+`reasoning_effort` on Claude/Codex states whose quality depends on reasoning
+depth. These are recommended agent settings. Keep separate orchestration knobs
+such as `resume`, permissions, sandbox, timeout, trust, and policies out of the
+profile unless the workflow behavior actually needs them.
 
 Validate and install bundles:
 
@@ -163,7 +168,6 @@ Built-in adapters:
 |---|---:|---:|---:|
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
-| `kiro-acp` | yes | with normalizer | yes |
 | `kiro` | yes | with normalizer | yes |
 | `gemini` | yes | with normalizer | no |
 
@@ -171,15 +175,21 @@ Use `agent: "<name>"` for the built-in path. Use `command` only as an escape
 hatch for custom CLIs, unusual flags, or test stubs. A state sets exactly one of
 `agent` or `command`.
 
-For review states, `gemini`, `kiro`, and `kiro-acp` require `normalizer:
-claude` or `normalizer: codex`.
+For review states, `gemini` and `kiro` require `normalizer:
+claude` or `normalizer: codex`. Tychonic supplies the normalizer's lightweight
+model flag internally; workflow config does not set a separate normalizer model.
 
-Prefer `kiro-acp` over `kiro` when using Kiro for worker states. `kiro-acp`
-uses Kiro's ACP session API; `kiro` remains the legacy chat wrapper path.
+`kiro` uses Kiro's ACP session API for session capture and worker resume. Kiro
+review states may inspect files and run checks, but the adapter rejects direct
+file writes and fails the review if tracked files change during the review turn.
 
-Model names, reasoning effort, thinking budget, and similar provider settings
-belong to the external CLI configuration or to an explicit `command`; they are
-not Tychonic config fields.
+Use `model` for built-in agents whose CLI supports it. For repeatable workflows,
+workflow authors should pin the model they want for each quality- or
+cost-sensitive state instead of relying on a changing CLI default.
+`reasoning_effort` is supported for `claude` and `codex`; set it on
+Claude/Codex states whose quality depends on reasoning depth.
+Kiro currently exposes `--model`, but does not expose a stable
+reasoning/effort/thinking CLI option; do not set `reasoning_effort` on `kiro`.
 
 ## Security
 

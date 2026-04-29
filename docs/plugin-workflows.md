@@ -219,9 +219,27 @@ workflow-defined instance:
 Activity call inputs carry runtime data only: prompt text, worktree path,
 session id, run record, and similar values. They must not choose which command
 or agent runs. Execution selection belongs to `profile.states.<name>.agent` or
-`profile.states.<name>.command`. Review states that use `gemini`, `kiro`, or
-`kiro-acp` as the primary reviewer must also declare
+`profile.states.<name>.command`. Review states that use `gemini` or `kiro` as
+the primary reviewer must also declare
 `profile.states.<name>.normalizer` as `claude` or `codex`.
+
+Agent settings belong in the state config block next to `agent`. Pin `model`
+for the primary `agent` when a state's quality, latency, or cost profile
+matters; omission intentionally delegates to the selected CLI's default or
+auto-selection behavior. Use `reasoning_effort` only for agents that support
+it, and set it on Claude/Codex states whose quality depends on reasoning
+depth. Do not pass those values through activity runtime inputs. Do not add
+separate normalizer model fields; Tychonic owns the lightweight model flag for
+the normalizer. Kiro states may set `model`, but not
+`reasoning_effort`; the installed Kiro CLI ACP surface exposes no stable
+reasoning/effort/thinking option.
+
+QA/review states may inspect files and run checks. They must not modify source
+code or silently repair findings. Kiro review states that need non-interactive
+tool use may set `trust_all_tools: true`; the adapter still rejects direct file
+writes and fails the review if tracked files change during the turn. If a
+workflow wants automated repair after QA, call an explicit work state with its
+own NAME and config.
 
 Every activity returns records through `ActivityResult.delta` and optional
 TYPE-specific outcome payloads. The activity does not mutate `input.run`; the

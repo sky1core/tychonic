@@ -142,6 +142,12 @@ function buildAdapterRunInput(args: {
 }): AdapterRunInput {
   const { worktreeCwd, prompt, role, block } = args;
   const out: AdapterRunInput = { prompt, worktreeCwd, role };
+  if (block.model !== undefined) {
+    out.model = block.model;
+  }
+  if (block.reasoning_effort !== undefined) {
+    out.reasoningEffort = block.reasoning_effort;
+  }
   if (block.sandbox !== undefined) {
     out.sandbox = block.sandbox;
   }

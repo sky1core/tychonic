@@ -1,6 +1,8 @@
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runWorkerActivity } from "../src/activities/runWorkerActivity.js";
 import { runReviewActivity } from "../src/activities/runReviewActivity.js";
@@ -23,6 +25,7 @@ import type { WorkflowRunRecord } from "../src/domain/types.js";
 
 const WORK_NAME = "work_disp";
 const REVIEW_NAME = "review_disp";
+const execFileAsync = promisify(execFile);
 
 let originalAgentPath: string | undefined;
 let stubBinDir: string;
@@ -90,6 +93,28 @@ describe("runWorkerActivity adapter dispatch", () => {
     expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("stub-session-id");
   });
 
+  it("passes declared agent model and reasoning effort into adapter dispatch", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-agent-settings-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-agent-settings-wt-"));
+
+    const result = await runWorkerActivity({
+      stateName: WORK_NAME,
+      run: baseRun("disp_worker_agent_settings"),
+      cwd,
+      profile: workProfile({
+        agent: "claude",
+        model: "opus",
+        reasoning_effort: "max"
+      }),
+      worktreePath,
+      prompt: "do work"
+    });
+
+    expect(result.delta.activityAttempts?.[0]?.command).toContain(
+      "--model 'opus' --effort 'max'"
+    );
+  });
+
   it("rejects an unvalidated non-built-in agent before command resolution", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-missing-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-missing-wt-"));
@@ -106,7 +131,7 @@ describe("runWorkerActivity adapter dispatch", () => {
     ).rejects.toThrow(/profile\.states\.work_disp failed schema validation/);
   });
 
-  it("block.agent built-in (kiro) captures same-process exported session id", async () => {
+  it("block.agent built-in (kiro) captures ACP session id", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-wt-"));
 
@@ -120,39 +145,16 @@ describe("runWorkerActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain("/chat save");
-    expect(command).not.toContain("--list-sessions");
-    if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
-    expect(result.workerOutcome.agentSessions[0]?.agent).toBe("kiro");
-    expect(result.workerOutcome.agentSessions[0]?.id).toBe("kiro-stub-session-id");
-    expect(result.workerOutcome.agentSessions[0]?.resumable).toBe(true);
-    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("kiro-stub-session-id");
-  });
-
-  it("block.agent built-in (kiro-acp) captures ACP session id", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-acp-"));
-    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-acp-wt-"));
-
-    const result = await runWorkerActivity({
-      stateName: WORK_NAME,
-      run: baseRun("disp_worker_kiro_acp"),
-      cwd,
-      profile: workProfile({ agent: "kiro-acp" }),
-      worktreePath,
-      prompt: "do kiro acp work"
-    });
-
-    const command = result.delta.activityAttempts?.[0]?.command ?? "";
     expect(command).toContain("kiro-cli");
     expect(command).toContain("session/new");
     expect(command).toContain("session/prompt");
     expect(command).not.toContain("/chat save");
     if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
-    expect(result.workerOutcome.agentSessions[0]?.agent).toBe("kiro-acp");
-    expect(result.workerOutcome.agentSessions[0]?.id).toBe("kiro-acp-stub-session-id");
+    expect(result.workerOutcome.agentSessions[0]?.agent).toBe("kiro");
+    expect(result.workerOutcome.agentSessions[0]?.id).toBe("kiro-stub-session-id");
     expect(result.workerOutcome.agentSessions[0]?.resumable).toBe(true);
-    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("kiro-acp-stub-session-id");
-    await expect(readFile(join(worktreePath, "kiro-acp-written.txt"), "utf8")).resolves.toBe(
+    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("kiro-stub-session-id");
+    await expect(readFile(join(worktreePath, "kiro-written.txt"), "utf8")).resolves.toBe(
       "written through ACP fs client"
     );
   });
@@ -300,6 +302,7 @@ describe("runReviewActivity adapter dispatch", () => {
     const worktreePath = await mkdtemp(
       join(tmpdir(), "tychonic-disp-review-kiro-normalized-wt-")
     );
+    await initGitWorktree(worktreePath);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
@@ -311,8 +314,9 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain("/chat save");
-    expect(command).not.toContain("--trust-all-tools");
+    expect(command).toContain("session/new");
+    expect(command).toContain("session/prompt");
+    expect(command).toContain("node --input-type=module - \"$prompt_file\" '' '0'");
     expect(result.reviewOutcome?.kind).toBe("parsed");
     if (result.reviewOutcome?.kind !== "parsed") throw new Error("expected parsed outcome");
     expect(result.reviewOutcome.result.status).toBe("pass");
@@ -334,6 +338,7 @@ describe("runReviewActivity adapter dispatch", () => {
     if (!normalizerOutputArtifact) throw new Error("expected normalizer output artifact");
     const normalizerOutputText = await readFile(join(cwd, normalizerOutputArtifact.path), "utf8");
     expect(normalizerOutputText).toContain("NORMALIZER_CWD:");
+    expect(normalizerOutputText).toContain("ARGV:-p --model haiku --output-format");
     expect(normalizerOutputText).not.toContain(cwd);
     expect(normalizerOutputText).not.toContain(worktreePath);
     const normalizerSession = result.reviewOutcome.agentSessions.find(
@@ -376,6 +381,72 @@ describe("runReviewActivity adapter dispatch", () => {
     expect(normalizerPrompt).toContain("severity, title, detail");
     expect(normalizerPrompt).toContain("Use the exact key detail");
     expect(normalizerPrompt).toContain('"detail":"..."');
+
+    const normalizerOutputArtifact = result.reviewOutcome.artifacts.find(
+      (artifact) => artifact.kind === `${REVIEW_NAME}_normalizer_output`
+    );
+    if (!normalizerOutputArtifact) throw new Error("expected normalizer output artifact");
+    const normalizerOutputText = await readFile(join(cwd, normalizerOutputArtifact.path), "utf8");
+    expect(normalizerOutputText).toContain(
+      "ARGV:-a never --model gpt-5.3-codex-spark exec --skip-git-repo-check --json --sandbox read-only -"
+    );
+  });
+
+  it("lets Kiro QA run tools but blocks direct review file writes", async () => {
+    await writeClaudeStructuredReviewWithCwdStubBinary(join(stubBinDir, "claude"));
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-tool-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-tool-wt-"));
+    await initGitWorktree(worktreePath);
+
+    const result = await runReviewActivity({
+      stateName: REVIEW_NAME,
+      run: baseRun("disp_review_kiro_tool_boundary"),
+      cwd,
+      worktreePath,
+      profile: reviewProfile({
+        agent: "kiro",
+        normalizer: "claude",
+        trust_all_tools: true
+      }),
+      prompt: "review and run checks"
+    });
+
+    const command = result.delta.activityAttempts?.[0]?.command ?? "";
+    expect(command).toContain("--trust-all-tools");
+    expect(result.reviewOutcome?.kind).toBe("parsed");
+    await expect(readFile(join(worktreePath, "kiro-written.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("fails Kiro QA when a terminal tool modifies tracked source", async () => {
+    await writeClaudeStructuredReviewWithCwdStubBinary(join(stubBinDir, "claude"));
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-mutating-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-mutating-wt-"));
+    await initGitWorktree(worktreePath);
+    const originalMode = process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE;
+    process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE = "1";
+    try {
+      const result = await runReviewActivity({
+        stateName: REVIEW_NAME,
+        run: baseRun("disp_review_kiro_mutating_terminal"),
+        cwd,
+        worktreePath,
+        profile: reviewProfile({
+          agent: "kiro",
+          normalizer: "claude",
+          trust_all_tools: true
+        }),
+        prompt: "review and run checks"
+      });
+
+      expect(result.reviewOutcome?.kind).toBe("command_failed");
+      expect(result.delta.states?.[0]?.reason).toBe("reviewer command did not succeed");
+    } finally {
+      if (originalMode === undefined) {
+        delete process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE;
+      } else {
+        process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE = originalMode;
+      }
+    }
   });
 
   it("rejects an unvalidated review agent before skip handling", async () => {
@@ -401,21 +472,40 @@ describe("runReviewActivity adapter dispatch", () => {
   });
 });
 
-function workProfile(args: { agent?: string; command?: string }): TychonicConfig {
+function workProfile(args: {
+  agent?: string;
+  command?: string;
+  model?: string;
+  reasoning_effort?: string;
+  trust_all_tools?: boolean;
+}): TychonicConfig {
   const block: Record<string, unknown> = { type: "work" };
   if (args.agent !== undefined) block.agent = args.agent;
   if (args.command !== undefined) block.command = args.command;
+  if (args.model !== undefined) block.model = args.model;
+  if (args.reasoning_effort !== undefined) block.reasoning_effort = args.reasoning_effort;
+  if (args.trust_all_tools !== undefined) block.trust_all_tools = args.trust_all_tools;
   return {
     version: "tychonic.config.v1",
     states: { [WORK_NAME]: block as never }
   };
 }
 
-function reviewProfile(args: { agent?: string; normalizer?: string; command?: string }): TychonicConfig {
+function reviewProfile(args: {
+  agent?: string;
+  normalizer?: string;
+  command?: string;
+  model?: string;
+  reasoning_effort?: string;
+  trust_all_tools?: boolean;
+}): TychonicConfig {
   const block: Record<string, unknown> = { type: "review" };
   if (args.agent !== undefined) block.agent = args.agent;
   if (args.normalizer !== undefined) block.normalizer = args.normalizer;
   if (args.command !== undefined) block.command = args.command;
+  if (args.model !== undefined) block.model = args.model;
+  if (args.reasoning_effort !== undefined) block.reasoning_effort = args.reasoning_effort;
+  if (args.trust_all_tools !== undefined) block.trust_all_tools = args.trust_all_tools;
   return {
     version: "tychonic.config.v1",
     states: { [REVIEW_NAME]: block as never }
@@ -438,6 +528,25 @@ function baseRun(id: string): WorkflowRunRecord {
     findings: [],
     inbox: []
   };
+}
+
+async function initGitWorktree(path: string): Promise<void> {
+  await writeFile(join(path, "README.md"), "baseline\n", "utf8");
+  await execFileAsync("git", ["init"], { cwd: path });
+  await execFileAsync("git", ["add", "README.md"], { cwd: path });
+  await execFileAsync(
+    "git",
+    [
+      "-c",
+      "user.name=Tychonic Test",
+      "-c",
+      "user.email=tychonic-test@example.invalid",
+      "commit",
+      "-m",
+      "baseline"
+    ],
+    { cwd: path }
+  );
 }
 
 async function writeStubBinary(path: string): Promise<void> {
@@ -497,6 +606,7 @@ async function writeClaudeStructuredReviewWithCwdStubBinary(path: string): Promi
     [
       "#!/bin/sh",
       "printf 'NORMALIZER_CWD:%s\\n' \"$PWD\" >&2",
+      "printf 'ARGV:%s\\n' \"$*\" >&2",
       "cat > /dev/null",
       "cat <<'JSON'",
       systemEvent,
@@ -529,7 +639,16 @@ async function writeCodexSemanticReviewStubBinary(path: string): Promise<void> {
   const completedEvent = JSON.stringify({ type: "turn.completed" });
   await writeFile(
     path,
-    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", threadEvent, messageEvent, completedEvent, "JSON"].join("\n"),
+    [
+      "#!/bin/sh",
+      "printf 'ARGV:%s\\n' \"$*\" >&2",
+      "cat > /dev/null",
+      "cat <<'JSON'",
+      threadEvent,
+      messageEvent,
+      completedEvent,
+      "JSON"
+    ].join("\n"),
     "utf8"
   );
   await chmod(path, 0o755);
@@ -544,6 +663,8 @@ async function writeKiroStubBinary(path: string): Promise<void> {
       "const fs = require('node:fs');",
       "const path = require('node:path');",
       "if (process.argv[2] === 'acp') {",
+      "  const trustAllTools = process.argv.includes('--trust-all-tools');",
+      "  const mutateTerminal = process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE === '1';",
       "  let buffer = '';",
       "  let workspaceCwd = process.cwd();",
       "  let promptRequestId = undefined;",
@@ -571,7 +692,7 @@ async function writeKiroStubBinary(path: string): Promise<void> {
       "    }",
       "    if (message.method === 'session/new') {",
       "      workspaceCwd = message.params.cwd;",
-      "      send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kiro-acp-stub-session-id' } });",
+      "      send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kiro-stub-session-id' } });",
       "      return;",
       "    }",
       "    if (message.method === 'session/load') {",
@@ -582,14 +703,20 @@ async function writeKiroStubBinary(path: string): Promise<void> {
       "    if (message.method === 'session/prompt') {",
       "      promptRequestId = message.id;",
       "      promptSessionId = message.params.sessionId;",
-      "      send({ jsonrpc: '2.0', id: 100, method: 'fs/write_text_file', params: { sessionId: promptSessionId, path: path.join(workspaceCwd, 'kiro-acp-written.txt'), content: 'written through ACP fs client' } });",
+      "      if (!trustAllTools) {",
+      "        send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: promptSessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'kiro stub ok' } } } });",
+      "        send({ jsonrpc: '2.0', id: promptRequestId, result: { stopReason: 'end_turn' } });",
+      "        return;",
+      "      }",
+      "      send({ jsonrpc: '2.0', id: 100, method: 'fs/write_text_file', params: { sessionId: promptSessionId, path: path.join(workspaceCwd, 'kiro-written.txt'), content: 'written through ACP fs client' } });",
       "      return;",
       "    }",
       "    send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } });",
       "  }",
       "  function handleClientResponse(message) {",
       "    if (message.id === 100) {",
-      "      send({ jsonrpc: '2.0', id: 101, method: 'terminal/create', params: { sessionId: promptSessionId, command: 'node', args: ['-e', 'process.stdout.write(\"terminal ok\")'], cwd: workspaceCwd } });",
+      "      const terminalCode = mutateTerminal ? 'require(\"node:fs\").writeFileSync(\"README.md\", \"mutated by review\\\\n\"); process.stdout.write(\"terminal mutated\")' : 'process.stdout.write(\"terminal ok\")';",
+      "      send({ jsonrpc: '2.0', id: 101, method: 'terminal/create', params: { sessionId: promptSessionId, command: 'node', args: ['-e', terminalCode], cwd: workspaceCwd } });",
       "      return;",
       "    }",
       "    if (message.id === 101) {",
@@ -597,19 +724,13 @@ async function writeKiroStubBinary(path: string): Promise<void> {
       "      return;",
       "    }",
       "    if (message.id === 102) {",
-      "      send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: promptSessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'kiro acp stub ok' } } } });",
+      "      send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: promptSessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'kiro stub ok' } } } });",
       "      send({ jsonrpc: '2.0', id: promptRequestId, result: { stopReason: 'end_turn' } });",
       "    }",
       "  }",
       "} else {",
-      "  const input = fs.readFileSync(0, 'utf8');",
-      "  const saveLine = input.split(/\\n/).find((line) => line.startsWith('/chat save '));",
-      "  const savePath = saveLine ? saveLine.replace('/chat save ', '') : '';",
-      "  if (savePath) {",
-      "    fs.mkdirSync(path.dirname(savePath), { recursive: true });",
-      "    fs.writeFileSync(savePath, JSON.stringify({ conversation_id: 'kiro-stub-session-id' }) + '\\n');",
-      "  }",
-      "  console.log('kiro stub ok');",
+      "  console.error('kiro stub only supports acp');",
+      "  process.exit(2);",
       "}"
     ].join("\n"),
     "utf8"

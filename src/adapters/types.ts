@@ -10,14 +10,13 @@
  * The adapter is pure and transport-independent. It does NOT spawn anything,
  * touch the filesystem, or hold state between calls. Spawning, heartbeating,
  * artifact write, and timeout enforcement remain the responsibility of
- * `bootstrap/workerActivityBody.ts` and `bootstrap/commandRunner.ts`. Step 2
- * of the refactor will wire activities to the registry; Step 1 (this file)
- * only lands the abstraction.
+ * `bootstrap/workerActivityBody.ts` and `bootstrap/commandRunner.ts`.
  *
  * Role mapping ("work" / "review") drives permission flag
  * selection inside each adapter. The role is supplied per call and is the
  * sole source of permission policy unless the caller explicitly overrides
- * via `sandbox` / `approval` / `permission_mode` / `trust_all_tools`.
+ * via `model` / `reasoning_effort` / `sandbox` / `approval` /
+ * `permission_mode` / `trust_all_tools`.
  */
 
 import type {
@@ -25,10 +24,9 @@ import type {
 } from "../catalog/types.js";
 
 /**
- * Built-in adapter names. The schema's free-form `agent` field is a label
- * (UI / logs); only these values trigger the adapter dispatch path.
+ * Built-in adapter names accepted by validated `states.<name>.agent` blocks.
  */
-export type BuiltInAgentName = "claude" | "codex" | "gemini" | "kiro" | "kiro-acp";
+export type BuiltInAgentName = "claude" | "codex" | "gemini" | "kiro";
 
 /**
  * Roles that the host knows how to map to permission flags. Maps directly
@@ -58,12 +56,16 @@ export type AdapterPermissionMode =
  *
  * Orchestration overrides (`sandbox` / `approval` / `permission_mode` /
  * `trust_all_tools`) are applied verbatim and replace the role-derived
- * default. They are sourced from the activity block per architect §5.
+ * default. Agent settings (`model` / `reasoning_effort`) are passed through
+ * only when the selected adapter supports the corresponding CLI surface.
+ * They are sourced from the validated state config block.
  */
 export interface AdapterRunInput {
   prompt: string;
   worktreeCwd: string;
   role: AdapterRole;
+  model?: string;
+  reasoningEffort?: string;
   sandbox?: AdapterSandbox;
   approval?: AdapterApproval;
   permissionMode?: AdapterPermissionMode;
@@ -105,7 +107,7 @@ export interface AdapterRunResult {
  * - gemini `review`: gemini does not currently emit a non-interactive
  *   structured-review surface.
  *
- * Step 2 wiring catches this and surfaces it as a workflow-level error.
+ * Activity dispatch catches this and surfaces it as a workflow-level error.
  */
 export class AdapterUnsupported extends Error {
   readonly adapter: BuiltInAgentName;

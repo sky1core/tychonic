@@ -50,6 +50,11 @@ export interface RunReviewActivityBodyOptions {
   stateReason: string;
 }
 
+const NORMALIZER_MODEL_BY_AGENT: Record<Extract<BuiltInAgentName, "claude" | "codex">, string> = {
+  claude: "haiku",
+  codex: "gpt-5.3-codex-spark"
+};
+
 /**
  * Single review body. Produces exactly one `WorkflowStateRecord`
  * and one `ActivityAttemptRecord` (SPEC §Activity Result And Evidence
@@ -365,7 +370,8 @@ async function runReviewNormalizer(input: {
     const command = adapter.runNew({
       prompt: normalizerPrompt,
       worktreeCwd: normalizerCwd,
-      role: "review"
+      role: "review",
+      model: NORMALIZER_MODEL_BY_AGENT[input.normalizerAgent]
     }).command;
 
     const artifacts: ArtifactRecord[] = [];

@@ -32,6 +32,7 @@ export const defaultProfile = {
     qa: {
       type: "review",
       agent: "kiro",
+      model: "claude-sonnet-4.5",
       normalizer: "codex",
       trust_all_tools: true,
       timeout: "30m"

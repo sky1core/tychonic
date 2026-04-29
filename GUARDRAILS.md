@@ -28,20 +28,40 @@ If a field is just a command, call it `command` and put it in the state config
 block. If a field is runtime data, give it its concrete name at the activity
 input boundary.
 
-## Options Are Not Progress
+## Orchestration Knobs Are Not Progress
 
-Do not present option-heavy config as the default path. Optional fields are for
-specific needs, not for making examples look complete.
+Do not present option-heavy orchestration config as the default path. Optional
+fields are not all the same category: `model` and supported
+`reasoning_effort` are recommended agent settings for repeatability and quality
+control, while `resume`, timeout, sandbox, approval, permission, trust, and
+policy knobs change orchestration or execution boundaries.
 
 The failure pattern is showing `resume`, timeout, sandbox, approval,
 permission, trust, and policy knobs together in a basic example. That teaches
 operators and agents to cargo-cult every available field, which makes workflow
 inputs harder to read and hides the real contract.
 
-Start docs and examples from the smallest working profile: `type` plus exactly
-one execution selector for executable states, or the deterministic `command`
-for command states. Add optional fields only next to the concrete behavior they
-control and explain why that workflow needs them.
+For agent states, pin `model` when repeatability matters and set
+`reasoning_effort` for Claude/Codex states whose quality depends on reasoning
+depth. That is a recommended agent setting, not option cargo-culting. Keep
+orchestration knobs next to the concrete behavior they control and explain why
+that workflow needs them.
+
+## QA Is Not A Hidden Repair Step
+
+Do not weaken QA/review into a read-only eyeballing step. QA may inspect files,
+read diffs, run tests, and reproduce failures. A review that cannot execute
+checks is not useful enough for this product.
+
+The boundary is modification, not observation. QA/review states must not edit
+source code or silently repair findings before reporting them. If a workflow
+wants automated repair after QA, it must call an explicit work state with its
+own NAME and config.
+
+Do not use a single broad tool-trust switch as proof that the boundary is safe.
+If a reviewer needs command execution, the implementation must still prevent or
+detect code edits through the production path instead of relying on prompt
+wording.
 
 ## No Performative Guardrails
 

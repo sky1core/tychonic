@@ -135,10 +135,8 @@ describe("activity-centric config schema", () => {
       })
     ).toThrow(/agent is not allowed for type verify/);
 
-    // work activity requires at least one of command/agent. A block with
-    // neither must be rejected; a block with only `agent` (built-in or
-    // operator-supplied) is accepted at the schema layer because the
-    // adapter dispatch path resolves the actual command at run time.
+    // work activity requires at least one execution selector.
+    // A block with neither command nor agent must be rejected.
     expect(() =>
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
@@ -204,8 +202,69 @@ describe("activity-centric config schema", () => {
     });
   });
 
+  it("accepts explicit model and reasoning effort on supported agent states", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        work: {
+          type: "work",
+          agent: "codex",
+          model: "gpt-5.5",
+          reasoning_effort: "xhigh"
+        },
+        review: {
+          type: "review",
+          agent: "kiro",
+          model: "claude-sonnet-4.5",
+          normalizer: "codex"
+        }
+      }
+    });
+    expect(config.states?.work).toMatchObject({
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh"
+    });
+    expect(config.states?.review).toMatchObject({
+      model: "claude-sonnet-4.5"
+    });
+  });
+
+  it("rejects agent settings on command states", () => {
+    for (const field of ["model", "reasoning_effort"]) {
+      expect(() =>
+        TychonicConfigSchema.parse({
+          version: "tychonic.config.v1",
+          states: {
+            work: {
+              type: "work",
+              command: "node worker.js",
+              [field]: "whatever"
+            }
+          }
+        })
+      ).toThrow(new RegExp(`${field} is only valid with agent, not command`));
+    }
+  });
+
+  it("rejects reasoning effort on agents that do not expose a reasoning effort surface", () => {
+    for (const agent of ["gemini", "kiro"]) {
+      expect(() =>
+        TychonicConfigSchema.parse({
+          version: "tychonic.config.v1",
+          states: {
+            work: {
+              type: "work",
+              agent,
+              reasoning_effort: "high"
+            }
+          }
+        })
+      ).toThrow(new RegExp(`agent ${agent} does not support states\\.<name>\\.reasoning_effort`));
+    }
+  });
+
   it("rejects pass-through vendor fields in state config blocks", () => {
-    for (const field of ["model", "reasoning_effort", "thinking_budget", "approval_mode", "effort", "plan_mode_reasoning_effort"]) {
+    for (const field of ["thinking_budget", "approval_mode", "effort", "plan_mode_reasoning_effort"]) {
       expect(() =>
         TychonicConfigSchema.parse({
           version: "tychonic.config.v1",
@@ -238,10 +297,10 @@ describe("activity-centric config schema", () => {
 
 });
 
-// Step 6: schema tighten. The state block's `resume_command` slot is gone;
+// The state block's `resume_command` slot is gone;
 // `agent` must be a built-in adapter; `resume` is a plain numeric workflow
 // budget with no TYPE/NAME/command-path inference.
-describe("Step 6 schema tighten", () => {
+describe("schema tighten", () => {
   it("rejects resume_command anywhere in a state block", () => {
     expect(() =>
       TychonicConfigSchema.parse({
@@ -268,7 +327,7 @@ describe("Step 6 schema tighten", () => {
           }
         }
       })
-    ).toThrow(/'fakebot' is not a built-in adapter; must be one of: claude, codex, gemini, kiro, kiro-acp/);
+    ).toThrow(/'fakebot' is not a built-in adapter; must be one of: claude, codex, gemini, kiro/);
   });
 
   it("rejects an unknown agent name on a review state", () => {
@@ -286,7 +345,7 @@ describe("Step 6 schema tighten", () => {
   });
 
   it("accepts each built-in adapter name", () => {
-    for (const name of ["claude", "codex", "gemini", "kiro", "kiro-acp"]) {
+    for (const name of ["claude", "codex", "gemini", "kiro"]) {
       const config = TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
@@ -397,7 +456,7 @@ describe("Step 6 schema tighten", () => {
 
 });
 
-// Reviewer role coverage. `gemini`, `kiro`, and `kiro-acp` can be primary
+// Reviewer role coverage. `gemini` and `kiro` can be primary
 // prose reviewers only when a structured-output normalizer is declared.
 describe("review-state agent restrictions", () => {
   it("rejects agent: \"gemini\" on a review state without normalizer", () => {
@@ -428,22 +487,8 @@ describe("review-state agent restrictions", () => {
     ).toThrow(/agent kiro requires states\.<name>\.normalizer/);
   });
 
-  it("rejects agent: \"kiro-acp\" on a review state without normalizer", () => {
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        states: {
-          review: {
-            type: "review",
-            agent: "kiro-acp"
-          }
-        }
-      })
-    ).toThrow(/agent kiro-acp requires states\.<name>\.normalizer/);
-  });
-
   it("accepts partial review agents when normalizer is claude or codex", () => {
-    for (const agent of ["gemini", "kiro", "kiro-acp"]) {
+    for (const agent of ["gemini", "kiro"]) {
       for (const normalizer of ["claude", "codex"]) {
         const config = TychonicConfigSchema.parse({
           version: "tychonic.config.v1",
@@ -473,7 +518,7 @@ describe("review-state agent restrictions", () => {
           }
         }
       })
-    ).toThrow(/normalizer is only valid when the review agent is gemini, kiro, or kiro-acp/);
+    ).toThrow(/normalizer is only valid when the review agent is gemini or kiro/);
   });
 
   it("rejects normalizer on command review states", () => {
@@ -518,7 +563,7 @@ describe("review-state agent restrictions", () => {
   });
 
   it("still accepts partial adapters on work states", () => {
-    for (const name of ["gemini", "kiro", "kiro-acp"]) {
+    for (const name of ["gemini", "kiro"]) {
       const config = TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {

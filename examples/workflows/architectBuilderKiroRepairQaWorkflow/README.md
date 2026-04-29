@@ -11,6 +11,11 @@ structured reviewer runs. The goal is to reduce final review loop pressure by
 letting Kiro catch and fix clear issues first, while preserving a final
 structured QA gate with Claude or Codex.
 
+The default profile demonstrates per-state model selection: Kiro pre-review
+uses `claude-sonnet-4.5`, Kiro repair uses `claude-sonnet-4.5`, and final Claude
+QA uses `opus` with `reasoning_effort: max`. Adjust those values
+to models available in your installed CLIs.
+
 ## States
 
 | State | TYPE | Role |
@@ -21,8 +26,10 @@ structured QA gate with Claude or Codex.
 | `kiro_fix` | `work` | Kiro applies targeted repairs from the pre-review. |
 | `final_qa` | `review` | Return the structured pass/fail review verdict. |
 
-`kiro_pre_review` and `kiro_fix` use `trust_all_tools: true` because the plain
-Kiro CLI needs tool trust for non-interactive file inspection and edits.
+`kiro_pre_review` and `kiro_fix` use `trust_all_tools: true` because Kiro ACP
+needs tool trust for non-interactive file inspection and edits. These are
+`work` states, not the final structured QA gate; the actual repair step is
+explicitly named as `kiro_fix`.
 
 ## Input
 

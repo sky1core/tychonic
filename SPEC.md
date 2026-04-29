@@ -423,11 +423,12 @@ reads exactly that.
 
 Two consequences follow and must both hold:
 
-- Absent fields stay absent. Values whose authoritative source lives outside
-  Tychonic (for example `model`, `reasoning_effort`, `thinking_budget`) are
-  not config fields and are never filled by Tychonic. Operators put those
-  vendor-owned flags directly in an escape-hatch `command` or in the
-  external CLI's own configuration.
+- Absent fields stay absent. Agent settings whose valid values are owned by
+  the external CLI, such as `model` and `reasoning_effort`, appear only as
+  state config fields documented below. They are recommended when
+  repeatability or reasoning depth matters, but Tychonic never fills them with
+  defaults and never validates the vendor's model catalog. If omitted, the
+  generated command omits the corresponding CLI flag or config override.
 - Product defaults are expressed in workflow code, not configuration.
   Invariants that must hold regardless of any bundle's `defaultProfile`
   (for example, per-TYPE command timeout defaults when a block omits
@@ -471,6 +472,8 @@ states:
   work:
     type: work
     agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
     resume: 3
     sandbox: workspace-write
     approval: never
@@ -478,7 +481,14 @@ states:
   primary_review:
     type: review
     agent: claude
+    model: opus
+    reasoning_effort: max
     permission_mode: plan
+  kiro_review:
+    type: review
+    agent: kiro
+    model: claude-sonnet-4.5
+    normalizer: codex
   verify:
     type: verify
     command: |
@@ -496,29 +506,45 @@ Rules:
   New types are added by releasing new product code, not by user
   declaration.
 - The settings allowed in a block are the union of settings the type
-  contract requires plus the orchestration values Tychonic owns
-  (`resume`, `sandbox`, `approval`, `permission_mode`, `trust_all_tools`,
-  `timeout`). Unknown fields are a validation error.
-- Pass-through values (`model`, `reasoning_effort`, `thinking_budget`,
-  `approval_mode`, `effort`, `plan_mode_reasoning_effort`, and similar
-  vendor-owned fields) are not part of this schema. A bundle's
-  `defaultProfile` must not declare them: the external agent CLI already
-  owns its own configuration for these values. Allowed fields inside a
-  state block are exactly `type`, `agent`, `normalizer`, `resume`, `command`,
-  `timeout`, `sandbox`, `approval`, `permission_mode`, and
-  `trust_all_tools`. Unknown fields are a validation error.
+  contract requires, recommended agent settings (`model`,
+  `reasoning_effort` where supported), and orchestration values Tychonic owns
+  (`resume`, `sandbox`, `approval`,
+  `permission_mode`, `trust_all_tools`, `timeout`). Unknown fields are a
+  validation error.
+- `model` is valid only with `agent`. It selects the model for the primary
+  built-in adapter when that CLI supports a model flag. Current built-in
+  adapters `claude`, `codex`, `gemini`, and `kiro` all support it. Workflow
+  authors should pin `model` for states whose quality, latency, or cost
+  profile matters. Omitting `model` explicitly delegates model choice to the
+  selected external CLI's default or auto-selection behavior. Tychonic passes
+  the string through and does not maintain the vendor model list.
+- `reasoning_effort` is valid only with `agent` when that CLI exposes a
+  reasoning/effort surface. Current built-in support is `claude` and `codex`.
+  Workflow authors should set it on Claude/Codex states whose quality depends
+  on reasoning depth. Omitting it delegates to the external CLI's
+  configured/default effort. Tychonic passes the string through and does not
+  invent a default. `gemini` and `kiro` currently expose model selection but
+  no stable reasoning/effort/thinking CLI option, so the schema rejects
+  `reasoning_effort` for those agents.
+- Allowed fields inside a state block are exactly `type`, `agent`,
+  `normalizer`, `resume`, `command`, `model`, `reasoning_effort`, `timeout`,
+  `sandbox`, `approval`, `permission_mode`, and `trust_all_tools`. Unknown
+  fields are a validation error.
 - `agent` is the primary input: it selects one of the built-in
-  adapters (`claude`, `codex`, `gemini`, `kiro`, `kiro-acp`). The host
+  adapters (`claude`, `codex`, `gemini`, `kiro`). The host
   writes the CLI's `argv`, role-aware permission flags, and resume invocation
   where the selected adapter supports same-session resume.
 - `normalizer` is review-only. It is required when `type: review` selects
-  `agent: gemini`, `agent: kiro`, or `agent: kiro-acp`, because those agents
+  `agent: gemini` or `agent: kiro`, because those agents
   produce prose review output rather than the structured semantic payload the
   host can validate. The normalizer must be `claude` or `codex`, is prompted
   with only the primary review output, and emits the semantic review payload
-  that the host normalizes into `tychonic.review.v1`. Direct structured reviewers
-  (`claude`, `codex`) and escape-hatch `command` reviewers must not set
-  `normalizer`.
+  that the host normalizes into `tychonic.review.v1`. Normalizer model flag
+  selection is host-owned: `normalizer: claude` passes `model: haiku`, and
+  `normalizer: codex` passes `model: gpt-5.3-codex-spark`. Workflow config
+  does not expose separate normalizer model or reasoning fields. Direct
+  structured reviewers (`claude`, `codex`) and escape-hatch `command`
+  reviewers must not set `normalizer`.
 - `resume` is a non-negative integer (default `0`). It is a simple
   continuity budget a workflow may read when it explicitly chooses to
   continue an existing external agent session. `resume: 0` disables
@@ -576,7 +602,7 @@ Rules:
 ## Adapter Model
 
 Tychonic ships **built-in adapters for the supported agent CLI paths**:
-`claude`, `codex`, `gemini`, `kiro`, `kiro-acp`. The host owns command
+`claude`, `codex`, `gemini`, `kiro`. The host owns command
 synthesis, session-id handling, agent-specific flags (permission, sandbox,
 approval, trust), and resume semantics where the selected adapter supports
 same-session resume. Workflow authors and operators select an adapter by
@@ -625,18 +651,15 @@ The built-in adapters do not have identical capabilities:
 
 - **claude**, **codex** — full coverage: new run, resume by session id,
   role-aware permission flags, and worker / reviewer roles.
-- **kiro-acp** — preferred Kiro worker path when the installed
-  Kiro CLI supports ACP. Fresh runs call ACP `session/new`, store the returned
-  `sessionId` as `AgentSessionRecord.id`, send the prompt through
-  `session/prompt`, and resume through `session/load`. The adapter acts as the
-  ACP client for the one workflow turn and exposes file / terminal client
-  capabilities inside the workflow worktree. Review states may use it only
-  with `normalizer: claude` or `normalizer: codex`.
-- **kiro** — legacy worker fresh-run coverage and built-in resume by
-  `--resume-id`. Fresh-run session capture must be process-bound: the adapter
-  runs the prompt and `/chat save` in the same `kiro-cli chat` process, parses
-  the exported JSON's `conversation_id`, and stores that value as
-  `AgentSessionRecord.id`. Tychonic must not infer identity from
+- **kiro** — Kiro path through `kiro-cli acp`. Fresh runs call ACP
+  `session/new`, store the returned `sessionId` as `AgentSessionRecord.id`,
+  send the prompt through `session/prompt`, and resume through `session/load`.
+  The adapter acts as the ACP client for the one workflow turn. Work states may
+  use file and terminal client capabilities inside the workflow worktree.
+  Review states may inspect files and run checks, but must not edit code: the
+  review client does not advertise file-write capability, rejects direct
+  `fs/write_text_file` requests, and fails the review if tracked files change
+  during the turn. Tychonic must not infer identity from
   `kiro-cli chat --list-sessions` before/after diffs. Review states may use it
   only with `normalizer: claude` or `normalizer: codex`.
 - **gemini** — worker and prose-review fresh-run coverage only. Review states
@@ -645,8 +668,8 @@ The built-in adapters do not have identical capabilities:
   `gemini --resume` takes a project-relative index rather than a stable
   session id.
 
-The host schema rejects `agent: "gemini"`, `agent: "kiro"`, or
-`agent: "kiro-acp"` on a `type: "review"` state unless `normalizer` is
+The host schema rejects `agent: "gemini"` or `agent: "kiro"` on a
+`type: "review"` state unless `normalizer` is
 `claude` or `codex`. A custom `command` wrapper may still implement its own
 review or continuation contract, but Tychonic does not synthesize adapter
 normalization or resume behavior for the escape-hatch command path.
@@ -657,12 +680,13 @@ Tychonic is an orchestrator for external agent CLIs. It must not bake in
 defaults for settings whose authoritative source is the external CLI or its
 provider.
 
-**Rule:** if a setting is owned by the external agent CLI (for example
-`model`, `reasoning_effort`, or `thinking_budget` — values whose valid set is
-owned by the vendor and already resolvable from the CLI's own
-configuration), Tychonic must not carry a system default or schema field for
-that setting. Operators express it directly in `command`, or leave it to
-the external CLI's own configuration.
+**Rule:** if a supported built-in agent CLI exposes a model or reasoning
+effort setting, Tychonic may expose the corresponding state config field as
+an optional pass-through. Tychonic must not carry a system default for that
+setting, must not maintain the vendor's valid-value catalog, and must omit
+the downstream flag/config override when the field is absent. Escape-hatch
+`command` states own their complete command string and do not use these
+adapter fields.
 
 - **Orchestration values** — settings Tychonic owns because they encode
   Tychonic's own isolation and safety contract. Role-aware defaults are
@@ -671,17 +695,16 @@ the external CLI's own configuration.
   `trust_all_tools`. The command shape itself (argv, stdin contract,
   resume flag where supported) is owned by the built-in adapter and by the
   operator for the escape-hatch `command` path.
-- **Pass-through values** — everything else the external CLI already knows
-  how to handle on its own. Model selection, reasoning effort, thinking
-  budget, provider endpoints, and any similar field whose valid values
-  follow the upstream vendor's release cadence. Tychonic must not hardcode
-  defaults for these and must reject them as config fields.
+- **Adapter pass-through values** — optional settings the built-in adapter
+  maps directly to a verified CLI surface. Current fields are `model` and
+  `reasoning_effort`. Unsupported vendor knobs such as `thinking_budget`,
+  `approval_mode`, `effort`, and provider endpoints are not schema fields; use
+  an escape-hatch `command` if a workflow must own such a command line before
+  Tychonic has an explicit adapter contract.
 
-Consequence: a new model name, a renamed effort level, or a deprecated
-provider alias on the external side never requires a Tychonic code change.
-Users control those values through their own CLI configuration, the
-adapter's role-aware orchestration flags, or — for non-built-in CLIs —
-through an explicit `command` string.
+Consequence: a new model name or renamed effort level on the external side
+does not require a Tychonic schema change. The field remains a string and the
+selected external CLI is the validator for its own value set.
 
 Reviewer-capable adapters and reviewer-capable escape-hatch commands must
 produce the shared `tychonic.review.v1` object documented under

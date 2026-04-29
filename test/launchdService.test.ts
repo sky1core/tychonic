@@ -67,8 +67,8 @@ describe("launchd service installer", () => {
       expect(webPlist).not.toContain("<string>--cwd</string>");
       expect(webPlist).not.toContain("<string>--frontend-port</string>");
       expect(webPlist).not.toContain("<string>--ui-port</string>");
-      // After Step 2 the host installer no longer seeds any workflow bundle.
-      // The runtime workflow modules dir must contain zero bundles until the
+      // The host installer does not seed workflow bundles. The runtime
+      // workflow modules dir must contain zero bundles until the
       // operator runs `tychonic workflows install` explicitly.
       const modulesDir = join(stateHome, "workflows", "modules");
       let installedBundles: string[] = [];

@@ -62,13 +62,50 @@ Use one execution selector per executable state:
 
 Do not set both. Do not create any second execution channel.
 
-Built-in adapters are `claude`, `codex`, `gemini`, `kiro`, and `kiro-acp`.
-`claude` and `codex` can serve review states directly. `gemini`, `kiro`, and
-`kiro-acp` can serve review states only with `normalizer: claude` or
+Built-in adapters are `claude`, `codex`, `gemini`, and `kiro`.
+`claude` and `codex` can serve review states directly. `gemini` and
+`kiro` can serve review states only with `normalizer: claude` or
 `normalizer: codex`; the normalizer structures the primary review output and
-must not invent findings. Vendor-owned settings such as model name and
-reasoning effort stay in the external CLI configuration or an explicit
-`command`.
+must not invent findings.
+
+`model` applies to the primary `agent` in the same state block. For repeatable
+workflows, pin `model` on states whose quality, latency, or cost profile
+matters. `reasoning_effort` is supported by `claude` and `codex`; set it on
+Claude/Codex states whose quality depends on reasoning depth. Omitted fields
+become omitted CLI flags/config overrides and delegate to the selected external
+CLI's default or auto-selection behavior.
+
+For `agent: claude`, use Claude CLI model values. Versionless aliases such as
+`opus` let the installed Claude CLI resolve the current model.
+Exact versioned names are valid only after verifying that this installed Claude
+CLI accepts that exact string; `claude-opus-4-7` is an example after a
+successful smoke in this environment. For example, a Claude state may set
+`model: opus` for a versionless alias or `model: claude-opus-4-7` for an
+exact versioned name. Do not reuse Kiro model ids or stale versioned strings
+for Claude states. Before pinning or documenting a Claude exact versioned
+name, verify it with a small `claude -p --model <name>` smoke; Tychonic only
+passes the string through.
+
+High-model examples should use `model: gpt-5.5` for `codex`,
+`model: gemini-3.1-pro-preview` for `gemini`, and
+`model: claude-sonnet-4.5` for `kiro` when those exact strings
+are available in the installed CLIs. High reasoning examples should use
+`reasoning_effort: max` for `claude` and `reasoning_effort: xhigh` for
+`codex`; `gemini` and `kiro` do not expose a supported reasoning
+effort setting through Tychonic.
+
+Kiro states may set `model`, but not
+`reasoning_effort`; the installed Kiro CLI ACP surface exposes no stable
+reasoning/effort/thinking option. Do not add normalizer model fields;
+Tychonic supplies the lightweight normalizer model flag internally (`claude`
+gets `haiku`; `codex` gets `gpt-5.3-codex-spark`).
+
+QA/review is allowed to run checks; it is not limited to visual inspection.
+The boundary is source modification. Kiro review states may use
+`trust_all_tools: true` when they need non-interactive inspection or test
+execution, but the Kiro review adapter rejects direct file writes and fails the
+review if tracked files change during the turn. Automated repair belongs in an
+explicit work state, not inside review.
 
 `resume` is a numeric budget a workflow may read when it explicitly chooses to
 continue a recorded session. Omit it unless the workflow needs same-session

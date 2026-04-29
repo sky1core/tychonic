@@ -20,6 +20,17 @@ describe("codexAdapter", () => {
     );
   });
 
+  it("runNew passes explicit model and reasoning effort settings", () => {
+    const { command } = codexAdapter.runNew({
+      ...BASE,
+      model: "gpt-5.5",
+      reasoningEffort: "xhigh"
+    });
+    expect(command).toBe(
+      "codex -a never --model 'gpt-5.5' -c 'model_reasoning_effort=\"xhigh\"' exec --skip-git-repo-check --json --sandbox workspace-write -"
+    );
+  });
+
   it("runNew(review) flips sandbox to read-only", () => {
     const { command } = codexAdapter.runNew({ ...BASE, role: "review" });
     expect(command).toBe(
@@ -44,7 +55,19 @@ describe("codexAdapter", () => {
       sessionId: "11111111-2222-3333-4444-555555555555"
     });
     expect(command).toBe(
-      "codex -a never exec resume --skip-git-repo-check --json 11111111-2222-3333-4444-555555555555 -"
+      "codex -a never exec resume --skip-git-repo-check --json '11111111-2222-3333-4444-555555555555' -"
+    );
+  });
+
+  it("runResume keeps explicit model and reasoning effort settings", () => {
+    const { command } = codexAdapter.runResume({
+      ...BASE,
+      model: "gpt-5.5",
+      reasoningEffort: "xhigh",
+      sessionId: "11111111-2222-3333-4444-555555555555"
+    });
+    expect(command).toBe(
+      "codex -a never --model 'gpt-5.5' -c 'model_reasoning_effort=\"xhigh\"' exec resume --skip-git-repo-check --json '11111111-2222-3333-4444-555555555555' -"
     );
   });
 
@@ -55,7 +78,15 @@ describe("codexAdapter", () => {
       sessionId: "abc"
     });
     expect(command).not.toContain("--sandbox");
-    expect(command).toContain(" resume --skip-git-repo-check --json abc -");
+    expect(command).toContain(" resume --skip-git-repo-check --json 'abc' -");
+  });
+
+  it("quotes resume session ids because they come from external CLI output", () => {
+    const { command } = codexAdapter.runResume({
+      ...BASE,
+      sessionId: "abc'; echo unsafe #"
+    });
+    expect(command).toContain("--json 'abc'\\''; echo unsafe #' -");
   });
 
   it("parseResult extracts thread_id from current thread.started event", () => {

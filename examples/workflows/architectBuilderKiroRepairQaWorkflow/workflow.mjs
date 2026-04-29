@@ -32,12 +32,14 @@ export const defaultProfile = {
     kiro_pre_review: {
       type: "work",
       agent: "kiro",
+      model: "claude-sonnet-4.5",
       trust_all_tools: true,
       timeout: "30m"
     },
     kiro_fix: {
       type: "work",
       agent: "kiro",
+      model: "claude-sonnet-4.5",
       trust_all_tools: true,
       sandbox: "workspace-write",
       approval: "never",
@@ -46,6 +48,8 @@ export const defaultProfile = {
     final_qa: {
       type: "review",
       agent: "claude",
+      model: "opus",
+      reasoning_effort: "max",
       permission_mode: "plan",
       timeout: "30m"
     }

@@ -20,6 +20,17 @@ describe("claudeAdapter", () => {
     );
   });
 
+  it("runNew passes explicit model and effort settings", () => {
+    const { command } = claudeAdapter.runNew({
+      ...BASE,
+      model: "opus",
+      reasoningEffort: "max"
+    });
+    expect(command).toBe(
+      "claude -p --model 'opus' --effort 'max' --output-format stream-json --verbose --permission-mode acceptEdits"
+    );
+  });
+
   it("runNew(review) flips permission mode to plan", () => {
     const { command } = claudeAdapter.runNew({ ...BASE, role: "review" });
     expect(command).toContain("--permission-mode plan");
@@ -77,7 +88,19 @@ describe("claudeAdapter", () => {
       sessionId: "11111111-2222-3333-4444-555555555555"
     });
     expect(command).toBe(
-      "claude -p --output-format stream-json --verbose --permission-mode acceptEdits --resume 11111111-2222-3333-4444-555555555555"
+      "claude -p --output-format stream-json --verbose --permission-mode acceptEdits --resume '11111111-2222-3333-4444-555555555555'"
+    );
+  });
+
+  it("runResume keeps explicit model and effort settings", () => {
+    const { command } = claudeAdapter.runResume({
+      ...BASE,
+      model: "opus",
+      reasoningEffort: "max",
+      sessionId: "11111111-2222-3333-4444-555555555555"
+    });
+    expect(command).toBe(
+      "claude -p --model 'opus' --effort 'max' --output-format stream-json --verbose --permission-mode acceptEdits --resume '11111111-2222-3333-4444-555555555555'"
     );
   });
 
@@ -90,7 +113,15 @@ describe("claudeAdapter", () => {
     expect(command).toContain("--permission-mode plan");
     expect(command).toContain("--tools Read,Grep,Glob");
     expect(command).toContain("--json-schema");
-    expect(command).toContain("--resume abc");
+    expect(command).toContain("--resume 'abc'");
+  });
+
+  it("quotes resume session ids because they come from external CLI output", () => {
+    const { command } = claudeAdapter.runResume({
+      ...BASE,
+      sessionId: "abc'; echo unsafe #"
+    });
+    expect(command).toContain("--resume 'abc'\\''; echo unsafe #'");
   });
 
   it("parseResult extracts session_id from the system.init event", () => {

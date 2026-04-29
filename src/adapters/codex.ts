@@ -6,6 +6,10 @@
  * - `codex [-a <approval>] exec --skip-git-repo-check --json --sandbox <s> -`
  *   Prompt is read from stdin when the trailing argument is `-` (or when
  *   stdin is piped and no prompt arg is given). `--json` emits JSONL.
+ * - `--model <model>` is included only when the state config declares
+ *   `model`.
+ * - `-c model_reasoning_effort="<level>"` is included only when the state
+ *   config declares `reasoning_effort`.
  * - `-a/--ask-for-approval <APPROVAL_POLICY>` is a TOP-LEVEL flag, NOT a
  *   subflag of `exec`. Choices: `untrusted`, `on-failure`, `on-request`,
  *   `never`. Worker default → `never`; reviewer default → `never` as
@@ -32,6 +36,7 @@ import type {
   AdapterSandbox,
   AgentAdapter
 } from "./types.js";
+import { shellQuote } from "./shell.js";
 
 const BIN = "codex";
 
@@ -45,7 +50,14 @@ function defaultApproval(): AdapterApproval {
 
 function buildTopLevelArgs(input: AdapterRunInput): string[] {
   const approval = input.approval ?? defaultApproval();
-  return [BIN, "-a", approval];
+  const args = [BIN, "-a", approval];
+  if (input.model !== undefined) {
+    args.push("--model", shellQuote(input.model));
+  }
+  if (input.reasoningEffort !== undefined) {
+    args.push("-c", shellQuote(`model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`));
+  }
+  return args;
 }
 
 function buildExecArgs(input: AdapterRunInput): string[] {
@@ -74,7 +86,7 @@ export const codexAdapter: AgentAdapter = {
       "resume",
       "--skip-git-repo-check",
       "--json",
-      input.sessionId,
+      shellQuote(input.sessionId),
       "-"
     ];
     return { command: joinArgs(args) };
