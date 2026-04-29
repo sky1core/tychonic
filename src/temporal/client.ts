@@ -18,8 +18,17 @@ import {
   type StateRecordPatch
 } from "./types.js";
 import type { WorkflowStateRecord, WorkflowStateStatus } from "../domain/types.js";
+import type { WorkflowRunStatus } from "../domain/types.js";
 
 const RUNNING_WORKFLOW_QUERY_TIMEOUT_MS = 2_000;
+const WAIT_STOPPED_POLL_INTERVAL_MS = 2_000;
+const STOPPED_RUN_STATUSES: ReadonlySet<WorkflowRunStatus> = new Set([
+  "waiting_user",
+  "blocked",
+  "failed",
+  "succeeded",
+  "cancelled"
+]);
 
 export interface StartNamedTemporalWorkflowOptions extends TemporalConfig {
   workflowType: string;
@@ -74,6 +83,24 @@ export interface DescribeTychonicTemporalWorkflowOptions extends TemporalConfig 
   workflowId: string;
   runId?: string;
   includeResult?: boolean;
+}
+
+export interface WaitForTychonicWorkflowStoppedOptions extends TemporalConfig {
+  workflowId: string;
+  runId?: string;
+  pollIntervalMs?: number;
+}
+
+export interface TychonicWorkflowStoppedResult {
+  event: "stopped";
+  reason: "pending_interaction" | "run_status" | "workflow_closed";
+  workflowId: string;
+  runId: string;
+  status?: WorkflowRunStatus;
+  pendingState?: string;
+  workflow: TychonicTemporalWorkflowStatus;
+  result?: unknown;
+  resultError?: string;
 }
 
 export interface ListTychonicTemporalWorkflowsOptions extends TemporalConfig {
@@ -201,6 +228,69 @@ export async function describeTychonicTemporalWorkflow(
       ...status,
       resultError: error instanceof Error ? error.message : String(error)
     };
+  }
+}
+
+export async function waitForTychonicWorkflowStopped(
+  options: WaitForTychonicWorkflowStoppedOptions
+): Promise<TychonicWorkflowStoppedResult> {
+  const pollIntervalMs = Math.max(250, options.pollIntervalMs ?? WAIT_STOPPED_POLL_INTERVAL_MS);
+  for (;;) {
+    const current = await describeTychonicTemporalWorkflow({
+      workflowId: options.workflowId,
+      ...(options.runId ? { runId: options.runId } : {}),
+      ...normalizeTemporalConfig(options)
+    });
+    const pendingInteraction =
+      current.status === "RUNNING"
+        ? await queryInteractionPendingState({
+            workflowId: options.workflowId,
+            ...(options.runId ? { runId: options.runId } : {}),
+            ...normalizeTemporalConfig(options)
+          })
+        : {};
+    if (pendingInteraction.pendingState) {
+      return {
+        event: "stopped",
+        reason: "pending_interaction",
+        workflowId: current.workflowId,
+        runId: current.runId,
+        pendingState: pendingInteraction.pendingState,
+        workflow: current
+      };
+    }
+    const workflow = await describeTychonicTemporalWorkflow({
+      workflowId: options.workflowId,
+      ...(options.runId ? { runId: options.runId } : {}),
+      includeResult: true,
+      ...normalizeTemporalConfig(options)
+    });
+    const status = readTychonicRunStatus(workflow.result);
+    if (status && STOPPED_RUN_STATUSES.has(status)) {
+      return {
+        event: "stopped",
+        reason: "run_status",
+        workflowId: workflow.workflowId,
+        runId: workflow.runId,
+        status,
+        workflow,
+        ...(workflow.result !== undefined ? { result: workflow.result } : {}),
+        ...(workflow.resultError ? { resultError: workflow.resultError } : {})
+      };
+    }
+    if (workflow.status !== "RUNNING") {
+      return {
+        event: "stopped",
+        reason: "workflow_closed",
+        workflowId: workflow.workflowId,
+        runId: workflow.runId,
+        ...(status ? { status } : {}),
+        workflow,
+        ...(workflow.result !== undefined ? { result: workflow.result } : {}),
+        ...(workflow.resultError ? { resultError: workflow.resultError } : {})
+      };
+    }
+    await sleep(pollIntervalMs);
   }
 }
 
@@ -516,6 +606,30 @@ function shouldQueryRunningWorkflowState(status: TychonicTemporalWorkflowStatus)
     return true;
   }
   return (status.historyLength ?? 0) > 2;
+}
+
+function readTychonicRunStatus(result: unknown): WorkflowRunStatus | undefined {
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const status = (result as { status?: unknown }).status;
+  return typeof status === "string" && isWorkflowRunStatus(status) ? status : undefined;
+}
+
+function isWorkflowRunStatus(status: string): status is WorkflowRunStatus {
+  return (
+    status === "created" ||
+    status === "running" ||
+    status === "waiting_user" ||
+    status === "blocked" ||
+    status === "failed" ||
+    status === "succeeded" ||
+    status === "cancelled"
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function summarizePendingWorkflowTask(

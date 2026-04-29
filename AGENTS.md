@@ -24,9 +24,9 @@ Do not add repo-local state stores for product state.
 
 ## Active Product Path
 
-The active product path is TypeScript: CLI, local Web API, Temporal workflows,
-configuration schema, agent adapters, and tests should stay in one TypeScript
-package and type system.
+The active product path is TypeScript: CLI, Temporal workflows, configuration
+schema, agent adapters, and tests should stay in one TypeScript package and
+type system.
 
 ## Workflow Principle
 

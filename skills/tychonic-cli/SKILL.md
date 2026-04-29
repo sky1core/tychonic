@@ -48,7 +48,7 @@ hide the failure.
 
 ## Running Workflows
 
-Install and run a bundle:
+Ordinary agent path:
 
 ```sh
 (cd ./examples/workflows/<name> && npm install)
@@ -57,7 +57,50 @@ tychonic workflows install ./examples/workflows/<name>
 tychonic run <workflow-name> --input-file ./input.json --wait
 ```
 
-Inspect a run:
+Run commands require a Tychonic runtime started in another terminal:
+
+```sh
+tychonic runtime up --project-dir "$PWD"
+```
+
+To start work and continue with other tasks, omit the wait flag:
+
+```sh
+tychonic run <workflow-name> --input-file ./input.json
+```
+
+This returns `workflowId` and `runId`; pass `workflowId` to `tychonic wait`.
+Treat `workflowId` as the ordinary handle for `wait`, `status`, `inbox`,
+`artifacts`, `logs`, and `sessions`. Use `runId` only when the command asks for
+one or you must disambiguate a specific Temporal execution.
+
+To wait for an already-started workflow:
+
+```sh
+tychonic wait <workflow-id>
+```
+
+Read `message` first; it is the plain-language result for the caller and may
+include the next useful Tychonic commands.
+
+```json
+{
+  "ok": true,
+  "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123 --include-result`, `tychonic inbox --workflow-id wf_123`, `tychonic artifacts --workflow-id wf_123`, `tychonic logs --workflow-id wf_123`. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.",
+  "state": "qa",
+  "workflowId": "wf_123"
+}
+```
+
+If the workflow is waiting, follow the commands in `message`. If the message
+says the workflow needs attention, inspect the evidence commands it names. If
+the message says the workflow finished, use the result command it names before
+reporting.
+
+State names are workflow-owned. If a message names a state, use the bundle
+README to understand that state before sending an interaction command.
+
+Inspect a run when more evidence is needed:
 
 ```sh
 tychonic status --workflow-id <id> --include-result
@@ -68,9 +111,12 @@ tychonic logs --workflow-id <id>
 tychonic sessions --workflow-id <id>
 ```
 
-`tychonic run` prints a JSON object. With `--wait`, the Tychonic product
-outcome is `result.status`; Temporal completion alone does not mean the
-workflow achieved its goal.
+Without `--include-result`, `status` reports Temporal execution metadata. With
+`--include-result`, it also includes the workflow's Tychonic run result when
+available.
+
+`tychonic run` prints a JSON object. Do not require the operator to inspect
+Temporal UI/API for ordinary monitoring.
 
 Each workflow owns its own input shape, policy keys, artifacts, inbox items,
 signals, and recovery flow. Read the bundle README before configuring or
@@ -243,6 +289,9 @@ Built-in review adapters ask the model for the semantic payload:
 }
 ```
 
+`findings` means actionable problems only. Do not put evidence, confirmations,
+or passing notes in `findings`; a passing review uses `findings: []`.
+
 The host normalizes built-in reviewer output into `tychonic.review.v1`.
 Escape-hatch `command` reviewers bypass that normalization, so their stdout
 must emit the full documented wire object.
@@ -263,6 +312,10 @@ paths.
 `waiting_user` means the workflow decided it cannot proceed automatically.
 Recovery is workflow-defined. Many workflows require a fresh run with adjusted
 input or config; interactive workflows may remain parked and accept signals.
+The wait `message` is the authority: if it names a waiting `state`, use the
+workflow's interaction command for that state; if it says the workflow needs
+attention, inspect evidence before deciding whether to start a fresh run or use
+that workflow's documented recovery path.
 
 Use documented workflow signals only:
 
@@ -273,9 +326,9 @@ tychonic signal <workflow-id> <signal-name> --payload-file ./payload.json
 For workflows that register standard interaction signals, use:
 
 ```sh
-tychonic approve <workflow-id>
-tychonic reject <workflow-id> --feedback "..."
-tychonic modify <workflow-id> --note "..."
+tychonic approve <workflow-id> --state <state>
+tychonic reject <workflow-id> --state <state> --feedback "..."
+tychonic modify <workflow-id> --state <state> --note "..."
 ```
 
 ## Verification

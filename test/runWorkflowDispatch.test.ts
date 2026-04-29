@@ -60,6 +60,7 @@ describe("run workflow dispatch", () => {
     expect(failure.stderr).toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
     expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build/i);
   }, 20_000);
+
 });
 
 async function createRunDispatchFixture(): Promise<{

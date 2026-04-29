@@ -55,6 +55,15 @@ const NORMALIZER_MODEL_BY_AGENT: Record<Extract<BuiltInAgentName, "claude" | "co
   codex: "gpt-5.3-codex-spark"
 };
 
+const DIRECT_BUILT_IN_REVIEW_CONTRACT = [
+  "",
+  "Tychonic structured review output contract:",
+  "- Return the semantic review payload only: status, summary, findings.",
+  "- findings are actionable problems only, not evidence, confirmations, or passing notes.",
+  "- Use status pass only when findings is exactly [].",
+  "- Use status fail when any actionable problem exists, and list those problems in findings."
+].join("\n");
+
 /**
  * Single review body. Produces exactly one `WorkflowStateRecord`
  * and one `ActivityAttemptRecord` (SPEC §Activity Result And Evidence
@@ -70,7 +79,7 @@ export async function runReviewActivityBody(
   const { input, resources, reviewOptions, timeoutMs, stateReason } = options;
   const { store, env, now, nextId, heartbeat } = resources;
   const run = input.run;
-  const prompt = input.prompt as string;
+  const prompt = reviewPromptForExecution(input.prompt as string, reviewOptions);
   const executionCwd = input.worktreePath ?? input.cwd;
   const command = reviewOptions.command;
 
@@ -293,6 +302,13 @@ export async function runReviewActivityBody(
     delta: { states: [state], activityAttempts: [attempt] },
     reviewOutcome: outcome
   };
+}
+
+function reviewPromptForExecution(prompt: string, reviewOptions: ResolvedReviewOptions): string {
+  if (reviewOptions.adapterDispatch === undefined || reviewOptions.normalizerAgent !== undefined) {
+    return prompt;
+  }
+  return `${prompt.trimEnd()}\n${DIRECT_BUILT_IN_REVIEW_CONTRACT}\n`;
 }
 
 /**

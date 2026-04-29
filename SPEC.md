@@ -68,7 +68,6 @@ Allowed local files:
 - patches
 - temporary worktrees
 - Temporal managed-local runtime files
-- rebuildable UI projections/caches
 
 These files are evidence or runtime support files. They are not state authority.
 
@@ -448,6 +447,40 @@ the override must include every block the workflow needs.
 
 An override never survives past the workflow start it was passed to. Running
 workflows never re-read any config file.
+
+### CLI wait modes
+
+`tychonic run <workflow-name>` starts the workflow and returns immediately by
+default. This is the fire-and-forget mode for callers that want to launch work
+and continue with other tasks.
+
+`tychonic run <workflow-name> --wait` starts the workflow and then waits until
+the workflow needs caller action or returns a result. `tychonic wait
+<workflow-id>` attaches the same wait behavior to a workflow that was already
+started.
+
+This wait condition is product-level, not a request to inspect Temporal UI. The
+CLI returns when any of these is true:
+
+- the workflow exposes a pending interactive state through the standard
+  `tychonic.interaction.pending_state` query
+- the workflow exposes a run result whose `status` is one of `waiting_user`,
+  `blocked`, `failed`, `succeeded`, or `cancelled`
+- the underlying workflow execution has closed without a usable Tychonic result
+
+The JSON response uses `message` as the primary outcome. The message is a
+plain-language sentence that a human or LLM caller can report or act on
+directly.
+
+Supporting fields are optional and exist for automation or follow-up commands:
+
+- `state` is present when an interactive state is waiting
+- `status` is present when a Tychonic run status exists
+- `result` carries the full run result when one is available
+- `resultError` carries the error when the workflow closed without a usable
+  Tychonic result
+
+The CLI does not expose a second wait mode or a caller-selected wait condition.
 
 ### Immutability
 

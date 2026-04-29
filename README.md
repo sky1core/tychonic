@@ -55,35 +55,82 @@ tychonic temporal doctor
 
 ## Quick Start
 
-Install an example workflow bundle:
+Install the smallest example workflow bundle first. It runs only deterministic
+shell checks, so it proves the runtime path before any agent CLI is involved.
+If you installed from npm, set `EXAMPLES_DIR="$(npm root -g)/tychonic/examples/workflows"`.
+From a source checkout, use `EXAMPLES_DIR="./examples/workflows"`.
 
 ```sh
-(cd examples/workflows/simpleWorkflow && npm install)
-tychonic workflows install ./examples/workflows/simpleWorkflow
+# Source checkout:
+EXAMPLES_DIR="./examples/workflows"
+# npm global install:
+# EXAMPLES_DIR="$(npm root -g)/tychonic/examples/workflows"
+(cd "$EXAMPLES_DIR/verifyOnlyWorkflow" && npm install)
+tychonic workflows install "$EXAMPLES_DIR/verifyOnlyWorkflow"
+tychonic workflows list
 ```
 
 Start the local runtime in one terminal. This starts Temporal if needed and
 runs the worker.
 
 ```sh
-tychonic runtime up --project-dir "$PWD"
+tychonic runtime up
 ```
 
 Start a run from another terminal:
 
 ```sh
-cat > ./simple-workflow-input.json <<'JSON'
+cat > ./verify-input.json <<'JSON'
 {
-  "cwd": "/absolute/path/to/a/git/repo",
-  "goal": "Implement the requested change and leave evidence in artifacts."
+  "cwd": "/absolute/path/to/a/git/repo"
 }
 JSON
 
-tychonic run simpleWorkflow --input-file ./simple-workflow-input.json --wait
+tychonic run verifyOnlyWorkflow --input-file ./verify-input.json --wait
 ```
 
-`tychonic run --wait` prints JSON. The product outcome is `result.status`; a
-successful CLI command only means the workflow returned a result.
+The input `cwd` is the git repository to check. It does not have to be the
+Tychonic source checkout.
+
+`--wait` waits until the workflow reaches the next point where the caller can
+act or report the result. Read the `message` field first; it is written as the
+plain-language outcome for a human or an LLM operator.
+
+Use `--wait` when the caller should report the result before doing anything
+else. Omit it when the caller should start the workflow and continue with other
+work; the no-wait response includes the `workflowId` needed for `tychonic wait`.
+
+The first smoke normally finishes like this:
+
+```json
+{ "ok": true, "message": "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_123 --include-result`.", "workflowId": "wf_123", "status": "succeeded" }
+```
+
+Interactive workflows can also return a waiting state:
+
+```json
+{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123 --include-result`, `tychonic inbox --workflow-id wf_123`, `tychonic artifacts --workflow-id wf_123`, `tychonic logs --workflow-id wf_123`. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
+```
+
+To start a workflow and keep working without waiting, omit the wait flag:
+
+```sh
+tychonic run verifyOnlyWorkflow --input-file ./verify-input.json
+```
+
+The no-wait response includes the handle to use later:
+
+```json
+{ "ok": true, "message": "Workflow started. To wait until it needs caller action or returns a result, run `tychonic wait wf_123`.", "workflowId": "wf_123", "runId": "run_456" }
+```
+
+To wait for a workflow you already started, pass the returned `workflowId`.
+The response may also include `runId`; ordinary follow-up commands use
+`workflowId`.
+
+```sh
+tychonic wait <workflow-id>
+```
 
 Inspect a run:
 
@@ -93,6 +140,33 @@ tychonic inbox --workflow-id <id>
 tychonic artifacts --workflow-id <id>
 tychonic logs --workflow-id <id>
 tychonic sessions --workflow-id <id>
+```
+
+Without `--include-result`, `status` reports execution metadata. With
+`--include-result`, it also includes the workflow's Tychonic run result when
+available.
+
+After the no-agent smoke passes, install an agent workflow such as
+`simpleWorkflow`. Its default profile uses external agent CLIs, so make sure
+those CLIs are installed and authenticated first.
+
+```sh
+(cd "$EXAMPLES_DIR/simpleWorkflow" && npm install)
+tychonic workflows install "$EXAMPLES_DIR/simpleWorkflow"
+tychonic config show --workflow-name simpleWorkflow --format yaml
+```
+
+Then run it with task input:
+
+```sh
+cat > ./simple-input.json <<'JSON'
+{
+  "cwd": "/absolute/path/to/a/git/repo",
+  "goal": "Implement the requested change and leave evidence in artifacts."
+}
+JSON
+
+tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 ```
 
 ## Workflow Config
@@ -168,14 +242,16 @@ Read each bundle's `README.md` before changing its input or config shape.
 
 ## Agent Skill
 
-Install the included skill when an agent CLI should operate Tychonic directly:
+The CLI and README are the primary interface. The included skill is an optional
+helper for agents that operate Tychonic frequently:
 
 ```sh
 npx skills add ./skills -a claude-code codex
 ```
 
 Pass `-a` intentionally; otherwise the installer may target every detected
-agent.
+agent. Do not rely on the skill to explain behavior that the CLI output should
+make clear.
 
 ## Security
 

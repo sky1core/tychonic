@@ -53,36 +53,83 @@ tychonic temporal doctor
 
 ## 빠른 시작
 
-예제 workflow bundle을 설치합니다.
+가장 작은 예제 workflow bundle부터 설치합니다. 이 workflow는 결정적 shell check만
+실행하므로 agent CLI를 부르기 전에 runtime 경로부터 확인할 수 있습니다.
+npm으로 설치했다면 `EXAMPLES_DIR="$(npm root -g)/tychonic/examples/workflows"`를
+사용합니다. source checkout에서는 `EXAMPLES_DIR="./examples/workflows"`를
+사용합니다.
 
 ```sh
-(cd examples/workflows/simpleWorkflow && npm install)
-tychonic workflows install ./examples/workflows/simpleWorkflow
+# source checkout:
+EXAMPLES_DIR="./examples/workflows"
+# npm global install:
+# EXAMPLES_DIR="$(npm root -g)/tychonic/examples/workflows"
+(cd "$EXAMPLES_DIR/verifyOnlyWorkflow" && npm install)
+tychonic workflows install "$EXAMPLES_DIR/verifyOnlyWorkflow"
+tychonic workflows list
 ```
 
 한 terminal에서 local runtime을 시작합니다. 이 명령은 필요하면 Temporal을 시작하고
 worker를 실행합니다.
 
 ```sh
-tychonic runtime up --project-dir "$PWD"
+tychonic runtime up
 ```
 
 다른 terminal에서 run을 시작합니다.
 
 ```sh
-cat > ./simple-workflow-input.json <<'JSON'
+cat > ./verify-input.json <<'JSON'
 {
-  "cwd": "/absolute/path/to/a/git/repo",
-  "goal": "Implement the requested change and leave evidence in artifacts."
+  "cwd": "/absolute/path/to/a/git/repo"
 }
 JSON
 
-tychonic run simpleWorkflow --input-file ./simple-workflow-input.json --wait
+tychonic run verifyOnlyWorkflow --input-file ./verify-input.json --wait
 ```
 
-`tychonic run --wait`는 JSON을 출력합니다. 제품 관점의 결과는
-`result.status`입니다. CLI 명령 성공은 workflow가 결과를 반환했다는 뜻이지,
-workflow 목표가 성공했다는 뜻은 아닙니다.
+input `cwd`는 검사할 git repository입니다. Tychonic source checkout일 필요는
+없습니다.
+
+`--wait`는 caller가 행동하거나 결과를 보고할 수 있는 다음 지점까지
+기다립니다. 먼저 `message` field를 읽습니다. 이 문장은 사람이나 LLM
+operator가 바로 이해할 수 있는 결과 설명입니다.
+
+caller가 다른 일을 하기 전에 결과를 보고해야 하면 `--wait`를 사용합니다.
+workflow를 시작해 두고 다른 일을 계속해야 하면 wait flag를 생략합니다.
+no-wait 응답에는 나중에 `tychonic wait`에 넘길 `workflowId`가 들어 있습니다.
+
+첫 smoke는 보통 이렇게 끝납니다.
+
+```json
+{ "ok": true, "message": "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_123 --include-result`.", "workflowId": "wf_123", "status": "succeeded" }
+```
+
+interactive workflow는 waiting state를 반환할 수도 있습니다.
+
+```json
+{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123 --include-result`, `tychonic inbox --workflow-id wf_123`, `tychonic artifacts --workflow-id wf_123`, `tychonic logs --workflow-id wf_123`. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
+```
+
+workflow를 시작만 하고 기다리지 않으려면 wait flag를 생략합니다.
+
+```sh
+tychonic run verifyOnlyWorkflow --input-file ./verify-input.json
+```
+
+no-wait 응답에는 나중에 사용할 handle이 들어 있습니다.
+
+```json
+{ "ok": true, "message": "Workflow started. To wait until it needs caller action or returns a result, run `tychonic wait wf_123`.", "workflowId": "wf_123", "runId": "run_456" }
+```
+
+이미 시작한 workflow를 나중에 기다리려면 반환된 `workflowId`를 넘깁니다.
+응답에 `runId`도 들어 있을 수 있지만, 보통 후속 명령에는 `workflowId`를
+사용합니다.
+
+```sh
+tychonic wait <workflow-id>
+```
 
 run 조회:
 
@@ -92,6 +139,32 @@ tychonic inbox --workflow-id <id>
 tychonic artifacts --workflow-id <id>
 tychonic logs --workflow-id <id>
 tychonic sessions --workflow-id <id>
+```
+
+`--include-result`가 없으면 `status`는 실행 metadata를 보여줍니다.
+`--include-result`를 붙이면 가능한 경우 Tychonic run result 본문까지 포함합니다.
+
+no-agent smoke가 통과한 뒤에는 `simpleWorkflow` 같은 agent workflow를 설치합니다.
+기본 profile이 외부 agent CLI를 사용하므로 먼저 해당 CLI 설치와 인증을 끝내야
+합니다.
+
+```sh
+(cd "$EXAMPLES_DIR/simpleWorkflow" && npm install)
+tychonic workflows install "$EXAMPLES_DIR/simpleWorkflow"
+tychonic config show --workflow-name simpleWorkflow --format yaml
+```
+
+그 다음 task input으로 실행합니다.
+
+```sh
+cat > ./simple-input.json <<'JSON'
+{
+  "cwd": "/absolute/path/to/a/git/repo",
+  "goal": "Implement the requested change and leave evidence in artifacts."
+}
+JSON
+
+tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 ```
 
 ## Workflow Config
@@ -167,14 +240,16 @@ input이나 config shape를 바꾸기 전에 각 bundle의 `README.md`를 읽으
 
 ## Agent Skill
 
-agent CLI가 Tychonic을 직접 다뤄야 하면 포함된 skill을 설치합니다.
+CLI와 README가 기본 interface입니다. 포함된 skill은 Tychonic을 자주 다루는
+agent를 위한 선택 보조수단입니다.
 
 ```sh
 npx skills add ./skills -a claude-code codex
 ```
 
 `-a`를 의도적으로 지정하십시오. 생략하면 installer가 감지한 모든 agent에
-설치할 수 있습니다.
+설치할 수 있습니다. CLI 출력이 명확히 설명해야 할 동작을 skill에 의존시키지
+마십시오.
 
 ## 보안
 

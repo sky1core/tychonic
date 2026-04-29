@@ -71,6 +71,8 @@ describe("claudeAdapter", () => {
       },
       required: ["severity", "title", "detail"]
     });
+    expect(String(findings.description)).toContain("Actionable problems only");
+    expect(String(findingItems.description)).toContain("One actionable problem");
   });
 
   it("runNew honours an explicit permissionMode override", () => {

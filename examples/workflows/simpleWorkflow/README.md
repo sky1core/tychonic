@@ -22,6 +22,10 @@ Inspect the installed profile:
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```
 
+The bundled default profile uses Claude for `work` and `review`, and a
+multi-line npm command for `verify`. Adjust the installed profile or pass a
+whole-profile `--config <file>` replacement if your local agent setup differs.
+
 ## Input
 
 `tychonic run simpleWorkflow --input-file <file>` passes the JSON file directly
@@ -36,13 +40,17 @@ to the workflow.
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
-Minimal input:
+Minimal run:
 
-```json
+```sh
+cat > ./simple-input.json <<'JSON'
 {
   "cwd": "/abs/path/to/project",
   "goal": "Implement the requested change and leave evidence in artifacts."
 }
+JSON
+
+tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 ```
 
 ## Loop Policy

@@ -177,6 +177,62 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(status.stdout).toContain('"health": "stopped"');
   }, 20000);
 
+  it("detached runtime up fails before printing a PID when installed bundle deps are missing", async () => {
+    const fakeHome = await makeStateHome();
+    const env = makeIsolatedEnv(fakeHome);
+    const instance = `missing-deps-detach-${process.pid}`;
+    const temporalPort = await getUnusedLoopbackPort();
+    const bundleDir = join(fakeHome, "missingDepsDetachWorkflow");
+    await mkdir(bundleDir, { recursive: true });
+    await writeFile(
+      join(bundleDir, "workflow.mjs"),
+      [
+        'import { proxyActivities } from "@temporalio/workflow";',
+        "proxyActivities({ startToCloseTimeout: \"1 minute\" });",
+        "export const defaultProfile = {",
+        '  version: "tychonic.config.v1",',
+        "  states: { work: { type: \"work\", agent: \"claude\" } }",
+        "};",
+        "export async function missingDepsDetachWorkflow(input) {",
+        "  return { status: \"succeeded\", input };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const install = await runCli(
+      ["--instance", instance, "workflows", "install", bundleDir],
+      { env }
+    );
+    expect(install.exitCode).toBe(0);
+
+    const result = await runCli(
+      [
+        "--instance",
+        instance,
+        "runtime",
+        "up",
+        "--detach",
+        "--temporal-port",
+        String(temporalPort)
+      ],
+      { env }
+    );
+    expect(result.exitCode).not.toBe(0);
+    const output = result.stderr + result.stdout;
+    expect(output).toMatch(/Can't resolve '@temporalio\/workflow'/);
+    expect(output).not.toMatch(/"mode": "detached"/);
+    expect(output).not.toMatch(/"pid":/);
+
+    const status = await runCli(
+      ["--instance", instance, "temporal", "status", "--temporal-port", String(temporalPort)],
+      { env }
+    );
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout).toContain('"portOpen": false');
+    expect(status.stdout).toContain('"health": "stopped"');
+  }, 20000);
+
   it("refuses when an existing PID file points at a live process", async () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);

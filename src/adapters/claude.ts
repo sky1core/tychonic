@@ -32,13 +32,14 @@ import { shellQuote } from "./shell.js";
 const BIN = "claude";
 const REVIEW_FINDING_JSON_SCHEMA = {
   type: "object",
+  description: "One actionable problem. Do not use findings for evidence, confirmations, or passing notes.",
   additionalProperties: false,
   properties: {
-    severity: { enum: ["critical", "high", "medium", "low"] },
-    title: { type: "string", minLength: 1 },
-    detail: { type: "string", minLength: 1 },
-    target: { type: "string", minLength: 1 },
-    target_session_id: { type: "string" }
+    severity: { enum: ["critical", "high", "medium", "low"], description: "Severity of the problem." },
+    title: { type: "string", minLength: 1, description: "Short problem title." },
+    detail: { type: "string", minLength: 1, description: "Actionable explanation of the problem." },
+    target: { type: "string", minLength: 1, description: "File, state, or session target when known." },
+    target_session_id: { type: "string", description: "Worker session id when the problem targets one." }
   },
   required: ["severity", "title", "detail"]
 } as const;
@@ -50,10 +51,14 @@ const TYCHONIC_REVIEW_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    status: { enum: ["pass", "fail"] },
-    summary: { type: "string", minLength: 1 },
+    status: {
+      enum: ["pass", "fail"],
+      description: "Use pass only when there are no actionable findings. Use fail when any actionable finding exists."
+    },
+    summary: { type: "string", minLength: 1, description: "Concise verdict summary." },
     findings: {
       type: "array",
+      description: "Actionable problems only. If status is pass, this must be an empty array.",
       items: REVIEW_FINDING_JSON_SCHEMA
     }
   },

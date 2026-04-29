@@ -268,6 +268,11 @@ profile shape; each workflow validates the policy keys it consumes.
 Signal names, query names, payloads, and recovery behavior are also part of the
 workflow bundle contract. Document them in that bundle's README.
 
+If a long-running workflow should support `tychonic run --wait` or
+`tychonic wait <workflow-id>` before final completion, expose its current run
+snapshot through the standard `tychonic.workflow_state` query. The query
+returns the same run-result shape the workflow returns at completion.
+
 If a workflow uses the standard interactive CLI commands, register these names
 directly in the workflow:
 

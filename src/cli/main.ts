@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { stringify } from "yaml";
 import {
   assertTychonicWorkflowResult,
@@ -14,6 +14,7 @@ import {
   type TychonicWorkflowResult
 } from "./temporalResultViews.js";
 import { applyConfigOrDefaultProfileToRunInput } from "./runWorkflowInput.js";
+import { stoppedWorkflowCliPayload } from "./waitMessages.js";
 import {
   loadBundleDefaultProfile,
   resolveEffectiveBundleConfig
@@ -48,7 +49,8 @@ import {
   signalInteractionModifyState,
   signalInteractionRejectState,
   signalNamedWorkflow,
-  startNamedTemporalWorkflow
+  startNamedTemporalWorkflow,
+  waitForTychonicWorkflowStopped
 } from "../temporal/client.js";
 import type { WorkflowStateRecord } from "../domain/types.js";
 import { readFile as readFileAsync } from "node:fs/promises";
@@ -98,6 +100,28 @@ program.hook("preAction", (thisCommand) => {
  */
 function cliInstanceMeta(): { instance: string | null } {
   return { instance: getActiveInstance() ?? null };
+}
+
+function hiddenTemporalModeOption(): Option {
+  return new Option("--temporal-mode <mode>", "advanced runtime mode").hideHelp();
+}
+
+function hiddenTemporalPortOption(): Option {
+  return new Option("--temporal-port <port>", "advanced managed-local runtime API port")
+    .argParser((value) => Number(value))
+    .hideHelp();
+}
+
+function hiddenTemporalAddressOption(): Option {
+  return new Option("--temporal-address <address>", "advanced runtime API address").hideHelp();
+}
+
+function hiddenTemporalNamespaceOption(): Option {
+  return new Option("--temporal-namespace <name>", "advanced runtime namespace").hideHelp();
+}
+
+function hiddenTemporalTaskQueueOption(): Option {
+  return new Option("--temporal-task-queue <name>", "advanced runtime task queue").hideHelp();
 }
 
 /**
@@ -488,17 +512,49 @@ program
     "--config <file>",
     "one-off Tychonic config YAML/JSON file that replaces the bundle's defaultProfile for this invocation"
   )
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .option("--workflow-id <id>", "Temporal workflow id")
-  .option("--wait", "wait for Temporal workflow completion and print the run result")
-  .description("Start a Tychonic workflow through Temporal")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .option("--workflow-id <id>", "workflow id")
+  .option("--wait", "wait until the workflow needs caller action or returns a result")
+  .description("Start a Tychonic workflow")
   .action(async (workflowName: string, options: RunCommandOptions) => {
     await startNamedWorkflowFromCli(workflowName, options);
   });
+
+program
+  .command("wait")
+  .argument("<workflow-id>", "workflow id")
+  .option("--run-id <id>", "workflow run id")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("Wait until a Tychonic workflow needs caller action or returns a result")
+  .action(
+    async (
+      workflowId: string,
+      options: TemporalCliOptions & {
+        runId?: string;
+      }
+    ) => {
+      const result = await waitForStoppedWorkflowFromCli({
+        workflowId,
+        ...(options.runId ? { runId: options.runId } : {}),
+        ...temporalConfigFromOptions(options)
+      });
+      console.log(
+        JSON.stringify(
+          { ok: true, mode: "tychonic", ...stoppedWorkflowCliPayload(result), _meta: cliInstanceMeta() },
+          null,
+          2
+        )
+      );
+    }
+  );
 
 program
   .command("signal")
@@ -1108,16 +1164,65 @@ async function startNamedWorkflowFromCli(workflowName: string, options: RunComma
       return loadBundleDefaultProfile(bundleDir);
     }
   });
+  const temporalConfig = temporalConfigFromOptions(options);
   const result = await startNamedTemporalWorkflow({
     workflowType: workflowName,
     ...(workflowInput.hasInput ? { input: workflowInput.input } : {}),
-    wait: Boolean(options.wait),
-    ...temporalConfigFromOptions(options),
+    wait: false,
+    ...temporalConfig,
     ...(options.workflowId ? { workflowId: options.workflowId } : {})
   });
-  console.log(JSON.stringify({ ok: true, mode: "temporal", ...result, _meta: cliInstanceMeta() }, null, 2));
+  if (options.wait) {
+    const waitResult = await waitForStoppedWorkflowFromCli({
+      workflowId: result.workflowId,
+      runId: result.firstExecutionRunId,
+      ...temporalConfig
+    });
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          mode: "tychonic",
+          ...stoppedWorkflowCliPayload(waitResult),
+          _meta: cliInstanceMeta()
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        mode: "tychonic",
+        message: `Workflow started. To wait until it needs caller action or returns a result, run \`tychonic wait ${result.workflowId}\`.`,
+        workflowId: result.workflowId,
+        runId: result.firstExecutionRunId,
+        _meta: cliInstanceMeta()
+      },
+      null,
+      2
+    )
+  );
 }
 
+async function waitForStoppedWorkflowFromCli(options: {
+  workflowId: string;
+  runId?: string;
+  temporalMode?: TemporalConfig["mode"];
+  temporalPort?: number;
+  temporalAddress?: string;
+  temporalNamespace?: string;
+  temporalTaskQueue?: string;
+}): Promise<Awaited<ReturnType<typeof waitForTychonicWorkflowStopped>>> {
+  return waitForTychonicWorkflowStopped({
+    workflowId: options.workflowId,
+    ...(options.runId ? { runId: options.runId } : {}),
+    ...temporalConfigFromOptions(options)
+  });
+}
 
 async function resolveRunWorkflowInput(options: RunCommandOptions): Promise<{ hasInput: boolean; input?: unknown }> {
   if (options.input && options.inputFile) {
@@ -1355,6 +1460,10 @@ async function handleRuntimeUpDetach(options: {
         `then rerun \`tychonic runtime up --instance ${instance} --detach\`.`
     );
   }
+  // Preflight the same bundle compile the foreground child will perform.
+  // Without this, a missing bundle dependency can make the child exit after
+  // the parent already printed a success-looking detached PID.
+  await buildWorkflowBundle();
 
   // Reconstruct the flags the child should receive. `--detach` itself is
   // not forwarded (child runs foreground); `--instance` is re-passed

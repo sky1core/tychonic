@@ -1,6 +1,6 @@
 {
   "name": "tychonic",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "macOS-local AI work operations manager built on Temporal",
   "license": "MIT",
   "type": "module",
@@ -45,7 +45,7 @@
     "dev": "tsx src/cli/main.ts",
     "build": "npm run clean && tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "tsc --noEmit",
     "install:local": "npm run build && npm pack --pack-destination /tmp && npm install -g /tmp/tychonic-$npm_package_version.tgz",
     "validate:examples": "for d in examples/workflows/*/; do node dist/cli/main.js workflows validate \"$d\" >/dev/null || exit 1; done",
     "test": "vitest run --exclude '**/.tychonic/**'",
@@ -69,23 +69,10 @@
     "uuid": "14.0.0"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.2.2",
     "@types/node": "25.6.0",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.1",
-    "class-variance-authority": "0.7.1",
-    "clsx": "2.1.1",
-    "lucide-react": "1.8.0",
-    "motion": "12.38.0",
-    "react": "19.2.5",
-    "react-dom": "19.2.5",
-    "tailwindcss": "4.2.2",
     "tsx": "4.21.0",
     "typescript": "6.0.3",
-    "vite": "8.0.8",
-    "vitest": "4.1.4",
-    "zustand": "5.0.12"
+    "vitest": "4.1.4"
   },
   "engines": {
     "node": ">=22"

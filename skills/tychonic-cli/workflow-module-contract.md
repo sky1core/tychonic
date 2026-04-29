@@ -152,6 +152,10 @@ Temporal workflow code is deterministic.
 A workflow may register any signal/query names it owns. Document each name,
 payload shape, and recovery behavior in the bundle README.
 
+Register `tychonic.workflow_state` when the workflow should support
+`tychonic run --wait` or `tychonic wait <workflow-id>` before final completion.
+The query returns the workflow's current run-result snapshot.
+
 Standard interaction names are optional. Register them only if the workflow is
 designed to be driven by `tychonic approve`, `tychonic reject`, or
 `tychonic modify`:

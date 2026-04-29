@@ -31,6 +31,20 @@ with a bounded builder/QA loop. Switch `policies.interaction.mode` to
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
+## Run Mode
+
+Use `tychonic run architectBuilderQaWorkflow --input-file <file> --wait` when
+the caller should wait for the pipeline result before doing anything else.
+
+Omit `--wait` when the caller should start the pipeline and continue with other
+work. The no-wait response returns a `workflowId`; pass that value to
+`tychonic wait <workflow-id>` when you need the next result or action point.
+
+In `auto` interaction mode, `--wait` returns when the workflow succeeds, fails,
+is cancelled, or needs attention. In `interactive` mode, it may return with a
+message naming the waiting stage; follow that message and use the standard
+interaction command for that stage.
+
 ## Policies
 
 The workflow reads:
@@ -47,9 +61,9 @@ Interactive mode uses the standard Tychonic interaction commands while the
 workflow is parked at a stage:
 
 ```sh
-tychonic approve <workflow-id>
-tychonic reject <workflow-id> --feedback "..."
-tychonic modify <workflow-id> --note "..."
+tychonic approve <workflow-id> --state <state>
+tychonic reject <workflow-id> --state <state> --feedback "..."
+tychonic modify <workflow-id> --state <state> --note "..."
 ```
 
 After the run reaches a terminal `waiting_user` status, those signals no longer

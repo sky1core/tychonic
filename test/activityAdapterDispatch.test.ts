@@ -238,6 +238,15 @@ describe("runReviewActivity adapter dispatch", () => {
     expect(result.reviewOutcome.reviewerSessionId).toBe("structured-session-id");
     expect(result.reviewOutcome.agentSessions[0]?.id).toBe("structured-session-id");
 
+    const promptArtifact = result.reviewOutcome.artifacts.find(
+      (artifact) => artifact.kind === `${REVIEW_NAME}_prompt`
+    );
+    if (!promptArtifact) throw new Error("expected review prompt artifact");
+    const promptArtifactText = await readFile(join(cwd, promptArtifact.path), "utf8");
+    expect(promptArtifactText).toContain("review please");
+    expect(promptArtifactText).toContain("Tychonic structured review output contract");
+    expect(promptArtifactText).toContain("findings are actionable problems only");
+
     const parsedArtifact = result.reviewOutcome.artifacts.find(
       (artifact) => artifact.kind === `${REVIEW_NAME}_parsed`
     );
