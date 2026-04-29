@@ -6,7 +6,7 @@
  * on any CLI command, or by `TYCHONIC_INSTANCE=<name>` in the shell
  * environment. When an instance is active, this module derives the
  * isolation vectors (state dir, log dir, Temporal API address/port,
- * task queue, web port) from `<name>`.
+ * task queue) from `<name>`.
  *
  * Only these primitives live here:
  * - `validateInstanceName` — regex + reserved-word validation.
@@ -34,10 +34,7 @@ const RESERVED_INSTANCE_NAMES: ReadonlySet<string> = new Set([
 const DEFAULT_TEMPORAL_API_PORT = 7233;
 const DEFAULT_TEMPORAL_NAMESPACE = "default";
 const DEFAULT_TEMPORAL_TASK_QUEUE = "tychonic";
-const DEFAULT_WEB_PORT = 8765;
-
 const INSTANCE_API_PORT_BASE = 17000;
-const INSTANCE_WEB_PORT_BASE = 18000;
 const INSTANCE_PORT_SLOTS = 1000;
 
 /**
@@ -91,29 +88,6 @@ export function deriveInstancePort(name: string): number {
   return INSTANCE_API_PORT_BASE + (fnv1a32(name) % INSTANCE_PORT_SLOTS);
 }
 
-/**
- * Derive the web port for `name`. Deterministic.
- * Range: [18000, 18999].
- */
-export function deriveInstanceWebPort(name: string): number {
-  validateInstanceName(name);
-  return INSTANCE_WEB_PORT_BASE + (fnv1a32(name) % INSTANCE_PORT_SLOTS);
-}
-
-/**
- * Resolve the web port under field-level precedence:
- *   explicit > instance-derived > operational default (8765).
- *
- * Intended as a small helper for CLI sites that only need the web port,
- * without materializing a full `ResolvedInstanceRuntime`.
- */
-export function resolveWebPort(explicitWebPort?: number): number {
-  if (explicitWebPort !== undefined) return explicitWebPort;
-  const instance = getActiveInstance();
-  if (instance !== undefined) return deriveInstanceWebPort(instance);
-  return DEFAULT_WEB_PORT;
-}
-
 // Process-local active instance. Set by the CLI preAction hook (P3);
 // read by P1's resolver only through the accessor, never from module
 // globals inside `resolveInstanceRuntime`.
@@ -144,7 +118,6 @@ export interface ResolveInstanceRuntimeExplicit {
   apiPort?: number;
   taskQueue?: string;
   namespace?: string;
-  webPort?: number;
 }
 
 export interface ResolveInstanceRuntimeOptions {
@@ -170,7 +143,6 @@ export interface ResolvedInstanceRuntime {
   stateDir: string;
   logDir: string;
   temporal: ResolvedInstanceRuntimeTemporal;
-  webPort: number;
   /** Operator-visible warnings for conflicting overrides. */
   warnings: string[];
 }
@@ -266,16 +238,6 @@ export function resolveInstanceRuntime(
     taskQueue = DEFAULT_TEMPORAL_TASK_QUEUE;
   }
 
-  // Web port: explicit > derived (18000 + hash mod 1000) > default
-  let webPort: number;
-  if (explicit.webPort !== undefined) {
-    webPort = explicit.webPort;
-  } else if (instance !== undefined) {
-    webPort = deriveInstanceWebPort(instance);
-  } else {
-    webPort = DEFAULT_WEB_PORT;
-  }
-
   const resolved: ResolvedInstanceRuntime = {
     stateDir,
     logDir,
@@ -285,7 +247,6 @@ export function resolveInstanceRuntime(
       taskQueue,
       apiPort
     },
-    webPort,
     warnings
   };
   if (instance !== undefined) {

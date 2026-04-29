@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assertLoopbackHost, isLoopbackHost } from "../src/net/loopback.js";
 
-describe("loopback web bind guard", () => {
+describe("loopback bind guard", () => {
   it("accepts loopback hosts", () => {
     for (const host of ["127.0.0.1", "127.1", "localhost", "::1", "[::1]"]) {
       expect(isLoopbackHost(host)).toBe(true);

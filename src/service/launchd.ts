@@ -3,7 +3,6 @@ import { access, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promis
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { assertLoopbackHost } from "../net/loopback.js";
 import { getActiveInstance } from "../runtime/instance.js";
 import { buildExecutablePathValue, findExecutable, TYCHONIC_AGENT_PATH_ENV } from "../system/executables.js";
 import { normalizeTemporalConfig, temporalStartArgs, tychonicRuntimeDirs } from "../temporal/manager.js";
@@ -25,20 +24,17 @@ function assertNoActiveInstance(fnLabel: string): void {
   }
 }
 
-export const serviceNames = ["temporal", "worker", "web"] as const;
+export const serviceNames = ["temporal", "worker"] as const;
 export type TychonicServiceName = (typeof serviceNames)[number];
 
 export interface LaunchdServiceInstallOptions {
   projectDir: string;
-  webHost?: string;
-  webPort?: number;
   temporalPort?: number;
   nodePath?: string;
   cliPath?: string;
   temporalCliPath?: string;
   workerShutdownGraceTime?: string;
   allowSourceCli?: boolean;
-  allowNetworkBind?: boolean;
   load?: boolean;
   launchAgentDir?: string;
 }
@@ -96,7 +92,6 @@ export async function installLaunchdServices(
 ): Promise<LaunchdServiceInstallResult> {
   assertNoActiveInstance("installLaunchdServices");
   assertMacOSLaunchd();
-  assertLoopbackHost(options.webHost ?? "127.0.0.1", options.allowNetworkBind === true);
   const stateDir = tychonicRuntimeDirs().stateDir;
   const logDir = tychonicRuntimeDirs().logDir;
   const launchAgentDir = options.launchAgentDir ?? defaultLaunchAgentDir();
@@ -117,10 +112,7 @@ export async function installLaunchdServices(
     cliPath,
     temporalCliPath,
     ...(options.workerShutdownGraceTime ? { workerShutdownGraceTime: options.workerShutdownGraceTime } : {}),
-    webHost: options.webHost ?? "127.0.0.1",
-    webPort: options.webPort ?? 8765,
-    ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {}),
-    allowNetworkBind: options.allowNetworkBind === true
+    ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {})
   });
   const plists = {} as Record<TychonicServiceName, string>;
   for (const service of serviceNames) {
@@ -255,10 +247,7 @@ interface ServiceDefinitionInput {
   cliPath: string;
   temporalCliPath: string;
   workerShutdownGraceTime?: string;
-  webHost: string;
-  webPort: number;
   temporalPort?: number;
-  allowNetworkBind: boolean;
 }
 
 function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServiceName, ServiceDefinition> {
@@ -291,28 +280,6 @@ function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServi
       workingDirectory: input.stateDir,
       stdoutPath: join(input.logDir, "worker.out.log"),
       stderrPath: join(input.logDir, "worker.err.log"),
-      environmentVariables
-    },
-    web: {
-      label: serviceLabel("web"),
-      programArguments: [
-        input.nodePath,
-        input.cliPath,
-        "web",
-        "--temporal-mode",
-        "managed-local",
-        ...(input.temporalPort !== undefined ? ["--temporal-port", String(input.temporalPort)] : []),
-        "--host",
-        input.webHost,
-        "--port",
-        String(input.webPort),
-        ...(input.allowNetworkBind ? ["--allow-network-bind"] : []),
-        "--project-dir",
-        input.projectDir
-      ],
-      workingDirectory: input.stateDir,
-      stdoutPath: join(input.logDir, "web.out.log"),
-      stderrPath: join(input.logDir, "web.err.log"),
       environmentVariables
     }
   };

@@ -12,7 +12,7 @@ Core idea:
 
 ```text
 User / foreground agent
-  -> Tychonic CLI or local Web UI/API
+  -> Tychonic CLI
   -> Temporal workflow
   -> activities and adapters
   -> artifacts, findings, inbox items, session references
@@ -31,7 +31,6 @@ Supported:
 - TypeScript product path
 - Temporal managed-local mode and explicit external Temporal connection
 - CLI as the primary machine interface
-- local-only Web UI/API
 - workflow config catalog plus runtime workflow module registry
 - deterministic command activities for project checks through the `verify`
   activity TYPE
@@ -42,7 +41,7 @@ Not supported:
 
 - remote/team deployment
 - multi-user or multi-tenant operation
-- public network exposure of the Web API
+- local or public Web UI/API product surface
 - organization worker pools, team quota pooling, or task queue tenancy
 - project working tree mutation by background automation
 - unsafe auto-fix
@@ -916,7 +915,6 @@ When an instance is active, Tychonic derives the following values from
 | Temporal namespace | `default` | `default` (unchanged — the DB file is already separate) |
 | Temporal task queue | `tychonic` | `tychonic-<name>` |
 | workflow module registry | `<state>/workflows/modules/` | `<instance-state>/workflows/modules/` (state dir derivation propagates) |
-| web server port | `8765` | `18000 + fnv1a32(<name>) mod 1000` |
 
 Instance activation never creates a registry file, an entry in a global
 index, or any other secondary record of the instance's existence. The
@@ -930,7 +928,6 @@ default**, applied independently to each of:
 - `--temporal-mode`, `--temporal-port`, `--temporal-address`,
   `--temporal-task-queue`, `--temporal-namespace`
 - `$TYCHONIC_STATE_HOME`, `$TYCHONIC_LOG_HOME`
-- the web server port
 
 This is the same replace-not-merge precedence that applies between a bundle's
 `defaultProfile` and `--config <file>`, scoped to a single CLI invocation. There
@@ -939,8 +936,8 @@ is no block-level replacement and no implicit merging across fields. When
 active, the explicit env value wins and Tychonic emits a warning on stderr
 identifying which instance-derived path was overridden.
 
-Operational launchd services (`com.tychonic.temporal`, `com.tychonic.worker`,
-`com.tychonic.web`) are not touched by any command run under an instance.
+Operational launchd services (`com.tychonic.temporal`, `com.tychonic.worker`)
+are not touched by any command run under an instance.
 The `service` command group (`service install`, `service status`,
 `service uninstall`, `service restart-worker`, `service terminate-worker`)
 rejects invocation while an instance is active. `workflows install <bundle>`
@@ -965,7 +962,7 @@ dies silently a few seconds after reporting a PID.
 Lifecycle commands:
 
 - `tychonic runtime up --instance <name>` — starts Temporal if needed and
-  runs the worker (and, by default, the web server) in the foreground. It
+  runs the worker in the foreground. It
   records the runtime parent PID in `<instance-state>/runtime.pid` and removes
   that PID file on normal process exit when it still owns the file.
 - `tychonic runtime up --instance <name> --detach` — spawns the same runtime
@@ -1056,7 +1053,7 @@ environment.
 
 The active product path is TypeScript.
 
-The Tychonic package itself — CLI, local Web API, built-in Temporal
+The Tychonic package itself — CLI, built-in Temporal
 workflow activities, bundle config schema, adapters — stays in one
 TypeScript package and type system.
 

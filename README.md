@@ -2,83 +2,74 @@
 
 [한국어 README](README.ko.md)
 
-Tychonic is a macOS-local work-operations manager for delegated AI work. It
-runs existing agent CLIs and deterministic checks through Temporal, records
-evidence, and lets workflows continue through work, verify, and review states.
+Tychonic is a macOS-local workflow runner for delegated AI work. It runs
+existing agent CLIs and deterministic checks through Temporal, keeps durable
+run history, and records the evidence needed to inspect what happened.
 
-Tychonic is not a coding agent, chat wrapper, dashboard, or team service. It is
-the local workflow layer around tools such as Codex, Claude Code, Gemini CLI,
-Kiro CLI, shell checks, and review commands.
+It is not a coding agent, chat wrapper, dashboard, or team service. Tychonic is
+the orchestration layer around Codex, Claude Code, Gemini CLI, Kiro CLI, shell
+checks, and review gates.
 
-## What It Does
+## Why Use It
 
-- Runs workflow bundles through Temporal so run state survives CLI exits and
-  restarts.
-- Keeps agent work in workflow-owned isolated worktrees until the operator
-  applies a result.
-- Lets each workflow state choose the right built-in agent or command.
-- Records prompts, outputs, sessions, artifacts, findings, and inbox items as
-  inspectable evidence.
-- Supports same-session resume only where the selected built-in adapter exposes
-  a stable resume surface.
+- Run work as explicit workflow states: `work`, `verify`, and `review`.
+- Keep run state in Temporal so progress survives CLI exits and restarts.
+- Execute agent work in isolated worktrees until the operator applies a result.
+- Record prompts, outputs, sessions, artifacts, findings, and inbox items.
+- Select the right agent, model, and reasoning effort per state instead of
+  forcing one global model.
+- Spread work across agent CLIs and model accounts when that is useful for
+  quality, cost, or token usage.
 
-Tychonic ships no host-owned workflows. Example bundles live under
-`examples/workflows/` and are installed explicitly when you want to try one.
+Tychonic core ships no built-in workflows. Workflows are installed bundles.
+Reference examples live under `examples/workflows/` and are opt-in.
 
 ## Requirements
 
 - macOS
 - Node.js 22+
-- Temporal CLI available on `PATH`
+- Temporal CLI on `PATH`
 - Installed and authenticated agent CLIs for the agents your workflow uses
 
-The local Web API has no login. Do not expose it to an untrusted network.
+Tychonic does not currently ship a public web UI/API surface. Use the CLI.
 
 ## Install
 
-From source:
+From a source checkout:
 
 ```sh
 git clone https://github.com/sky1core/tychonic.git
 cd tychonic
 npm install
 npm run build
-node dist/cli/main.js --help
-node dist/cli/main.js temporal doctor
-```
-
-Local package-style install:
-
-```sh
 npm run install:local
-tychonic --help
 tychonic temporal doctor
 ```
 
-Global package install:
+From npm:
 
 ```sh
 npm install -g tychonic
-tychonic --help
 tychonic temporal doctor
 ```
 
-When running from source, replace `tychonic` in examples with
-`node dist/cli/main.js`.
-
 ## Quick Start
 
-Install an example workflow bundle and start the runtime:
+Install an example workflow bundle:
 
 ```sh
-npm install
-npm run build
 (cd examples/workflows/simpleWorkflow && npm install)
-node dist/cli/main.js workflows install ./examples/workflows/simpleWorkflow
-node dist/cli/main.js runtime up --project-dir "$PWD"
+tychonic workflows install ./examples/workflows/simpleWorkflow
 ```
 
-In another terminal, start a run:
+Start the local runtime in one terminal. This starts Temporal if needed and
+runs the worker.
+
+```sh
+tychonic runtime up --project-dir "$PWD"
+```
+
+Start a run from another terminal:
 
 ```sh
 cat > ./simple-workflow-input.json <<'JSON'
@@ -88,16 +79,13 @@ cat > ./simple-workflow-input.json <<'JSON'
 }
 JSON
 
-node dist/cli/main.js run simpleWorkflow --input-file ./simple-workflow-input.json --wait
+tychonic run simpleWorkflow --input-file ./simple-workflow-input.json --wait
 ```
 
-Each workflow owns its own input shape, policy keys, artifacts, and recovery
-flow. Read that bundle's `README.md` before writing non-trivial input or config.
-For a no-agent runtime smoke, install `examples/workflows/verifyOnlyWorkflow`.
-For architect/builder/QA patterns, start with `architectBuilderQaWorkflow`; use
-the Kiro variants when Kiro should handle review or pre-review repair work.
+`tychonic run --wait` prints JSON. The product outcome is `result.status`; a
+successful CLI command only means the workflow returned a result.
 
-Useful inspection commands:
+Inspect a run:
 
 ```sh
 tychonic status --workflow-id <id> --include-result
@@ -107,27 +95,17 @@ tychonic logs --workflow-id <id>
 tychonic sessions --workflow-id <id>
 ```
 
-## Agent Skill
+## Workflow Config
 
-Install the included skill so your agent CLI can operate Tychonic without
-memorising flags:
+A workflow bundle contains `workflow.mjs` and a `defaultProfile`. The workflow
+author owns that profile. A run can replace it with `--config <file>`, but the
+replacement is whole-object replacement, not merge.
 
-```sh
-npx skills add ./skills -a claude-code codex
-```
+Workflow JSON input is task data only. Do not put config under `profile`;
+Tychonic reserves that field for the effective profile it passes into workflow
+code.
 
-Pass `-a` intentionally; otherwise the installer may target every detected
-agent.
-
-## Workflows And Config
-
-A workflow bundle is a directory with `workflow.mjs` and a `defaultProfile`.
-The profile is the workflow author's default config. A run can replace it with
-`--config <file>`, but replacement is whole-object replacement, not merge.
-Workflow JSON input is task data only: pass a JSON object, and do not put
-config under `profile`.
-
-Minimal profile shape:
+Recommended profile pattern:
 
 ```yaml
 version: tychonic.config.v1
@@ -135,6 +113,8 @@ states:
   work:
     type: work
     agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
   verify:
     type: verify
     command: |
@@ -144,64 +124,70 @@ states:
   review:
     type: review
     agent: claude
+    model: opus
+    reasoning_effort: max
 ```
 
-For repeatable agent workflows, pin `model` on agent states and set
-`reasoning_effort` on Claude/Codex states whose quality depends on reasoning
-depth. These are recommended agent settings. Keep separate orchestration knobs
-such as `resume`, permissions, sandbox, timeout, trust, and policies out of the
-profile unless the workflow behavior actually needs them.
+`model` is recommended for repeatable agent states. `reasoning_effort` is
+recommended for Claude/Codex states whose quality depends on reasoning depth.
+Other knobs such as `resume`, permissions, sandbox, timeout, trust, and policy
+settings should appear only when the workflow behavior needs them.
 
-Validate and install bundles:
+Use `agent: "<name>"` for built-in adapters. Use `command` only as an escape
+hatch for custom CLIs, unusual flags, or test stubs. A state sets exactly one
+of `agent` or `command`.
 
-```sh
-tychonic workflows validate ./examples/workflows/simpleWorkflow
-tychonic workflows install ./examples/workflows/simpleWorkflow
-tychonic workflows list
-```
+## Built-In Agents
 
-## Agents
-
-Built-in adapters:
-
-| Agent | Worker | Review | Same-session resume |
+| Agent | Work | Review | Same-session resume |
 |---|---:|---:|---:|
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
 | `kiro` | yes | with normalizer | yes |
 | `gemini` | yes | with normalizer | no |
 
-Use `agent: "<name>"` for the built-in path. Use `command` only as an escape
-hatch for custom CLIs, unusual flags, or test stubs. A state sets exactly one of
-`agent` or `command`.
+For review states, `gemini` and `kiro` require `normalizer: claude` or
+`normalizer: codex`. The primary agent performs the review; the normalizer only
+structures that output into Tychonic's review result.
 
-For review states, `gemini` and `kiro` require `normalizer:
-claude` or `normalizer: codex`. Tychonic supplies the normalizer's lightweight
-model flag internally; workflow config does not set a separate normalizer model.
+Kiro uses ACP session APIs for session capture and resume. Kiro review states
+may inspect files and run checks, but the adapter rejects direct file writes
+and fails the review if tracked files change during the review turn.
 
-`kiro` uses Kiro's ACP session API for session capture and worker resume. Kiro
-review states may inspect files and run checks, but the adapter rejects direct
-file writes and fails the review if tracked files change during the review turn.
+## Example Workflows
 
-Use `model` for built-in agents whose CLI supports it. For repeatable workflows,
-workflow authors should pin the model they want for each quality- or
-cost-sensitive state instead of relying on a changing CLI default.
-`reasoning_effort` is supported for `claude` and `codex`; set it on
-Claude/Codex states whose quality depends on reasoning depth.
-Kiro currently exposes `--model`, but does not expose a stable
-reasoning/effort/thinking CLI option; do not set `reasoning_effort` on `kiro`.
+- `verifyOnlyWorkflow`: no-agent runtime smoke.
+- `simpleWorkflow`: one work state, one verify state, one review state.
+- `architectBuilderQaWorkflow`: standard architect/build/QA pattern.
+- `architectBuilderKiroQaWorkflow`: Kiro performs QA review, then a normalizer
+  structures the verdict.
+- `architectBuilderKiroRepairQaWorkflow`: Kiro performs a pre-review repair
+  pass before final structured QA.
+
+Read each bundle's `README.md` before changing its input or config shape.
+
+## Agent Skill
+
+Install the included skill when an agent CLI should operate Tychonic directly:
+
+```sh
+npx skills add ./skills -a claude-code codex
+```
+
+Pass `-a` intentionally; otherwise the installer may target every detected
+agent.
 
 ## Security
 
-Tychonic is designed for a single local operator. Keep the local Web API on
-loopback. Do not bind it to `0.0.0.0`, a public IP, or a shared network unless
-you have separately secured the environment.
+Tychonic is designed for a single local operator. It currently exposes the CLI
+as the public control surface; do not wrap it in an unauthenticated network
+service.
 
 Do not put literal tokens, passwords, or private keys in workflow commands. Use
 the agent CLI's auth store or inherited environment references.
 
 macOS notifications use the normal system notification permission. If a
-notification does not appear, open System Settings → Notifications and allow
+notification does not appear, open System Settings -> Notifications and allow
 `TychonicNotify`. Detailed troubleshooting is in
 [notifications-troubleshooting.md](skills/tychonic-cli/notifications-troubleshooting.md).
 
@@ -210,7 +196,6 @@ notification does not appear, open System Settings → Notifications and allow
 - [SPEC.md](SPEC.md): product contract
 - [docs/plugin-workflows.md](docs/plugin-workflows.md): workflow authoring guide
 - [skills/tychonic-cli/SKILL.md](skills/tychonic-cli/SKILL.md): agent-facing CLI operating guide
-- [skills/tychonic-cli/notifications-troubleshooting.md](skills/tychonic-cli/notifications-troubleshooting.md): macOS notification troubleshooting
 - [SECURITY.md](SECURITY.md): security boundary and reporting
 - [AGENTS.md](AGENTS.md): repository rules for contributors and agents
 - [GUARDRAILS.md](GUARDRAILS.md): repeated project-specific failure patterns

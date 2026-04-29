@@ -64,7 +64,7 @@ describe("spawnDetachedRuntime", () => {
       nodePath: process.execPath,
       cliPath: cliStub,
       instance: "foo",
-      extraArgs: ["--no-web"],
+      extraArgs: [],
       logFile,
       pidFile
     });

@@ -8,6 +8,6 @@ export function assertLoopbackHost(host: string, allowNetworkBind: boolean): voi
     return;
   }
   throw new Error(
-    `refusing to bind Tychonic web API to non-loopback host ${host}; public alpha has no web authentication, so use 127.0.0.1 or pass --allow-network-bind only for a trusted private network`
+    `refusing to bind unauthenticated Tychonic listener to non-loopback host ${host}; use 127.0.0.1`
   );
 }

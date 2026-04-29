@@ -19,10 +19,8 @@ import {
   resolveEffectiveBundleConfig
 } from "../catalog/bundleConfig.js";
 import { productName } from "../index.js";
-import { assertLoopbackHost } from "../net/loopback.js";
 import {
   getActiveInstance,
-  resolveWebPort,
   setActiveInstance,
   validateInstanceName
 } from "../runtime/instance.js";
@@ -42,7 +40,6 @@ import {
   statusLaunchdServices,
   uninstallLaunchdServices
 } from "../service/launchd.js";
-import { startWebServer, type StartedWebServer } from "../web/server.js";
 import {
   describeTychonicTemporalWorkflow,
   listTychonicTemporalWorkflows,
@@ -320,14 +317,6 @@ const runtimeCommand = program.command("runtime").description("Run the local Tyc
 runtimeCommand
   .command("up")
   .option("--project-dir <dir>", "project directory", process.cwd())
-  .option("--no-web", "do not start the local web server")
-  .option("--web-host <host>", "web host", "127.0.0.1")
-  .option(
-    "--web-port <port>",
-    "web port. Omit to let --instance <name> derive a port (18000 + fnv1a32(name) mod 1000); when both --instance and --web-port are unset, defaults to 8765 (operational).",
-    (value) => Number(value)
-  )
-  .option("--allow-network-bind", "allow non-loopback web bind; unsupported for public alpha without private-network controls", false)
   .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
   .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
   .option("--temporal-address <address>", "Temporal API address")
@@ -339,14 +328,10 @@ runtimeCommand
     "spawn the runtime in a new session and exit; requires --instance. PID is written under <stateDir>/runtime.pid, stdout/stderr tee into <logDir>/runtime.log.",
     false
   )
-  .description("Start Temporal if needed, then run worker and optional web server in the foreground")
+  .description("Start Temporal if needed, then run the worker in the foreground")
   .action(
     async (options: {
       projectDir: string;
-      web: boolean;
-      webHost: string;
-      webPort?: number;
-      allowNetworkBind: boolean;
       temporalMode?: TemporalConfig["mode"];
       temporalPort?: number;
       temporalAddress?: string;
@@ -435,16 +420,6 @@ runtimeCommand
         const onSigint = (): void => cascadeAndExit("SIGTERM");
         process.on("SIGTERM", onSigterm);
         process.on("SIGINT", onSigint);
-        const resolvedWebPort = resolveWebPort(options.webPort);
-        const web = options.web
-          ? await startWebServer({
-              cwd: options.projectDir,
-              host: options.webHost,
-              port: resolvedWebPort,
-              ...(options.allowNetworkBind ? { allowNetworkBind: true } : {}),
-              ...temporalConfig
-            })
-          : undefined;
 
         console.log(
           JSON.stringify(
@@ -452,7 +427,6 @@ runtimeCommand
               ok: true,
               mode: "foreground",
               temporal,
-              ...(web ? { web: { url: web.url } } : {}),
               worker: { status: "running" },
               workflows: { modules: await listRuntimeWorkflowModules() },
               _meta: cliInstanceMeta()
@@ -462,15 +436,11 @@ runtimeCommand
           )
         );
 
-        try {
-          await runTemporalWorker({
-            ...temporalConfig,
-            workflowBundle,
-            ...(options.shutdownGraceTime ? { shutdownGraceTime: options.shutdownGraceTime } : {})
-          });
-        } finally {
-          await closeStartedWebServer(web);
-        }
+        await runTemporalWorker({
+          ...temporalConfig,
+          workflowBundle,
+          ...(options.shutdownGraceTime ? { shutdownGraceTime: options.shutdownGraceTime } : {})
+        });
       } catch (error) {
         if (stopTemporalOnFailure && temporalManagerForCleanup) {
           try {
@@ -901,65 +871,22 @@ const inboxCommand = program
     );
   });
 
-program
-  .command("web")
-  .option("--project-dir <dir>", "project directory", process.cwd())
-  .option("--host <host>", "host", "127.0.0.1")
-  .option("--port <port>", "port", (value) => Number(value), 8765)
-  .option("--allow-network-bind", "allow non-loopback web bind; unsupported for public alpha without private-network controls", false)
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .description("Start the local Tychonic status web server")
-  .action(
-    async (options: {
-      projectDir: string;
-      host: string;
-      port: number;
-      allowNetworkBind: boolean;
-      temporalMode?: TemporalConfig["mode"];
-      temporalPort?: number;
-      temporalAddress?: string;
-      temporalNamespace?: string;
-      temporalTaskQueue?: string;
-    }) => {
-      assertLoopbackHost(options.host, options.allowNetworkBind);
-      const temporalConfig = temporalConfigFromOptions(options);
-      const started = await startWebServer({
-        cwd: options.projectDir,
-        host: options.host,
-        port: options.port,
-        ...(options.allowNetworkBind ? { allowNetworkBind: true } : {}),
-        ...temporalConfig
-      });
-      console.log(JSON.stringify({ ok: true, url: started.url }, null, 2));
-    }
-  );
-
 const serviceCommand = program.command("service").description("Manage macOS launchd services for local Tychonic");
 
 serviceCommand
   .command("install")
   .requiredOption("--project-dir <dir>", "project directory")
-  .option("--web-host <host>", "web host", "127.0.0.1")
-  .option("--web-port <port>", "web port", (value) => Number(value), 8765)
   .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--allow-network-bind", "allow non-loopback web bind; unsupported for public alpha without private-network controls", false)
   .option("--node-path <path>", "advanced: Node executable path")
   .option("--cli-path <path>", "advanced: Tychonic CLI entrypoint path")
   .option("--temporal-cli-path <path>", "advanced: Temporal CLI executable path")
   .option("--worker-shutdown-grace-time <duration>", "worker drain time on shutdown before cancelling in-flight activities")
   .option("--allow-source-cli", "advanced: allow running from a source checkout; development only", false)
-  .description("Install and load user LaunchAgents for Temporal, worker, and web")
+  .description("Install and load user LaunchAgents for Temporal and worker")
   .action(
     async (options: {
       projectDir: string;
-      webHost: string;
-      webPort: number;
       temporalPort?: number;
-      allowNetworkBind: boolean;
       nodePath?: string;
       cliPath?: string;
       temporalCliPath?: string;
@@ -969,10 +896,7 @@ serviceCommand
       assertOperationalOnly("tychonic service install");
       const result = await installLaunchdServices({
         projectDir: options.projectDir,
-        webHost: options.webHost,
-        webPort: options.webPort,
         ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {}),
-        allowNetworkBind: options.allowNetworkBind,
         ...(options.nodePath ? { nodePath: options.nodePath } : {}),
         ...(options.cliPath ? { cliPath: options.cliPath } : {}),
         ...(options.temporalCliPath ? { temporalCliPath: options.temporalCliPath } : {}),
@@ -1388,10 +1312,6 @@ async function tryReplaceLaunchdWorker(): Promise<{ worker_replacement: unknown 
  */
 async function handleRuntimeUpDetach(options: {
   projectDir: string;
-  web: boolean;
-  webHost: string;
-  webPort?: number;
-  allowNetworkBind: boolean;
   temporalMode?: TemporalConfig["mode"];
   temporalPort?: number;
   temporalAddress?: string;
@@ -1441,10 +1361,6 @@ async function handleRuntimeUpDetach(options: {
   // explicitly inside spawnDetachedRuntime.
   const extraArgs: string[] = [];
   if (options.projectDir) extraArgs.push("--project-dir", options.projectDir);
-  if (options.web === false) extraArgs.push("--no-web");
-  if (options.webHost) extraArgs.push("--web-host", options.webHost);
-  if (options.webPort !== undefined) extraArgs.push("--web-port", String(options.webPort));
-  if (options.allowNetworkBind) extraArgs.push("--allow-network-bind");
   if (options.temporalMode) extraArgs.push("--temporal-mode", options.temporalMode);
   if (options.temporalPort !== undefined)
     extraArgs.push("--temporal-port", String(options.temporalPort));
@@ -1653,21 +1569,6 @@ async function waitForTemporalReady(manager: TemporalManager, timeoutMs = 15_000
     await sleep(250);
   }
   throw new Error(`Temporal did not become ready within ${timeoutMs}ms: ${lastMessage}`);
-}
-
-async function closeStartedWebServer(started: StartedWebServer | undefined): Promise<void> {
-  if (!started) {
-    return;
-  }
-  await new Promise<void>((resolve, reject) => {
-    started.server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
 }
 
 async function sleep(ms: number): Promise<void> {

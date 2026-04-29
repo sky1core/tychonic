@@ -18,6 +18,8 @@
   },
   "files": [
     "dist",
+    "!dist/web",
+    "!dist/web-client",
     "docs",
     "examples/workflows/*/README.md",
     "examples/workflows/*/*.mjs",
@@ -41,7 +43,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "tsx src/cli/main.ts",
-    "build": "npm run clean && tsc -p tsconfig.json && vite build",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
     "install:local": "npm run build && npm pack --pack-destination /tmp && npm install -g /tmp/tychonic-$npm_package_version.tgz",

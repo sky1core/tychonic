@@ -141,7 +141,7 @@ describeWithLoopback("startWebServer", () => {
         port: 0,
         temporalClient: fakeTemporalClient(cwd)
       })
-    ).rejects.toThrow(/refusing to bind Tychonic web API to non-loopback host/);
+    ).rejects.toThrow(/refusing to bind unauthenticated Tychonic listener to non-loopback host/);
   });
 
   it("serves the installed workflow bundle registry through /workflows", async () => {

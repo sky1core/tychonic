@@ -31,15 +31,7 @@ describe("launchd service installer", () => {
       expect(installed.stateDir).toBe(stateHome);
       expect(installed.logDir).toBe(logHome);
       expect(installed.loaded).toBe(false);
-      const webPlist = await readFile(installed.plists.web, "utf8");
-      expect(webPlist).toContain(process.execPath);
-      expect(webPlist).toContain(fixture.cliPath);
-      expect(webPlist).toContain(join(root, "project"));
-      expect(webPlist).toContain(stateHome);
-      expect(webPlist).toContain("<key>EnvironmentVariables</key>");
-      expect(webPlist).toContain("<key>PATH</key>");
-      expect(webPlist).toContain("/opt/homebrew/bin");
-      expect(webPlist).not.toContain(process.cwd());
+      expect(Object.prototype.hasOwnProperty.call(installed.plists, "web")).toBe(false);
       const temporalPlist = await readFile(installed.plists.temporal, "utf8");
       expect(temporalPlist).toContain(join(stateHome, "temporal", "temporal.db"));
       expect(temporalPlist).toContain("<string>--port</string>");
@@ -57,16 +49,6 @@ describe("launchd service installer", () => {
       expect(workerPlist).not.toContain("<string>--ui-port</string>");
       expect(workerPlist).toContain("<string>--shutdown-grace-time</string>");
       expect(workerPlist).toContain("<string>35m</string>");
-      expect(webPlist).toContain("<string>--project-dir</string>");
-      expect(webPlist).toContain(join(root, "project"));
-      expect(webPlist).toContain("<string>--temporal-mode</string>");
-      expect(webPlist).toContain("<string>managed-local</string>");
-      expect(webPlist).toContain("<string>--temporal-port</string>");
-      expect(webPlist).toContain("<string>9233</string>");
-      expect(webPlist).not.toContain("<string>--mode</string>");
-      expect(webPlist).not.toContain("<string>--cwd</string>");
-      expect(webPlist).not.toContain("<string>--frontend-port</string>");
-      expect(webPlist).not.toContain("<string>--ui-port</string>");
       // The host installer does not seed workflow bundles. The runtime
       // workflow modules dir must contain zero bundles until the
       // operator runs `tychonic workflows install` explicitly.
@@ -106,59 +88,6 @@ describe("launchd service installer", () => {
     ).rejects.toThrow(/refusing to install launchd services from source checkout CLI/);
   });
 
-  it("refuses non-loopback web binds by default", async () => {
-    const root = await makeTempRoot("tychonic-launchd-bind-");
-    const packageRoot = join(root, "app", "node_modules", "tychonic");
-    const cliPath = join(packageRoot, "dist", "cli", "main.js");
-    const temporalPath = join(root, "bin", "temporal");
-    await mkdir(join(packageRoot, "dist", "cli"), { recursive: true });
-    await mkdir(join(root, "bin"), { recursive: true });
-    await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "tychonic" }), "utf8");
-    await writeFile(cliPath, "#!/usr/bin/env node\n", "utf8");
-    await writeFile(temporalPath, "#!/bin/sh\n", "utf8");
-
-    await expect(
-      installLaunchdServices({
-        projectDir: root,
-        webHost: "0.0.0.0",
-        nodePath: process.execPath,
-        cliPath,
-        temporalCliPath: temporalPath,
-        launchAgentDir: join(root, "LaunchAgents"),
-        load: false
-      })
-    ).rejects.toThrow(/refusing to bind Tychonic web API to non-loopback host/);
-  });
-
-  it("passes the explicit network-bind escape hatch to the web LaunchAgent", async () => {
-    const root = await makeTempRoot("tychonic-launchd-bind-allow-");
-    const fixture = await makePackagedInstallFixture(root);
-    const launchAgentDir = join(root, "LaunchAgents");
-    const originalStateHome = process.env.TYCHONIC_STATE_HOME;
-    const originalLogHome = process.env.TYCHONIC_LOG_HOME;
-    process.env.TYCHONIC_STATE_HOME = join(root, "state");
-    process.env.TYCHONIC_LOG_HOME = join(root, "logs");
-
-    try {
-      const installed = await installLaunchdServices({
-        projectDir: root,
-        webHost: "0.0.0.0",
-        allowNetworkBind: true,
-        nodePath: process.execPath,
-        cliPath: fixture.cliPath,
-        temporalCliPath: fixture.temporalPath,
-        launchAgentDir,
-        load: false
-      });
-
-      const webPlist = await readFile(installed.plists.web, "utf8");
-      expect(webPlist).toContain("<string>0.0.0.0</string>");
-      expect(webPlist).toContain("<string>--allow-network-bind</string>");
-    } finally {
-      restoreEnv("TYCHONIC_STATE_HOME", originalStateHome);
-      restoreEnv("TYCHONIC_LOG_HOME", originalLogHome);
-    }
-  });
 });
 
 async function makeTempRoot(prefix: string): Promise<string> {

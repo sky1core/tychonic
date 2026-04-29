@@ -134,7 +134,6 @@ describe("resolveInstanceRuntime — operational (instance unset)", () => {
         taskQueue: "tychonic",
         apiPort: 7233
       },
-      webPort: 8765,
       warnings: []
     });
     // `instance` key is omitted entirely when unset (exactOptionalPropertyTypes).
@@ -149,13 +148,11 @@ describe("resolveInstanceRuntime — operational (instance unset)", () => {
       defaultLogDir: DEFAULT_LOG,
       explicit: {
         address: "127.0.0.1:9999",
-        taskQueue: "tychonic-custom",
-        webPort: 9000
+        taskQueue: "tychonic-custom"
       }
     });
     expect(resolved.temporal.address).toBe("127.0.0.1:9999");
     expect(resolved.temporal.taskQueue).toBe("tychonic-custom");
-    expect(resolved.webPort).toBe(9000);
     // API port stayed on operational default.
     expect(resolved.temporal.apiPort).toBe(7233);
     expect(resolved.warnings).toEqual([]);
@@ -177,7 +174,6 @@ describe("resolveInstanceRuntime — instance set, no explicit", () => {
     expect(resolved.temporal.address).toBe("127.0.0.1:17706");
     expect(resolved.temporal.namespace).toBe("default");
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");
-    expect(resolved.webPort).toBe(18706);
     expect(resolved.warnings).toEqual([]);
   });
 
@@ -318,7 +314,6 @@ describe("resolveInstanceRuntime — smoke reproduction (abq-patch)", () => {
     expect(resolved.temporal.taskQueue).toBe("tychonic-abq-patch");
     expect(resolved.stateDir).toBe(`${DEFAULT_STATE}/instances/abq-patch`);
     expect(resolved.logDir).toBe(`${DEFAULT_LOG}/instances/abq-patch`);
-    expect(resolved.webPort).toBe(18706);
     expect(resolved.warnings).toEqual([]);
   });
 });

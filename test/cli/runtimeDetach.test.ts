@@ -119,10 +119,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
 
-    const result = await runCli(
-      ["--instance", "empty-fg", "runtime", "up", "--no-web"],
-      { env }
-    );
+    const result = await runCli(["--instance", "empty-fg", "runtime", "up"], { env });
     expect(result.exitCode).not.toBe(0);
     const output = result.stderr + result.stdout;
     expect(output).toMatch(/no workflow bundles installed in instance 'empty-fg'/);
@@ -163,7 +160,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(install.exitCode).toBe(0);
 
     const result = await runCli(
-      ["--instance", instance, "runtime", "up", "--no-web", "--temporal-port", String(temporalPort)],
+      ["--instance", instance, "runtime", "up", "--temporal-port", String(temporalPort)],
       { env }
     );
     expect(result.exitCode).not.toBe(0);
