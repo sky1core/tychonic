@@ -37,6 +37,10 @@ Foreground runtime:
 tychonic runtime up --project-dir "$PWD"
 ```
 
+Stop a foreground runtime with `Ctrl-C`. Detached isolated runtimes print a
+`stopCommand`; use that command instead of reading pid files or killing
+processes manually.
+
 Detached/isolated instance flags are development tools. Use them only when the
 task explicitly needs isolated runtime state. Prefer `tychonic --help` and
 command-specific `--help` for uncommon flags instead of copying options into
@@ -63,6 +67,8 @@ Run commands require a Tychonic runtime started in another terminal:
 tychonic runtime up --project-dir "$PWD"
 ```
 
+Stop that foreground terminal with `Ctrl-C` when the workflow work is done.
+
 To start work and continue with other tasks, omit the wait flag:
 
 ```sh
@@ -86,7 +92,7 @@ include the next useful Tychonic commands.
 ```json
 {
   "ok": true,
-  "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123 --include-result`, `tychonic inbox --workflow-id wf_123`, `tychonic artifacts --workflow-id wf_123`, `tychonic logs --workflow-id wf_123`. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.",
+  "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.",
   "state": "qa",
   "workflowId": "wf_123"
 }
@@ -100,10 +106,16 @@ reporting.
 State names are workflow-owned. If a message names a state, use the bundle
 README to understand that state before sending an interaction command.
 
-Inspect a run when more evidence is needed:
+Inspect a run with `status --workflow-id` first. It includes an evidence
+summary and read commands for artifacts and logs.
 
 ```sh
-tychonic status --workflow-id <id> --include-result
+tychonic status --workflow-id <id>
+```
+
+Use focused commands only when a specific list or raw content is needed:
+
+```sh
 tychonic inbox --workflow-id <id>
 tychonic artifacts --workflow-id <id>
 tychonic artifacts --workflow-id <id> --artifact <art-id>
@@ -111,8 +123,8 @@ tychonic logs --workflow-id <id>
 tychonic sessions --workflow-id <id>
 ```
 
-Without `--include-result`, `status` reports Temporal execution metadata. With
-`--include-result`, it also includes the workflow's Tychonic run result when
+Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
+it includes the workflow's Tychonic run result and evidence summary when
 available.
 
 `tychonic run` prints a JSON object. Do not require the operator to inspect

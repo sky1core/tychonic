@@ -10,10 +10,8 @@ describe("stoppedWorkflowMessage", () => {
     });
 
     expect(message).toContain("Workflow is waiting for input at state 'qa'.");
-    expect(message).toContain("`tychonic status --workflow-id wf_pending --include-result`");
-    expect(message).toContain("`tychonic inbox --workflow-id wf_pending`");
-    expect(message).toContain("`tychonic artifacts --workflow-id wf_pending`");
-    expect(message).toContain("`tychonic logs --workflow-id wf_pending`");
+    expect(message).toContain("`tychonic status --workflow-id wf_pending`");
+    expect(message).toContain("it lists inbox, artifacts, logs, and sessions");
     expect(message).toContain("`tychonic approve wf_pending --state qa`");
     expect(message).toContain("`tychonic reject wf_pending --state qa --feedback \"<feedback>\"`");
     expect(message).toContain("`tychonic modify wf_pending --state qa --note \"<note>\"`");
@@ -27,7 +25,7 @@ describe("stoppedWorkflowMessage", () => {
     });
 
     expect(message).toBe(
-      "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_done --include-result`."
+      "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_done`."
     );
   });
 
@@ -39,8 +37,7 @@ describe("stoppedWorkflowMessage", () => {
     });
 
     expect(message).toContain("Workflow needs attention with status 'waiting_user'.");
-    expect(message).toContain("`tychonic status --workflow-id wf_attention --include-result`");
-    expect(message).toContain("`tychonic inbox --workflow-id wf_attention`");
+    expect(message).toContain("`tychonic status --workflow-id wf_attention`");
     expect(message).toContain("documented recovery path");
   });
 
@@ -54,7 +51,7 @@ describe("stoppedWorkflowMessage", () => {
     expect(message).toContain("`tychonic approve 'wf odd' --state 'qa'\\''s turn'`");
   });
 
-  it("keeps wait CLI payloads concise and leaves full results behind status --include-result", () => {
+  it("keeps wait CLI payloads concise and leaves full results behind status", () => {
     const stoppedResult = {
       reason: "run_status",
       workflowId: "wf_done",
@@ -72,7 +69,7 @@ describe("stoppedWorkflowMessage", () => {
       workflowId: "wf_done",
       runId: "run_done",
       message:
-        "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_done --include-result`.",
+        "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_done`.",
       status: "succeeded"
     });
     expect("result" in payload).toBe(false);

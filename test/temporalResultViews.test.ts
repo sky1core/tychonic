@@ -9,6 +9,7 @@ import {
   listInboxItems,
   listLiveOutputAttempts,
   liveOutputContentPath,
+  workflowEvidenceView,
   workflowResultView,
   type TychonicWorkflowResult
 } from "../src/cli/temporalResultViews.js";
@@ -28,6 +29,39 @@ describe("Temporal result views", () => {
     expect(listLiveOutputAttempts(result).map((attempt) => attempt.id)).toEqual(["attempt_1"]);
     expect(listInboxItems(result).map((item) => item.id)).toEqual(["inbox_1"]);
     expect(listAgentSessions(result, 1).map((session) => session.id)).toEqual(["session_1"]);
+    expect(workflowEvidenceView(result, "wf_1", "run_1")).toMatchObject({
+      run_id: "run_temporal_view",
+      template: "simple_workflow",
+      status: "waiting_user",
+      counts: {
+        states: 1,
+        attempts: 2,
+        artifacts: 1,
+        logs: 1,
+        inbox: 1,
+        sessions: 1,
+        findings: 0
+      },
+      commands: {
+        status: "tychonic status --workflow-id wf_1 --run-id run_1",
+        inbox: "tychonic inbox --workflow-id wf_1 --run-id run_1",
+        artifacts: "tychonic artifacts --workflow-id wf_1 --run-id run_1",
+        logs: "tychonic logs --workflow-id wf_1 --run-id run_1",
+        sessions: "tychonic sessions --workflow-id wf_1 --run-id run_1"
+      },
+      artifacts: [
+        {
+          id: "artifact_1",
+          read_command: "tychonic artifacts --workflow-id wf_1 --run-id run_1 --artifact artifact_1"
+        }
+      ],
+      logs: [
+        {
+          id: "attempt_1",
+          read_command: "tychonic logs --workflow-id wf_1 --run-id run_1 --attempt attempt_1"
+        }
+      ]
+    });
     expect(artifactContentPath(result, "artifact_1")).toBe(
       join(cwd, ".tychonic", "runs", "run_temporal_view", "artifacts", "worker-output.txt")
     );

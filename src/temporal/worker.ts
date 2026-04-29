@@ -48,11 +48,28 @@ export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}):
   });
 
   if (options.shutdownSignals ?? true) {
+    let shutdownStarted = false;
     const shutdown = (): void => {
-      worker.shutdown();
+      if (shutdownStarted) return;
+      shutdownStarted = true;
+      try {
+        worker.shutdown();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("Not running")) {
+          process.stderr.write(`tychonic worker: shutdown request failed: ${message}\n`);
+        }
+      }
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
+    try {
+      await worker.run();
+    } finally {
+      process.removeListener("SIGINT", shutdown);
+      process.removeListener("SIGTERM", shutdown);
+    }
+    return;
   }
 
   await worker.run();

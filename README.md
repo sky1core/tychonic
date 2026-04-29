@@ -77,6 +77,9 @@ runs the worker.
 tychonic runtime up
 ```
 
+Stop the foreground runtime with `Ctrl-C`. Detached isolated runtimes print a
+`stopCommand`; run that command to stop them.
+
 Start a run from another terminal:
 
 ```sh
@@ -103,13 +106,13 @@ work; the no-wait response includes the `workflowId` needed for `tychonic wait`.
 The first smoke normally finishes like this:
 
 ```json
-{ "ok": true, "message": "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_123 --include-result`.", "workflowId": "wf_123", "status": "succeeded" }
+{ "ok": true, "message": "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_123`.", "workflowId": "wf_123", "status": "succeeded" }
 ```
 
 Interactive workflows can also return a waiting state:
 
 ```json
-{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123 --include-result`, `tychonic inbox --workflow-id wf_123`, `tychonic artifacts --workflow-id wf_123`, `tychonic logs --workflow-id wf_123`. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
+{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
 ```
 
 To start a workflow and keep working without waiting, omit the wait flag:
@@ -132,23 +135,30 @@ The response may also include `runId`; ordinary follow-up commands use
 tychonic wait <workflow-id>
 ```
 
-Inspect a run:
+Inspect a run. `status --workflow-id` includes an evidence summary and the read
+commands for artifacts and logs.
 
 ```sh
-tychonic status --workflow-id <id> --include-result
+tychonic status --workflow-id <id>
+```
+
+Use the focused commands when you need a specific list or raw content:
+
+```sh
 tychonic inbox --workflow-id <id>
 tychonic artifacts --workflow-id <id>
 tychonic logs --workflow-id <id>
 tychonic sessions --workflow-id <id>
 ```
 
-Without `--include-result`, `status` reports execution metadata. With
-`--include-result`, it also includes the workflow's Tychonic run result when
+Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
+it includes the workflow's Tychonic run result and evidence summary when
 available.
 
 After the no-agent smoke passes, install an agent workflow such as
-`simpleWorkflow`. Its default profile uses external agent CLIs, so make sure
-those CLIs are installed and authenticated first.
+`simpleWorkflow`. Its default profile uses external agent CLIs and verifies
+with `npm run typecheck`, `npm run build`, and `npm test`, so make sure those
+CLIs and scripts are available in the target repository.
 
 ```sh
 (cd "$EXAMPLES_DIR/simpleWorkflow" && npm install)

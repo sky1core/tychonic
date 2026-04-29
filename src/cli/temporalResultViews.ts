@@ -3,7 +3,9 @@ import type {
   AgentSessionRecord,
   ArtifactRecord,
   DecisionInboxItemRecord,
+  FindingRecord,
   WorkflowRunRecord,
+  WorkflowStateRecord,
   WorkflowRunStatus
 } from "../domain/types.js";
 import { RunArtifactStore } from "../storage/runArtifactStore.js";
@@ -24,6 +26,53 @@ export interface WorkflowResultView {
   goal?: string;
 }
 
+export interface WorkflowEvidenceCommandView {
+  status: string;
+  inbox: string;
+  artifacts: string;
+  logs: string;
+  sessions: string;
+}
+
+export interface WorkflowArtifactEvidenceView extends ArtifactRecord {
+  read_command: string;
+}
+
+export interface WorkflowLogEvidenceView {
+  id: string;
+  state_id: string;
+  kind: string;
+  status: string;
+  reason: string;
+  exit_code?: number;
+  started_at: string;
+  finished_at?: string;
+  read_command: string;
+}
+
+export interface WorkflowEvidenceView {
+  run_id: string;
+  template: string;
+  status: string;
+  summary?: string;
+  latest_state?: WorkflowStateRecord;
+  counts: {
+    states: number;
+    attempts: number;
+    artifacts: number;
+    logs: number;
+    inbox: number;
+    sessions: number;
+    findings: number;
+  };
+  commands: WorkflowEvidenceCommandView;
+  inbox: DecisionInboxItemRecord[];
+  artifacts: WorkflowArtifactEvidenceView[];
+  logs: WorkflowLogEvidenceView[];
+  sessions: AgentSessionRecord[];
+  findings: FindingRecord[];
+}
+
 export function assertTychonicWorkflowResult(result: unknown): asserts result is TychonicWorkflowResult {
   if (isTychonicWorkflowResult(result)) {
     return;
@@ -37,6 +86,51 @@ export function workflowResultView(result: TychonicWorkflowResult): WorkflowResu
     template: result.run.template,
     status: result.run.status,
     ...(result.run.goal ? { goal: result.run.goal } : {})
+  };
+}
+
+export function workflowEvidenceView(
+  result: TychonicWorkflowResult,
+  workflowId: string,
+  runId?: string
+): WorkflowEvidenceView {
+  const logs = listLiveOutputAttempts(result);
+  const states = result.run.states;
+  const latestState = states.length > 0 ? states[states.length - 1] : undefined;
+  return {
+    run_id: result.run.id,
+    template: result.run.template,
+    status: result.run.status,
+    ...(result.run.summary ? { summary: result.run.summary } : {}),
+    ...(latestState ? { latest_state: latestState } : {}),
+    counts: {
+      states: result.run.states.length,
+      attempts: result.run.activity_attempts.length,
+      artifacts: result.run.artifacts.length,
+      logs: logs.length,
+      inbox: result.run.inbox.length,
+      sessions: result.run.agent_sessions.length,
+      findings: result.run.findings.length
+    },
+    commands: evidenceCommands(workflowId, runId),
+    inbox: result.run.inbox,
+    artifacts: result.run.artifacts.map((artifact) => ({
+      ...artifact,
+      read_command: `${evidenceCommand("artifacts", workflowId, runId)} --artifact ${shellArg(artifact.id)}`
+    })),
+    logs: logs.map((attempt) => ({
+      id: attempt.id,
+      state_id: attempt.state_id,
+      kind: attempt.kind,
+      status: attempt.status,
+      reason: attempt.reason,
+      ...(attempt.exit_code !== undefined ? { exit_code: attempt.exit_code } : {}),
+      started_at: attempt.started_at,
+      ...(attempt.finished_at ? { finished_at: attempt.finished_at } : {}),
+      read_command: `${evidenceCommand("logs", workflowId, runId)} --attempt ${shellArg(attempt.id)}`
+    })),
+    sessions: result.run.agent_sessions,
+    findings: result.run.findings
   };
 }
 
@@ -75,6 +169,32 @@ export function listAgentSessions(result: TychonicWorkflowResult, limit: number)
 
 function artifactStore(run: WorkflowRunRecord): RunArtifactStore {
   return new RunArtifactStore(`${run.cwd}/.tychonic`);
+}
+
+function evidenceCommands(workflowId: string, runId?: string): WorkflowEvidenceCommandView {
+  return {
+    status: `tychonic status ${workflowSelector(workflowId, runId)}`,
+    inbox: evidenceCommand("inbox", workflowId, runId),
+    artifacts: evidenceCommand("artifacts", workflowId, runId),
+    logs: evidenceCommand("logs", workflowId, runId),
+    sessions: evidenceCommand("sessions", workflowId, runId)
+  };
+}
+
+function evidenceCommand(command: "inbox" | "artifacts" | "logs" | "sessions", workflowId: string, runId?: string): string {
+  return `tychonic ${command} ${workflowSelector(workflowId, runId)}`;
+}
+
+function workflowSelector(workflowId: string, runId?: string): string {
+  const base = `--workflow-id ${shellArg(workflowId)}`;
+  return runId ? `${base} --run-id ${shellArg(runId)}` : base;
+}
+
+function shellArg(value: string): string {
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function isTychonicWorkflowResult(value: unknown): value is TychonicWorkflowResult {

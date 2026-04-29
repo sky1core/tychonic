@@ -34,7 +34,7 @@ export function stoppedWorkflowMessage(result: StoppedWorkflowMessageInput): str
     const state = result.pendingState ?? "<state>";
     return [
       `Workflow is waiting for input at state '${state}'.`,
-      `Inspect evidence with ${evidenceCommands(result.workflowId)}.`,
+      `Inspect evidence with \`${statusCommand(result.workflowId)}\`; it lists inbox, artifacts, logs, and sessions.`,
       `Then run \`${interactionCommand("approve", result.workflowId, state)}\`,`,
       `\`${interactionCommand("reject", result.workflowId, state)} --feedback "<feedback>"\`,`,
       `or \`${interactionCommand("modify", result.workflowId, state)} --note "<note>"\`.`
@@ -49,7 +49,7 @@ export function stoppedWorkflowMessage(result: StoppedWorkflowMessageInput): str
   if (result.status === "waiting_user" || result.status === "blocked") {
     return [
       `Workflow needs attention with status '${result.status}'.`,
-      `Inspect evidence with ${evidenceCommands(result.workflowId)} before deciding whether to start a fresh run or use the workflow's documented recovery path.`
+      `Inspect evidence with \`${statusCommand(result.workflowId)}\` before deciding whether to start a fresh run or use the workflow's documented recovery path.`
     ].join(" ");
   }
   if (result.status) {
@@ -57,23 +57,13 @@ export function stoppedWorkflowMessage(result: StoppedWorkflowMessageInput): str
     if (result.status === "succeeded") {
       return `${prefix} Read the result with \`${statusCommand(result.workflowId)}\`.`;
     }
-    return `${prefix} Inspect evidence with ${evidenceCommands(result.workflowId)} before reporting the outcome.`;
+    return `${prefix} Inspect evidence with \`${statusCommand(result.workflowId)}\` before reporting the outcome.`;
   }
   return `Workflow is not ready to continue, but no Tychonic status was available. Inspect details with \`${statusCommand(result.workflowId)}\`.`;
 }
 
-function evidenceCommands(workflowId: string): string {
-  const workflowArg = shellArg(workflowId);
-  return [
-    `\`tychonic status --workflow-id ${workflowArg} --include-result\``,
-    `\`tychonic inbox --workflow-id ${workflowArg}\``,
-    `\`tychonic artifacts --workflow-id ${workflowArg}\``,
-    `\`tychonic logs --workflow-id ${workflowArg}\``
-  ].join(", ");
-}
-
 function statusCommand(workflowId: string): string {
-  return `tychonic status --workflow-id ${shellArg(workflowId)} --include-result`;
+  return `tychonic status --workflow-id ${shellArg(workflowId)}`;
 }
 
 function interactionCommand(command: "approve" | "reject" | "modify", workflowId: string, state: string): string {

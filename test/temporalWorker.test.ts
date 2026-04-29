@@ -113,4 +113,60 @@ describe("runTemporalWorker", () => {
       })
     );
   });
+
+  it("handles repeated shutdown signals with one worker shutdown request", async () => {
+    await mkdir("/tmp/tychonic-test-state/workflows/modules/simpleWorkflow", { recursive: true });
+    await writeFile(
+      "/tmp/tychonic-test-state/workflows/modules/simpleWorkflow/workflow.mjs",
+      "export function simpleWorkflow() {}",
+      "utf8"
+    );
+
+    nativeConnectionConnectMock.mockResolvedValue({ id: "conn" });
+    normalizeTemporalConfigMock.mockReturnValue({
+      address: "127.0.0.1:7233",
+      namespace: "default",
+      taskQueue: "tychonic"
+    });
+
+    workerCreateMock.mockResolvedValue({
+      run: workerRunMock,
+      shutdown: workerShutdownMock
+    });
+
+    const signalHandlers = new Map<string, () => void>();
+    const originalOnce = process.once.bind(process);
+    const originalRemoveListener = process.removeListener.bind(process);
+    const onceSpy = vi.spyOn(process, "once").mockImplementation(((event, listener) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        signalHandlers.set(event, listener as () => void);
+        return process;
+      }
+      return originalOnce(event as string, listener as (...args: unknown[]) => void);
+    }) as typeof process.once);
+    const removeListenerSpy = vi
+      .spyOn(process, "removeListener")
+      .mockImplementation(((event, listener) => {
+        if (event === "SIGINT" || event === "SIGTERM") {
+          return process;
+        }
+        return originalRemoveListener(event as string, listener as (...args: unknown[]) => void);
+      }) as typeof process.removeListener);
+
+    try {
+      bundleWorkflowCodeMock.mockResolvedValue({ code: "bundle" });
+      workerRunMock.mockImplementation(async () => {
+        signalHandlers.get("SIGINT")?.();
+        signalHandlers.get("SIGTERM")?.();
+      });
+
+      const workerModule = await import("../src/temporal/worker.js");
+      await workerModule.runTemporalWorker();
+
+      expect(workerShutdownMock).toHaveBeenCalledTimes(1);
+    } finally {
+      onceSpy.mockRestore();
+      removeListenerSpy.mockRestore();
+    }
+  });
 });

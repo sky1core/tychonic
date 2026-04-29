@@ -172,6 +172,17 @@ describe("simpleWorkflow defaultProfile.states.work.resume", () => {
   });
 });
 
+describe("simpleWorkflow defaultProfile.states.verify.command", () => {
+  it("uses generic npm verification scripts, not this repo's example validator", () => {
+    const verify = (simpleDefault as any).states?.verify;
+    expect(verify?.type).toBe("verify");
+    expect(verify?.command).toContain("npm run typecheck");
+    expect(verify?.command).toContain("npm run build");
+    expect(verify?.command).toContain("npm test");
+    expect(verify?.command).not.toContain("validate:examples");
+  });
+});
+
 describe("Kiro-oriented example profiles", () => {
   it("uses Kiro as the primary QA reviewer with a normalizer in the normalized QA variant", () => {
     const qa = (architectKiroQaDefault as any).states?.qa;

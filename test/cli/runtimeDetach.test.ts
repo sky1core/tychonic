@@ -81,12 +81,22 @@ async function getUnusedLoopbackPort(): Promise<number> {
 }
 
 describe("tychonic runtime up --detach (gating)", () => {
+  it("explains instance selection in runtime up help", async () => {
+    const result = await runCli(["runtime", "up", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Instance selection:");
+    expect(result.stdout).toContain("--instance <name>");
+    expect(result.stdout).toContain("TYCHONIC_INSTANCE");
+  });
+
   it("refuses without --instance", async () => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     delete env.TYCHONIC_INSTANCE;
     const result = await runCli(["runtime", "up", "--detach"], { env });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr + result.stdout).toMatch(/--detach requires --instance/);
+    expect(result.stderr + result.stdout).toMatch(/--detach requires an active instance/);
+    expect(result.stderr + result.stdout).toContain("TYCHONIC_INSTANCE");
   });
 
   it("refuses pre-spawn when the instance has no workflow bundles installed", async () => {

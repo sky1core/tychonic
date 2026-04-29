@@ -10,6 +10,7 @@ import {
   listInboxItems,
   listLiveOutputAttempts,
   liveOutputContentPath,
+  workflowEvidenceView,
   workflowResultView,
   type TychonicWorkflowResult
 } from "./temporalResultViews.js";
@@ -69,6 +70,8 @@ import { validateBundleFileShape } from "../temporal/bundleValidator.js";
 import { productVersion } from "../version.js";
 
 const program = new Command();
+const INSTANCE_SELECTION_HELP =
+  "\nInstance selection: --instance <name> is a global option. It is accepted before or after runtime subcommands, or set TYCHONIC_INSTANCE=<name> in the shell.";
 
 program.name(productName).description("Local AI work operations manager").version(productVersion);
 program.addHelpText(
@@ -363,10 +366,11 @@ runtimeCommand
   .option("--shutdown-grace-time <duration>", "worker drain time on shutdown before cancelling in-flight activities")
   .option(
     "--detach",
-    "spawn the runtime in a new session and exit; requires --instance. PID is written under <stateDir>/runtime.pid, stdout/stderr tee into <logDir>/runtime.log.",
+    "spawn the runtime in a new session and exit; requires an active instance from --instance or TYCHONIC_INSTANCE. PID is written under <stateDir>/runtime.pid, stdout/stderr tee into <logDir>/runtime.log.",
     false
   )
   .description("Start Temporal if needed, then run the worker in the foreground")
+  .addHelpText("after", INSTANCE_SELECTION_HELP)
   .action(
     async (options: {
       projectDir: string;
@@ -466,6 +470,9 @@ runtimeCommand
               mode: "foreground",
               temporal,
               worker: { status: "running" },
+              ...(getActiveInstance()
+                ? { stopCommand: `tychonic runtime stop --instance ${getActiveInstance()}` }
+                : {}),
               workflows: { modules: await listRuntimeWorkflowModules() },
               _meta: cliInstanceMeta()
             },
@@ -511,8 +518,9 @@ runtimeCommand
   });
 
 runtimeCommand
-  .command("stop", { hidden: true })
-  .description("Gracefully stop the isolated runtime for --instance <name> with SIGTERM only")
+  .command("stop")
+  .description("Gracefully stop an isolated runtime for --instance <name> or TYCHONIC_INSTANCE")
+  .addHelpText("after", INSTANCE_SELECTION_HELP)
   .action(async () => {
     await handleRuntimeStop();
   });
@@ -651,7 +659,6 @@ program
   .command("status")
   .option("--workflow-id <id>", "workflow id to describe")
   .option("--run-id <id>", "workflow run id to describe")
-  .option("--include-result", "include completed workflow result when available")
   .option("--limit <n>", "maximum workflows to list", (value) => Number(value), 20)
   .addOption(hiddenVisibilityQueryOption())
   .addOption(hiddenTemporalModeOption())
@@ -664,7 +671,6 @@ program
     async (options: {
       workflowId?: string;
       runId?: string;
-      includeResult?: boolean;
       limit: number;
       visibilityQuery?: string;
       temporalMode?: TemporalConfig["mode"];
@@ -681,18 +687,28 @@ program
       }
 
       if (options.workflowId) {
-        const result = await describeTychonicTemporalWorkflow({
+        const workflow = await describeTychonicTemporalWorkflow({
           workflowId: options.workflowId,
           ...(options.runId ? { runId: options.runId } : {}),
-          includeResult: Boolean(options.includeResult),
+          includeResult: true,
           ...temporalConfigFromOptions(options)
         });
+        const output: Record<string, unknown> = {
+          ok: true,
+          mode: "temporal"
+        };
+        if (workflow.result !== undefined) {
+          try {
+            assertTychonicWorkflowResult(workflow.result);
+            output.evidence = workflowEvidenceView(workflow.result, workflow.workflowId, workflow.runId);
+          } catch (error) {
+            output.evidenceError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        output.workflow = workflow;
+        output._meta = cliInstanceMeta();
         console.log(
-          JSON.stringify(
-            { ok: true, mode: "temporal", workflow: result, _meta: cliInstanceMeta() },
-            null,
-            2
-          )
+          JSON.stringify(output, null, 2)
         );
         return;
       }
@@ -1405,7 +1421,12 @@ async function tryReplaceLaunchdWorker(): Promise<{ worker_replacement: unknown 
   if (active !== undefined) {
     return {
       worker_replacement: null,
-      note: `instance='${active}' is a foreground-only isolated instance; stop and restart 'tychonic runtime up --instance ${active}' (or 'runtime up --instance ${active} --detach') to pick up the new bundle.`
+      note:
+        `instance='${active}' is a foreground-only isolated instance. ` +
+        `If its runtime is already running, stop it with 'tychonic runtime stop --instance ${active}' ` +
+        `and restart with 'tychonic runtime up --instance ${active}' ` +
+        `(or 'tychonic runtime up --instance ${active} --detach') to pick up the new bundle. ` +
+        `When TYCHONIC_INSTANCE=${active} is set in the shell, the --instance flag may be omitted.`
     };
   }
   try {
@@ -1445,7 +1466,7 @@ async function handleRuntimeUpDetach(options: {
   const instance = getActiveInstance();
   if (instance === undefined) {
     throw new Error(
-      "runtime up --detach requires --instance <name>; detached mode is for isolated instances only"
+      "runtime up --detach requires an active instance from --instance <name> or TYCHONIC_INSTANCE; detached mode is for isolated instances only"
     );
   }
 
@@ -1514,6 +1535,7 @@ async function handleRuntimeUpDetach(options: {
         pid: result.pid,
         pidFile: result.pidFile,
         logFile: result.logFile,
+        stopCommand: `tychonic runtime stop --instance ${instance}`,
         ...(staleRemoved ? { staleRemoved: true } : {}),
         _meta: cliInstanceMeta()
       },

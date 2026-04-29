@@ -22,9 +22,17 @@ Inspect the installed profile:
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```
 
-The bundled default profile uses Claude for `work` and `review`, and a
-multi-line npm command for `verify`. Adjust the installed profile or pass a
-whole-profile `--config <file>` replacement if your local agent setup differs.
+The bundled default profile uses Claude for `work` and `review`. Its `verify`
+state runs:
+
+```sh
+npm run typecheck
+npm run build
+npm test
+```
+
+Pass a whole-profile `--config <file>` replacement when the target repository
+uses a different verification command.
 
 ## Input
 

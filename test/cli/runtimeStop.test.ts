@@ -81,6 +81,18 @@ async function spawnDeadPid(): Promise<number> {
 }
 
 describe("tychonic runtime stop", () => {
+  it("is discoverable from runtime help", async () => {
+    const result = await runCli(["runtime", "--help"]);
+    const stopHelp = await runCli(["runtime", "stop", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("stop");
+    expect(result.stdout).toContain("Gracefully stop");
+    expect(stopHelp.exitCode).toBe(0);
+    expect(stopHelp.stdout).toContain("Instance selection:");
+    expect(stopHelp.stdout).toContain("TYCHONIC_INSTANCE");
+  });
+
   it("refuses without --instance", async () => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     delete env.TYCHONIC_INSTANCE;

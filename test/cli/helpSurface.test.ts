@@ -51,8 +51,8 @@ describe("CLI help public surface", () => {
     const stdout = await cliHelp(["status", "--help"]);
 
     expect(stdout).toContain("--workflow-id <id>");
-    expect(stdout).toContain("--include-result");
     expect(stdout).not.toContain("--visibility-query");
+    expect(stdout).not.toContain("--include-result");
     expect(stdout).not.toContain("Temporal");
   });
 
@@ -64,13 +64,14 @@ describe("CLI help public surface", () => {
     expect(temporalHelp).toContain("--temporal-port <port>");
   });
 
-  it("keeps isolated-instance cleanup and raw runtime verbs out of ordinary command lists", async () => {
+  it("keeps destructive cleanup hidden while listing the graceful runtime stop command", async () => {
     const runtimeHelp = await cliHelp(["runtime", "--help"]);
     const temporalHelp = await cliHelp(["temporal", "--help"]);
 
     expect(runtimeHelp).toContain("up [options]");
     expect(runtimeHelp).not.toContain("reset [options]");
-    expect(runtimeHelp).not.toContain("stop");
+    expect(runtimeHelp).toContain("stop");
+    expect(runtimeHelp).toContain("Gracefully stop");
     expect(temporalHelp).toContain("status [options]");
     expect(temporalHelp).toContain("doctor [options]");
     expect(temporalHelp).not.toContain("start [options]");

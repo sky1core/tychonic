@@ -55,8 +55,7 @@ export const defaultProfile = {
       type: "verify",
       command: `npm run typecheck
 npm run build
-npm test
-npm run validate:examples`,
+npm test`,
       timeout: "20m"
     },
     review: {

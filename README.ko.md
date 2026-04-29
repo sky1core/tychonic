@@ -76,6 +76,9 @@ worker를 실행합니다.
 tychonic runtime up
 ```
 
+foreground runtime은 `Ctrl-C`로 종료합니다. detached isolated runtime은 출력에
+`stopCommand`가 들어 있으므로 그 명령으로 종료합니다.
+
 다른 terminal에서 run을 시작합니다.
 
 ```sh
@@ -102,13 +105,13 @@ no-wait 응답에는 나중에 `tychonic wait`에 넘길 `workflowId`가 들어 
 첫 smoke는 보통 이렇게 끝납니다.
 
 ```json
-{ "ok": true, "message": "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_123 --include-result`.", "workflowId": "wf_123", "status": "succeeded" }
+{ "ok": true, "message": "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_123`.", "workflowId": "wf_123", "status": "succeeded" }
 ```
 
 interactive workflow는 waiting state를 반환할 수도 있습니다.
 
 ```json
-{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123 --include-result`, `tychonic inbox --workflow-id wf_123`, `tychonic artifacts --workflow-id wf_123`, `tychonic logs --workflow-id wf_123`. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
+{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
 ```
 
 workflow를 시작만 하고 기다리지 않으려면 wait flag를 생략합니다.
@@ -131,22 +134,30 @@ no-wait 응답에는 나중에 사용할 handle이 들어 있습니다.
 tychonic wait <workflow-id>
 ```
 
-run 조회:
+run 조회는 `status --workflow-id`부터 시작합니다. 이 출력에는 evidence
+summary와 artifact/log를 읽는 명령이 같이 들어 있습니다.
 
 ```sh
-tychonic status --workflow-id <id> --include-result
+tychonic status --workflow-id <id>
+```
+
+특정 목록이나 raw content가 필요할 때만 focused command를 사용합니다.
+
+```sh
 tychonic inbox --workflow-id <id>
 tychonic artifacts --workflow-id <id>
 tychonic logs --workflow-id <id>
 tychonic sessions --workflow-id <id>
 ```
 
-`--include-result`가 없으면 `status`는 실행 metadata를 보여줍니다.
-`--include-result`를 붙이면 가능한 경우 Tychonic run result 본문까지 포함합니다.
+`--workflow-id` 없이 `status`를 실행하면 최근 workflow 목록을 보여줍니다.
+`--workflow-id`를 붙이면 가능한 경우 Tychonic run result와 evidence summary를
+포함합니다.
 
 no-agent smoke가 통과한 뒤에는 `simpleWorkflow` 같은 agent workflow를 설치합니다.
-기본 profile이 외부 agent CLI를 사용하므로 먼저 해당 CLI 설치와 인증을 끝내야
-합니다.
+기본 profile은 외부 agent CLI를 사용하고 `npm run typecheck`, `npm run build`,
+`npm test`로 검증하므로, target repository에 해당 CLI와 script가 준비되어
+있어야 합니다.
 
 ```sh
 (cd "$EXAMPLES_DIR/simpleWorkflow" && npm install)
