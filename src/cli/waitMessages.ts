@@ -55,7 +55,7 @@ export function stoppedWorkflowMessage(result: StoppedWorkflowMessageInput): str
   if (result.status) {
     const prefix = `Workflow finished with status '${result.status}'.`;
     if (result.status === "succeeded") {
-      return `${prefix} Read the result with \`${statusCommand(result.workflowId)}\`.`;
+      return `${prefix} Inspect evidence with \`${statusCommand(result.workflowId)}\`.`;
     }
     return `${prefix} Inspect evidence with \`${statusCommand(result.workflowId)}\` before reporting the outcome.`;
   }

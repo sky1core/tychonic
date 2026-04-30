@@ -5,7 +5,8 @@ describe("README public commands", () => {
   it("uses the current npx skills agent argument form", async () => {
     const readme = await readFile("README.md", "utf8");
 
-    expect(readme).toContain("npx skills add ./skills -a claude-code codex");
+    expect(readme).toContain("npx skills add ./skills -a claude-code -a codex --yes --global");
+    expect(readme).not.toContain("npx skills add ./skills -a claude-code codex");
     expect(readme).not.toContain("npx skills add ./skills -a claude-code,codex");
   });
 });

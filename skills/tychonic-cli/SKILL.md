@@ -98,9 +98,8 @@ include the next useful Tychonic commands.
 ```
 
 If the workflow is waiting, follow the commands in `message`. If the message
-says the workflow needs attention, inspect the evidence commands it names. If
-the message says the workflow finished, use the result command it names before
-reporting.
+says the workflow needs attention or finished, inspect the evidence command it
+names before reporting.
 
 State names are workflow-owned. If a message names a state, use the bundle
 README to understand that state before sending an interaction command.

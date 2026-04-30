@@ -17,7 +17,7 @@ describe("stoppedWorkflowMessage", () => {
     expect(message).toContain("`tychonic modify wf_pending --state qa --note \"<note>\"`");
   });
 
-  it("prints the result inspection command for succeeded workflows", () => {
+  it("prints the evidence inspection command for succeeded workflows", () => {
     const message = stoppedWorkflowMessage({
       reason: "run_status",
       workflowId: "wf_done",
@@ -25,7 +25,7 @@ describe("stoppedWorkflowMessage", () => {
     });
 
     expect(message).toBe(
-      "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_done`."
+      "Workflow finished with status 'succeeded'. Inspect evidence with `tychonic status --workflow-id wf_done`."
     );
   });
 
@@ -51,7 +51,7 @@ describe("stoppedWorkflowMessage", () => {
     expect(message).toContain("`tychonic approve 'wf odd' --state 'qa'\\''s turn'`");
   });
 
-  it("keeps wait CLI payloads concise and leaves full results behind status", () => {
+  it("keeps wait CLI payloads concise and leaves full results behind focused evidence commands", () => {
     const stoppedResult = {
       reason: "run_status",
       workflowId: "wf_done",
@@ -69,7 +69,7 @@ describe("stoppedWorkflowMessage", () => {
       workflowId: "wf_done",
       runId: "run_done",
       message:
-        "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_done`.",
+        "Workflow finished with status 'succeeded'. Inspect evidence with `tychonic status --workflow-id wf_done`.",
       status: "succeeded"
     });
     expect("result" in payload).toBe(false);

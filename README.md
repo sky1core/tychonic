@@ -105,7 +105,7 @@ work; the no-wait response includes the `workflowId` needed for `tychonic wait`.
 The first smoke normally finishes like this:
 
 ```json
-{ "ok": true, "message": "Workflow finished with status 'succeeded'. Read the result with `tychonic status --workflow-id wf_123`.", "workflowId": "wf_123", "status": "succeeded" }
+{ "ok": true, "message": "Workflow finished with status 'succeeded'. Inspect evidence with `tychonic status --workflow-id wf_123`.", "workflowId": "wf_123", "status": "succeeded" }
 ```
 
 Interactive workflows can also return a waiting state:
@@ -254,7 +254,7 @@ The CLI and README are the primary interface. The included skill is an optional
 helper for agents that operate Tychonic frequently:
 
 ```sh
-npx skills add ./skills -a claude-code codex
+npx skills add ./skills -a claude-code -a codex --yes --global
 ```
 
 Pass `-a` intentionally; otherwise the installer may target every detected

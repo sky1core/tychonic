@@ -17,6 +17,7 @@ manual step:
 - live packaged example workflow smoke runs, including Claude/Codex/Kiro paths
 - per-step and per-workflow timing evidence so model time and Tychonic
   orchestration time can be separated during diagnosis
+- final documentation consistency checks for README/SPEC/CLI message drift
 
 ## Run
 

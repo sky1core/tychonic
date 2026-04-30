@@ -490,11 +490,13 @@ Supporting fields are optional and exist for automation or follow-up commands:
 
 - `state` is present when an interactive state is waiting
 - `status` is present when a Tychonic run status exists
-- `result` carries the full run result when one is available
 - `resultError` carries the error when the workflow closed without a usable
   Tychonic result
 
-The CLI does not expose a second wait mode or a caller-selected wait condition.
+The wait payload does not include the full raw run result. The caller uses
+`tychonic status --workflow-id <id>` and focused evidence commands for run
+details. The CLI does not expose a second wait mode or a caller-selected wait
+condition.
 
 `tychonic status --workflow-id <id>` is the ordinary evidence view for a
 workflow. Its default output includes workflow metadata, evidence counts,

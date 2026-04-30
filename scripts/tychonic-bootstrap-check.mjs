@@ -19,6 +19,7 @@ await runPackagedExampleRuntimeSmoke();
 if (liveScope !== "none") {
   await runLiveExampleWorkflows(liveScope);
 }
+await runDocumentationChecks();
 
 console.log(JSON.stringify({ ok: true, results }, null, 2));
 
@@ -123,6 +124,16 @@ async function installAllPackagedExamples(instance) {
       cwd: repoRoot
     });
   }
+}
+
+async function runDocumentationChecks() {
+  await runStep("documentation consistency", "npx", [
+    "vitest",
+    "run",
+    "test/documentationConsistency.test.ts",
+    "test/readmeCommands.test.ts",
+    "test/waitMessages.test.ts"
+  ], { cwd: repoRoot });
 }
 
 async function runWorkflow(instance, name, inputFile, expectedStatus) {
