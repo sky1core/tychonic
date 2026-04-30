@@ -273,7 +273,10 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toBe("codex -a never exec --skip-git-repo-check --json --sandbox read-only -");
+    expect(command).toContain('review_schema=$(mktemp');
+    expect(command).toContain(
+      'codex -a never exec --skip-git-repo-check --json --sandbox workspace-write --output-schema "$review_schema" --output-last-message "$last_message" -'
+    );
     expect(result.delta.states?.[0]?.status).toBe("succeeded");
     expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("codex-structured-thread-id");
     expect(result.reviewOutcome?.kind).toBe("parsed");
@@ -397,7 +400,7 @@ describe("runReviewActivity adapter dispatch", () => {
     if (!normalizerOutputArtifact) throw new Error("expected normalizer output artifact");
     const normalizerOutputText = await readFile(join(cwd, normalizerOutputArtifact.path), "utf8");
     expect(normalizerOutputText).toContain(
-      "ARGV:-a never --model gpt-5.3-codex-spark exec --skip-git-repo-check --json --sandbox read-only -"
+      "ARGV:-a never --model gpt-5.3-codex-spark exec --skip-git-repo-check --json --sandbox workspace-write -"
     );
   });
 

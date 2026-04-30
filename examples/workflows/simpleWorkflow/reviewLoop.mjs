@@ -37,10 +37,12 @@ export async function runAutoContinueLoop({
   worktreePath,
   workSession,
   maxIterations,
-  activities
+  activities,
+  onRunUpdate
 }) {
   const profile = input.profile;
   const maxResume = profile?.states?.work?.resume ?? RESUME_CAP_DEFAULT;
+  const updateRun = (next) => (onRunUpdate ? onRunUpdate(next) : next);
 
   let resumeConsumed = 0;
   const currentSession = workSession;
@@ -60,7 +62,7 @@ export async function runAutoContinueLoop({
     }
 
     if (resumeConsumed >= maxResume) {
-      run = appendInboxItem(run, {
+      run = updateRun(appendInboxItem(run, {
         id: nextLocalId(run, "inbox_cap"),
         status: "open",
         title: "Resume cap exhausted with unresolved findings",
@@ -70,7 +72,7 @@ export async function runAutoContinueLoop({
           reason: "auto-continue loop stopped after resume cap fired"
         },
         created_at: nowIso()
-      });
+      }));
       break;
     }
 
@@ -83,9 +85,9 @@ export async function runAutoContinueLoop({
       sessionId: currentSession.id,
       prompt: buildResumePrompt(run)
     });
-    run = applyResult(run, resumeRes);
+    run = updateRun(applyResult(run, resumeRes));
     resumeConsumed += 1;
-    run = markInboxResolved(run, resumeItem.id);
+    run = updateRun(markInboxResolved(run, resumeItem.id));
 
     const verifyRes = await activities.runVerify({
       stateName: "verify",
@@ -94,7 +96,7 @@ export async function runAutoContinueLoop({
       cwd: input.cwd,
       worktreePath
     });
-    run = applyResult(run, verifyRes);
+    run = updateRun(applyResult(run, verifyRes));
     if (verifyRes.delta?.states?.[0]?.status !== "succeeded") {
       break;
     }
@@ -108,11 +110,11 @@ export async function runAutoContinueLoop({
       prompt: buildReviewPrompt(run, "auto-continue iteration"),
       verificationCommands: verificationCommands(profile)
     });
-    run = applyResult(run, reviewRes);
+    run = updateRun(applyResult(run, reviewRes));
     if (reviewRes.delta?.states?.[0]?.status === "succeeded") {
       break;
     }
-    run = appendReviewFindingsAndInbox(run, reviewRes);
+    run = updateRun(appendReviewFindingsAndInbox(run, reviewRes));
   }
   return run;
 }
@@ -127,7 +129,7 @@ export function applyResult(run, result) {
   if (result?.commandOutcome) {
     next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
   }
-  if (result?.reviewOutcome && (result.reviewOutcome.kind === "parsed" || result.reviewOutcome.kind === "unparseable")) {
+  if (result?.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
     next = {
       ...next,
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],

@@ -1,12 +1,15 @@
-import { mkdtemp, readFile, realpath } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { runReviewActivity } from "../src/activities/runReviewActivity.js";
 import type { TychonicConfig } from "../src/catalog/types.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
 
 const ACTIVITY_NAME = "review_alt";
+const execFileAsync = promisify(execFile);
 
 describe("runReviewActivity", () => {
   it("returns parsed outcome on verdict=pass without mutating input.run", async () => {
@@ -126,7 +129,7 @@ describe("runReviewActivity", () => {
     expect(result.delta.states[0]?.status).toBe("blocked");
   });
 
-  it("returns command_failed outcome with no artifacts/sessions when the reviewer command fails", async () => {
+  it("returns command_failed outcome with prompt/output artifacts when the reviewer command fails", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-failcmd-"));
     const run = baseRun("run_review_failcmd");
 
@@ -141,9 +144,15 @@ describe("runReviewActivity", () => {
     });
 
     expect(result.reviewOutcome?.kind).toBe("command_failed");
+    if (result.reviewOutcome?.kind !== "command_failed") throw new Error("unreachable");
     expect(result.delta.states[0]?.status).toBe("failed");
     expect(result.delta.activityAttempts?.[0]?.status).toBe("failed");
-    expect(result.reviewOutcome && "artifacts" in result.reviewOutcome).toBe(false);
+    expect(result.reviewOutcome.artifacts.map((a) => a.kind)).toEqual([
+      `${ACTIVITY_NAME}_prompt`,
+      `${ACTIVITY_NAME}_output`
+    ]);
+    expect(result.reviewOutcome.agentSessions).toHaveLength(1);
+    expect(result.reviewOutcome.agentSessions[0]?.status).toBe("failed");
   });
 
   it("returns skipped outcome when the named activity block is missing", async () => {
@@ -207,6 +216,32 @@ describe("runReviewActivity", () => {
       expect(artifact.path).not.toContain("/worktrees/");
     }
   });
+
+  it("fails a review command that mutates the git worktree", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-mutation-"));
+    await initGitRepo(cwd);
+    const run = baseRun("run_review_mutation");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"require('node:fs').writeFileSync('README.md','mutated by review\\n'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("command_failed");
+    if (result.reviewOutcome?.kind !== "command_failed") throw new Error("unreachable");
+    expect(result.delta.states[0]?.status).toBe("failed");
+    expect(result.delta.states[0]?.reason).toBe("reviewer command did not succeed");
+    expect(result.reviewOutcome.artifacts.map((a) => a.kind)).toEqual([
+      `${ACTIVITY_NAME}_prompt`,
+      `${ACTIVITY_NAME}_output`
+    ]);
+  });
 });
 
 function profileWith(block: { command: string }): TychonicConfig {
@@ -237,4 +272,23 @@ function baseRun(id: string): WorkflowRunRecord {
     findings: [],
     inbox: []
   };
+}
+
+async function initGitRepo(cwd: string): Promise<void> {
+  await writeFile(join(cwd, "README.md"), "baseline\n", "utf8");
+  await execFileAsync("git", ["init"], { cwd });
+  await execFileAsync("git", ["add", "README.md"], { cwd });
+  await execFileAsync(
+    "git",
+    [
+      "-c",
+      "user.name=Tychonic Test",
+      "-c",
+      "user.email=tychonic-test@example.invalid",
+      "commit",
+      "-m",
+      "baseline"
+    ],
+    { cwd }
+  );
 }

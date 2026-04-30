@@ -265,6 +265,32 @@ describe("TemporalManager", () => {
     });
   });
 
+  it("does not treat a Temporal Web UI listener as the managed API process", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-ui-port-"));
+    const manager = managerWith(
+      {
+        lookup: async () => "/bin/temporal",
+        dial: async () => undefined,
+        portListeningPids: async (port) => (port === 17594 ? [2468] : []),
+        processAlive: async (pid) => pid === 2468,
+        processCommand: async () =>
+          "/opt/homebrew/bin/temporal server start-dev --ip 127.0.0.1 --port 17593 --ui-port 17594"
+      },
+      {
+        apiPort: 17594,
+        address: "127.0.0.1:17594",
+        dbFilename: join(dir, "temporal.db"),
+        logFile: join(dir, "temporal.log"),
+        pidFile: join(dir, "temporal.pid")
+      }
+    );
+
+    const status = await manager.status();
+    expect(status.portOpen).toBe(true);
+    expect(status).not.toHaveProperty("pid");
+    await expect(manager.start()).rejects.toThrow(/already occupied/);
+  });
+
   it("reuses managed PID when the port is open", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-"));
     const pidFile = join(dir, "temporal.pid");
@@ -387,6 +413,39 @@ describe("TemporalManager", () => {
         }
       },
       { pidFile }
+    );
+
+    await expect(manager.stop()).resolves.toMatchObject({
+      ok: false,
+      state: "refused",
+      pid: 2468,
+      pidFileRemoved: false
+    });
+    expect(signaled).toBe(false);
+    await expect(readFile(pidFile, "utf8")).resolves.toBe("2468\n");
+  });
+
+  it("refuses to stop a Temporal process for a different API port", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tychonic-temporal-stop-wrong-port-"));
+    const pidFile = join(dir, "temporal.pid");
+    await writeFile(pidFile, "2468\n", "utf8");
+    let signaled = false;
+    const manager = managerWith(
+      {
+        lookup: async () => "/bin/temporal",
+        dial: async () => undefined,
+        processAlive: async (pid) => pid === 2468,
+        processCommand: async () =>
+          "/opt/homebrew/bin/temporal server start-dev --ip 127.0.0.1 --port 17593 --ui-port 17594",
+        signalProcess: async () => {
+          signaled = true;
+        }
+      },
+      {
+        apiPort: 17594,
+        address: "127.0.0.1:17594",
+        pidFile
+      }
     );
 
     await expect(manager.stop()).resolves.toMatchObject({

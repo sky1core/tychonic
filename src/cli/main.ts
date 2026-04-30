@@ -8,7 +8,7 @@ import {
   listAgentSessions,
   listArtifacts,
   listInboxItems,
-  listLiveOutputAttempts,
+  listLiveOutputAttemptViews,
   liveOutputContentPath,
   workflowEvidenceView,
   workflowResultView,
@@ -51,7 +51,8 @@ import {
   signalInteractionRejectState,
   signalNamedWorkflow,
   startNamedTemporalWorkflow,
-  waitForTychonicWorkflowStopped
+  waitForTychonicWorkflowStopped,
+  type TychonicTemporalWorkflowStatus
 } from "../temporal/client.js";
 import type { WorkflowStateRecord } from "../domain/types.js";
 import { readFile as readFileAsync } from "node:fs/promises";
@@ -139,6 +140,10 @@ function hiddenInlineInputOption(): Option {
 
 function hiddenVisibilityQueryOption(): Option {
   return new Option("--visibility-query <query>", "advanced Temporal visibility filter for listing workflows").hideHelp();
+}
+
+function hiddenIncludeResultOption(): Option {
+  return new Option("--include-result", "advanced: include the full raw Tychonic workflow result").hideHelp();
 }
 
 /**
@@ -660,6 +665,7 @@ program
   .option("--workflow-id <id>", "workflow id to describe")
   .option("--run-id <id>", "workflow run id to describe")
   .option("--limit <n>", "maximum workflows to list", (value) => Number(value), 20)
+  .addOption(hiddenIncludeResultOption())
   .addOption(hiddenVisibilityQueryOption())
   .addOption(hiddenTemporalModeOption())
   .addOption(hiddenTemporalPortOption())
@@ -672,6 +678,7 @@ program
       workflowId?: string;
       runId?: string;
       limit: number;
+      includeResult?: boolean;
       visibilityQuery?: string;
       temporalMode?: TemporalConfig["mode"];
       temporalPort?: number;
@@ -705,7 +712,7 @@ program
             output.evidenceError = error instanceof Error ? error.message : String(error);
           }
         }
-        output.workflow = workflow;
+        output.workflow = options.includeResult ? workflow : workflowStatusWithoutRawResult(workflow);
         output._meta = cliInstanceMeta();
         console.log(
           JSON.stringify(output, null, 2)
@@ -921,7 +928,7 @@ program
           mode: "temporal",
           workflow_id: options.workflowId,
           ...workflowResultView(result),
-          attempts: listLiveOutputAttempts(result)
+          attempts: listLiveOutputAttemptViews(result, options.workflowId, options.runId)
         },
         null,
         2
@@ -956,6 +963,13 @@ const inboxCommand = program
       )
     );
   });
+
+function workflowStatusWithoutRawResult(
+  workflow: TychonicTemporalWorkflowStatus
+): Omit<TychonicTemporalWorkflowStatus, "result"> {
+  const { result: _result, ...rest } = workflow;
+  return rest;
+}
 
 const serviceCommand = program
   .command("service", { hidden: true })

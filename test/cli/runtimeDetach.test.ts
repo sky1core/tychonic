@@ -140,7 +140,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(output).not.toMatch(/"mode": "foreground"/);
   });
 
-  it("foreground runtime up fails before starting Temporal when installed bundle deps are missing", async () => {
+  it("foreground runtime up fails before starting Temporal when bundle-owned deps are missing", async () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
     const instance = `missing-deps-${process.pid}`;
@@ -150,8 +150,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     await writeFile(
       join(bundleDir, "workflow.mjs"),
       [
-        'import { proxyActivities } from "@temporalio/workflow";',
-        "proxyActivities({ startToCloseTimeout: \"1 minute\" });",
+        'import "missing-workflow-helper";',
         "export const defaultProfile = {",
         '  version: "tychonic.config.v1",',
         "  states: { work: { type: \"work\", agent: \"claude\" } }",
@@ -175,7 +174,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     );
     expect(result.exitCode).not.toBe(0);
     const output = result.stderr + result.stdout;
-    expect(output).toMatch(/Can't resolve '@temporalio\/workflow'/);
+    expect(output).toMatch(/Can't resolve 'missing-workflow-helper'/);
     expect(output).not.toMatch(/"mode": "foreground"/);
 
     const status = await runCli(
@@ -187,7 +186,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(status.stdout).toContain('"health": "stopped"');
   }, 20000);
 
-  it("detached runtime up fails before printing a PID when installed bundle deps are missing", async () => {
+  it("detached runtime up fails before printing a PID when bundle-owned deps are missing", async () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
     const instance = `missing-deps-detach-${process.pid}`;
@@ -197,8 +196,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     await writeFile(
       join(bundleDir, "workflow.mjs"),
       [
-        'import { proxyActivities } from "@temporalio/workflow";',
-        "proxyActivities({ startToCloseTimeout: \"1 minute\" });",
+        'import "missing-workflow-helper";',
         "export const defaultProfile = {",
         '  version: "tychonic.config.v1",',
         "  states: { work: { type: \"work\", agent: \"claude\" } }",
@@ -230,7 +228,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     );
     expect(result.exitCode).not.toBe(0);
     const output = result.stderr + result.stdout;
-    expect(output).toMatch(/Can't resolve '@temporalio\/workflow'/);
+    expect(output).toMatch(/Can't resolve 'missing-workflow-helper'/);
     expect(output).not.toMatch(/"mode": "detached"/);
     expect(output).not.toMatch(/"pid":/);
 

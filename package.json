@@ -1,10 +1,15 @@
 {
   "name": "tychonic",
-  "version": "0.1.9",
+  "version": "0.1.12",
   "description": "macOS-local AI work operations manager built on Temporal",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./workflow": "./dist/workflow.js",
+    "./package.json": "./package.json"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sky1core/tychonic.git"
@@ -23,7 +28,6 @@
     "docs",
     "examples/workflows/*/README.md",
     "examples/workflows/*/*.mjs",
-    "examples/workflows/*/package.json",
     "skills",
     "README.md",
     "README.ko.md",

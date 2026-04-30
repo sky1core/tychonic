@@ -3,7 +3,6 @@
 //
 // Install with:
 //
-//   (cd examples/workflows/pipelineWorkflow && npm install)
 //   tychonic workflows install ./examples/workflows/pipelineWorkflow
 //
 // Operational installs refresh the LaunchAgent worker when one is installed.
@@ -11,6 +10,7 @@
 // See docs/plugin-workflows.md for the authoring guide.
 
 import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicRunState } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -47,7 +47,6 @@ export const defaultProfile = {
     review_2: {
       type: "review",
       agent: "codex",
-      sandbox: "read-only",
       approval: "never"
     },
     security: { type: "verify", command: "./scripts/security-gate.sh" }
@@ -89,6 +88,9 @@ function rejectUnknownInputFields(input) {
 
 export async function pipelineWorkflow(input) {
   rejectUnknownInputFields(input);
+  const runState = createTychonicRunState();
+  let worktreePath;
+  const updateRun = (next) => runState.update(next, worktreePath ? { worktreePath } : {});
   const profile = input.profile;
   let run = await startRunActivity({
     template: "pipeline_7stage",
@@ -96,11 +98,13 @@ export async function pipelineWorkflow(input) {
     ...(profile ? { profile } : {}),
     ...(input.goal ? { goal: input.goal } : {})
   });
+  run = updateRun({ ...run, status: "running" });
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
-  const worktreePath = wt.worktreePath;
+  worktreePath = wt.worktreePath;
+  run = updateRun(run);
 
-  run = apply(run, await collectGitFactsActivity({ run, cwd: input.cwd }));
+  run = updateRun(apply(run, await collectGitFactsActivity({ run, cwd: input.cwd })));
 
   // Stage 1: work (worker invocation, single call).
   const work = await runWorkerActivity({
@@ -111,9 +115,9 @@ export async function pipelineWorkflow(input) {
     worktreePath,
     prompt: input.prompt ?? input.goal ?? ""
   });
-  run = apply(run, work);
+  run = updateRun(apply(run, work));
   if (work.workerOutcome?.status !== "succeeded") {
-    return done(run, input.cwd, "stage 1 work failed");
+    return done(run, input.cwd, "stage 1 work failed", runState, worktreePath);
   }
 
   // Stages 2-3: deterministic checks.
@@ -125,9 +129,9 @@ export async function pipelineWorkflow(input) {
       profile,
       worktreePath
     });
-    run = apply(run, res);
+    run = updateRun(apply(run, res));
     if (res.delta.states?.[0]?.status !== "succeeded") {
-      return done(run, input.cwd, `stage ${stateName} failed`);
+      return done(run, input.cwd, `stage ${stateName} failed`, runState, worktreePath);
     }
   }
 
@@ -140,11 +144,11 @@ export async function pipelineWorkflow(input) {
     worktreePath,
     prompt: input.reviewPrompt ?? structuredReviewPrompt("work stages 1-3")
   });
-  run = apply(run, review1);
+  run = updateRun(apply(run, review1));
   const review1Decision = gateReviewStage(run, review1, "review_1");
-  run = review1Decision.run;
+  run = updateRun(review1Decision.run);
   if (review1Decision.done) {
-    return done(run, input.cwd, review1Decision.summary);
+    return done(run, input.cwd, review1Decision.summary, runState, worktreePath);
   }
 
   // Stage 5: integration.
@@ -155,9 +159,9 @@ export async function pipelineWorkflow(input) {
     profile,
     worktreePath
   });
-  run = apply(run, integration);
+  run = updateRun(apply(run, integration));
   if (integration.delta.states?.[0]?.status !== "succeeded") {
-    return done(run, input.cwd, "stage integration failed");
+    return done(run, input.cwd, "stage integration failed", runState, worktreePath);
   }
 
   // Stage 6: review_2 (review TYPE, second NAME — same activity function).
@@ -169,11 +173,11 @@ export async function pipelineWorkflow(input) {
     worktreePath,
     prompt: input.reviewPrompt2 ?? structuredReviewPrompt("integration and prior review follow-up")
   });
-  run = apply(run, review2);
+  run = updateRun(apply(run, review2));
   const review2Decision = gateReviewStage(run, review2, "review_2");
-  run = review2Decision.run;
+  run = updateRun(review2Decision.run);
   if (review2Decision.done) {
-    return done(run, input.cwd, review2Decision.summary);
+    return done(run, input.cwd, review2Decision.summary, runState, worktreePath);
   }
 
   // Stage 7: security gate (verify TYPE, user-chosen NAME).
@@ -184,12 +188,18 @@ export async function pipelineWorkflow(input) {
     profile,
     worktreePath
   });
-  run = apply(run, security);
+  run = updateRun(apply(run, security));
   if (security.delta.states?.[0]?.status !== "succeeded") {
-    return done(run, input.cwd, "stage security failed");
+    return done(run, input.cwd, "stage security failed", runState, worktreePath);
   }
 
-  return done(run, input.cwd, `pipeline_7stage finished: ${run.states.map((s) => `${s.name}=${s.status}`).join(", ")}`);
+  return done(
+    run,
+    input.cwd,
+    `pipeline_7stage finished: ${run.states.map((s) => `${s.name}=${s.status}`).join(", ")}`,
+    runState,
+    worktreePath
+  );
 }
 
 // Pure merge of an ActivityResult into the local run record.
@@ -200,7 +210,7 @@ function apply(run, result) {
   if (result.commandOutcome) {
     next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
   }
-  if (result.reviewOutcome && (result.reviewOutcome.kind === "parsed" || result.reviewOutcome.kind === "unparseable")) {
+  if (result.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
     next = {
       ...next,
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
@@ -293,16 +303,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-async function done(run, cwd, summary) {
+async function done(run, cwd, summary, runState, worktreePath) {
   const fin = await finalizeRunActivity({ run, summary });
   run = apply(run, fin);
-  return {
-    runId: run.id,
-    status: run.status,
-    run,
-    artifactRoot: `${cwd}/.tychonic/runs/${run.id}`,
-    ...(run.summary ? { summary: run.summary } : {})
-  };
+  return runState.result(run, { artifactRoot: `${cwd}/.tychonic/runs/${run.id}`, worktreePath });
 }
 
 function gateReviewStage(run, result, stateName) {

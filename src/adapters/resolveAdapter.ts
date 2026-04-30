@@ -9,10 +9,9 @@
  * Workflow call sites do not get per-call command or agent selectors.
  * Execution selection belongs to `profile.states.<name>`.
  *
- * The verbatim `command` path does not expose a separate
- * `resume_command` slot in the host schema. Same-session resume only
- * applies to the adapter dispatch path, where `parseResult` captures the
- * session id and `runResume` regenerates the resume invocation.
+ * Same-session resume only applies to the adapter dispatch path, where
+ * `parseResult` captures the session id and `runResume` regenerates the
+ * resume invocation. Verbatim commands own their own continuation behavior.
  */
 
 import { getAgentAdapter, isBuiltInAgentName } from "./index.js";

@@ -218,11 +218,11 @@ export class TemporalManager {
       );
     } else if (!status.portOpen) {
       addCheck(report, "api_port", "ok", `Managed-local Temporal API port is free at ${this.config.address}`);
-    } else if (status.pid && (await this.managedTemporalPID(status.pid))) {
+    } else if (status.pid && (await this.managedTemporalAPIPID(status.pid, this.config.apiPort))) {
       addCheck(report, "api_port", "ok", `Tychonic-managed Temporal appears reachable with pid ${status.pid}`);
     } else if (status.pid) {
-      addCheck(report, "pid_file", "warn", `PID file exists but process ${status.pid} is not a live Temporal process`);
-      addCheck(report, "api_port", "warn", "Temporal API port is open but managed PID is stale or not Temporal");
+      addCheck(report, "pid_file", "warn", `PID file exists but process ${status.pid} is not the Temporal API process for ${this.config.address}`);
+      addCheck(report, "api_port", "warn", "Temporal API port is open but the managed PID is stale or points at a different Temporal port");
     } else {
       addCheck(report, "api_port", "fail", `Temporal API port is occupied by an unmanaged process at ${this.config.address}`);
     }
@@ -275,7 +275,7 @@ export class TemporalManager {
       };
     }
 
-    if (!(await this.managedTemporalPID(pid))) {
+    if (!(await this.managedTemporalAPIPID(pid, this.config.apiPort))) {
       if (!(await this.deps.processAlive(pid))) {
         await rm(this.config.pidFile, { force: true });
         return {
@@ -293,7 +293,7 @@ export class TemporalManager {
         ok: false,
         state: "refused",
         pid,
-        message: `PID file ${this.config.pidFile} points to live process ${pid}, but it is not a Temporal process`
+        message: `PID file ${this.config.pidFile} points to live process ${pid}, but it is not the Temporal API process for ${this.config.address}`
       };
     }
 
@@ -344,7 +344,7 @@ export class TemporalManager {
     }
 
     if (status.portOpen) {
-      if (status.pid && (await this.managedTemporalPID(status.pid))) {
+      if (status.pid && (await this.managedTemporalAPIPID(status.pid, this.config.apiPort))) {
         return { ...status, message: "Tychonic-managed Temporal appears to be running" };
       }
       if (status.pid) {
@@ -371,12 +371,12 @@ export class TemporalManager {
     };
   }
 
-  private async managedTemporalPID(pid: number): Promise<boolean> {
+  private async managedTemporalAPIPID(pid: number, apiPort: number): Promise<boolean> {
     if (!(await this.deps.processAlive(pid))) {
       return false;
     }
     try {
-      return isTemporalStartDevCommand(await this.deps.processCommand(pid));
+      return temporalStartDevApiPort(await this.deps.processCommand(pid)) === apiPort;
     } catch {
       return false;
     }
@@ -385,7 +385,7 @@ export class TemporalManager {
   private async managedTemporalPIDForPort(port: number): Promise<number | undefined> {
     const pids = await this.deps.portListeningPids(port);
     for (const pid of pids) {
-      if (await this.managedTemporalPID(pid)) {
+      if (await this.managedTemporalAPIPID(pid, port)) {
         return pid;
       }
     }
@@ -614,12 +614,41 @@ async function portListeningPids(port: number): Promise<number[]> {
   }
 }
 
-function isTemporalStartDevCommand(command: string): boolean {
+function temporalStartDevApiPort(command: string): number | undefined {
   const tokens = splitCommandLine(command);
-  if (tokens.length < 3) {
-    return false;
+  if (!isTemporalStartDevTokens(tokens)) {
+    return undefined;
   }
-  return basename(tokens[0] ?? "") === "temporal" && tokens[1] === "server" && tokens[2] === "start-dev";
+  for (let i = 3; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === undefined) {
+      continue;
+    }
+    if (token === "--port" || token === "-p") {
+      return parsePortToken(tokens[i + 1]);
+    }
+    const longMatch = token.match(/^--port=(\d+)$/);
+    if (longMatch) {
+      return parsePortToken(longMatch[1]);
+    }
+    const shortMatch = token.match(/^-p=(\d+)$/);
+    if (shortMatch) {
+      return parsePortToken(shortMatch[1]);
+    }
+  }
+  return 7233;
+}
+
+function isTemporalStartDevTokens(tokens: string[]): boolean {
+  return tokens.length >= 3 && basename(tokens[0] ?? "") === "temporal" && tokens[1] === "server" && tokens[2] === "start-dev";
+}
+
+function parsePortToken(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d+$/.test(value)) {
+    return undefined;
+  }
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
 }
 
 function splitCommandLine(command: string): string[] {

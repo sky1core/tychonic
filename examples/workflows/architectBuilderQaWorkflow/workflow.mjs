@@ -6,52 +6,25 @@
 //   3. qa        (review) — a reviewer returns `tychonic.review.v1`.
 //
 // Under `policies.interaction.mode: interactive` every stage pauses after
-// the activity finishes and waits for the external caller to send one of
-// these signals (payload.state must match the pending stage name):
-//
-//   tychonic.interaction.approve_state  → advance
-//   tychonic.interaction.reject_state   → rerun; reject feedback
-//                                          ACCUMULATES across iterations
-//                                          and is injected into the next
-//                                          prompt as a numbered list.
-//   tychonic.interaction.modify_state   → overlay a StateRecordPatch on the
-//                                          latest state record, advance.
-//                                          Patch fields (all optional):
-//                                          status, reason, note,
-//                                          artifacts[], findings[].
-//                                          Resulting status must be terminal.
+// the activity finishes and waits for the standard Tychonic interaction
+// commands. The public `tychonic/workflow` helper registers those signal/query
+// handlers and exposes the state approval gate.
 //
 // Reject attempts per stage are capped by
 // `policies.interaction.max_reject_iterations` (default 5). At the cap
 // the run is promoted to `waiting_user` with an inbox item.
 //
-// This file is intentionally self-contained: it imports only
-// `@temporalio/workflow`. The interaction signal names below are
-// Tychonic's public protocol. Keep them in sync with
-// `src/temporal/types.ts` (interactionApproveStateSignalName etc.).
-//
 // Install (from the project that will host the run):
 //
-//   (cd examples/workflows/architectBuilderQaWorkflow && npm install)
 //   tychonic workflows install ./examples/workflows/architectBuilderQaWorkflow
 
-import {
-  condition,
-  defineQuery,
-  defineSignal,
-  proxyActivities,
-  setHandler
-} from "@temporalio/workflow";
+import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicInteraction, createTychonicRunState } from "tychonic/workflow";
 import {
   validateInteractionPolicy,
   validateLoopPolicy
 } from "./workflowPolicies.mjs";
 
-const APPROVE_SIGNAL_NAME = "tychonic.interaction.approve_state";
-const REJECT_SIGNAL_NAME = "tychonic.interaction.reject_state";
-const MODIFY_SIGNAL_NAME = "tychonic.interaction.modify_state";
-const PENDING_QUERY_NAME = "tychonic.interaction.pending_state";
-const DEFAULT_MAX_REJECT_ITERATIONS = 5;
 const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
 
 const act = proxyActivities({
@@ -120,58 +93,13 @@ export async function architectBuilderQaWorkflow(input) {
   rejectUnknownInputFields(input);
   validateInteractionPolicy(input.profile?.policies);
   validateLoopPolicy(input.profile?.policies);
-  const signalQueue = [];
-  let pendingStateName;
+  const runState = createTychonicRunState();
+  const interaction = createTychonicInteraction(input.profile?.policies?.interaction);
+  let worktreePath;
+  const updateRun = (next) => runState.update(next, worktreePath ? { worktreePath } : {});
 
-  const interactionPolicy = input.profile?.policies?.interaction;
-  const interactive = interactionPolicy?.mode === "interactive";
-  const maxReject = interactive
-    ? interactionPolicy?.max_reject_iterations ?? DEFAULT_MAX_REJECT_ITERATIONS
-    : Number.POSITIVE_INFINITY;
-
-  if (interactive) {
-    const approveSig = defineSignal(APPROVE_SIGNAL_NAME);
-    const rejectSig = defineSignal(REJECT_SIGNAL_NAME);
-    const modifySig = defineSignal(MODIFY_SIGNAL_NAME);
-    setHandler(approveSig, (payload) => signalQueue.push({ kind: "approve", payload }));
-    setHandler(rejectSig, (payload) => signalQueue.push({ kind: "reject", payload }));
-    setHandler(modifySig, (payload) => signalQueue.push({ kind: "modify", payload }));
-    const pendingQuery = defineQuery(PENDING_QUERY_NAME);
-    setHandler(pendingQuery, () => pendingStateName);
-  }
-
-  async function gate(stateName) {
-    if (!interactive) {
-      return { kind: "approve" };
-    }
-    pendingStateName = stateName;
-    try {
-      const find = () => signalQueue.findIndex((entry) => entry.payload?.state === stateName);
-      if (find() < 0) {
-        await condition(() => find() >= 0);
-      }
-      const [entry] = signalQueue.splice(find(), 1);
-      if (entry.kind === "approve") {
-        return { kind: "approve" };
-      }
-      if (entry.kind === "reject") {
-        const feedback = entry.payload?.feedback;
-        if (typeof feedback !== "string" || feedback.length === 0) {
-          throw new Error(
-            `rejectState for '${stateName}' requires a non-empty feedback string`
-          );
-        }
-        return { kind: "reject", feedback };
-      }
-      const patch = entry.payload?.patch;
-      if (!patch || typeof patch !== "object") {
-        throw new Error(`modifyState for '${stateName}' requires a patch object`);
-      }
-      return { kind: "modify", patch };
-    } finally {
-      pendingStateName = undefined;
-    }
-  }
+  const interactive = interaction.mode() === "interactive";
+  const maxReject = interaction.rejectCap();
 
   let run = await startRunActivity({
     template: "architect_builder_qa",
@@ -179,9 +107,11 @@ export async function architectBuilderQaWorkflow(input) {
     ...(input.profile ? { profile: input.profile } : {}),
     goal: input.goal
   });
+  run = updateRun({ ...run, status: "running" });
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
-  const worktreePath = wt.worktreePath;
+  worktreePath = wt.worktreePath;
+  run = updateRun(run);
 
   const rejectCounts = new Map();
 
@@ -189,9 +119,9 @@ export async function architectBuilderQaWorkflow(input) {
     stateName: "architect",
     activity: runWorkerActivity,
     basePrompt: input.architectPrompt ?? architectPrompt(input.goal ?? ""),
-    run, input, worktreePath, rejectCounts, maxReject, gate
+    run, input, worktreePath, rejectCounts, maxReject, interaction, updateRun
   });
-  if (architect.halted) return done(architect.run, input.cwd, signalQueue, architect.summary);
+  if (architect.halted) return done(architect.run, input.cwd, interaction, architect.summary, runState, worktreePath);
   run = architect.run;
 
   // builder <-> qa review loop.
@@ -225,18 +155,18 @@ export async function architectBuilderQaWorkflow(input) {
       stateName: "builder",
       activity: runWorkerActivity,
       basePrompt: builderBaseWithFeedback,
-      run, input, worktreePath, rejectCounts, maxReject, gate
+      run, input, worktreePath, rejectCounts, maxReject, interaction, updateRun
     });
-    if (builder.halted) return done(builder.run, input.cwd, signalQueue, builder.summary);
+    if (builder.halted) return done(builder.run, input.cwd, interaction, builder.summary, runState, worktreePath);
     run = builder.run;
 
     const qa = await runStage({
       stateName: "qa",
       activity: runReviewActivity,
       basePrompt: input.qaPrompt ?? qaPrompt({ runId: run.id, worktreePath }),
-      run, input, worktreePath, rejectCounts, maxReject, gate
+      run, input, worktreePath, rejectCounts, maxReject, interaction, updateRun
     });
-    if (qa.halted) return done(qa.run, input.cwd, signalQueue, qa.summary);
+    if (qa.halted) return done(qa.run, input.cwd, interaction, qa.summary, runState, worktreePath);
     run = qa.run;
 
     if (interactive) {
@@ -250,13 +180,15 @@ export async function architectBuilderQaWorkflow(input) {
       break;
     }
     if (reviewIteration >= maxReviewIterations) {
-      run = addInboxItem(run, reviewCapInboxItem());
-      run = { ...run, status: "waiting_user" };
+      run = updateRun(addInboxItem(run, reviewCapInboxItem()));
+      run = updateRun({ ...run, status: "waiting_user" });
       return done(
         run,
         input.cwd,
-        signalQueue,
-        `qa review did not pass within ${maxReviewIterations} iterations`
+        interaction,
+        `qa review did not pass within ${maxReviewIterations} iterations`,
+        runState,
+        worktreePath
       );
     }
     qaFeedbacks.push(
@@ -264,7 +196,7 @@ export async function architectBuilderQaWorkflow(input) {
     );
   }
 
-  return done(run, input.cwd, signalQueue, "architectBuilderQaWorkflow completed");
+  return done(run, input.cwd, interaction, "architectBuilderQaWorkflow completed", runState, worktreePath);
 }
 
 function findLastStateByName(run, name) {
@@ -283,7 +215,8 @@ async function runStage({
   worktreePath,
   rejectCounts,
   maxReject,
-  gate
+  interaction,
+  updateRun
 }) {
   const feedbacks = [];
   // eslint-disable-next-line no-constant-condition
@@ -301,21 +234,29 @@ async function runStage({
       worktreePath,
       prompt
     });
-    run = apply(run, result);
+    run = updateRun(apply(run, result));
 
-    const decision = await gate(stateName);
+    const decision = await interaction.waitForStateApproval(stateName);
     if (decision.kind === "approve") {
       return { run, halted: false };
     }
     if (decision.kind === "modify") {
-      run = applyStatePatch(run, stateName, decision.patch);
+      run = updateRun(interaction.applyApprovalDecision(run, stateName, decision));
       return { run, halted: false };
     }
     const nextCount = (rejectCounts.get(stateName) ?? 0) + 1;
     rejectCounts.set(stateName, nextCount);
     if (nextCount >= maxReject) {
-      run = addInboxItem(run, rejectCapInboxItem(stateName));
-      run = { ...run, status: "waiting_user" };
+      run = updateRun(
+        addInboxItem(
+          run,
+          interaction.rejectCapInboxItem(stateName, {
+            id: `inbox_reject_cap_${stateName}`,
+            createdAt: nowIso()
+          })
+        )
+      );
+      run = updateRun({ ...run, status: "waiting_user" });
       return { run, halted: true, summary: `${stateName} reached reject cap` };
     }
     feedbacks.push(decision.feedback);
@@ -327,10 +268,7 @@ function apply(run, result) {
   if (result.commandOutcome) {
     next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
   }
-  if (
-    result.reviewOutcome &&
-    (result.reviewOutcome.kind === "parsed" || result.reviewOutcome.kind === "unparseable")
-  ) {
+  if (result.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
     next = {
       ...next,
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
@@ -423,73 +361,11 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-const TERMINAL_STATE_STATUSES = ["succeeded", "failed", "skipped", "blocked", "timed_out"];
-
-// Overlay a StateRecordPatch on the latest state record with the given name.
-// Mirrors src/workflows/runMerge.ts:applyModifyStateDecision so the plugin
-// preserves the same id/attempt/artifact/finding bookkeeping as built-in
-// workflows such as checkpoint and simpleWorkflow.
-function applyStatePatch(run, stateName, patch) {
-  let latestIndex = -1;
-  for (let i = run.states.length - 1; i >= 0; i -= 1) {
-    if (run.states[i].name === stateName) {
-      latestIndex = i;
-      break;
-    }
-  }
-  if (latestIndex < 0) {
-    throw new Error(
-      `modifyState cannot patch state '${stateName}' because no state with that name has run yet`
-    );
-  }
-  const original = run.states[latestIndex];
-  const nextStatus = patch.status ?? original.status;
-  if (!TERMINAL_STATE_STATUSES.includes(nextStatus)) {
-    throw new Error(
-      `modifyState resulting status must be terminal (one of ${TERMINAL_STATE_STATUSES.join(", ")}), got '${nextStatus}'`
-    );
-  }
-  const baseReason = patch.reason ?? original.reason;
-  const nextReason = patch.note
-    ? baseReason
-      ? `${baseReason} — note: ${patch.note}`
-      : patch.note
-    : baseReason;
-  const addedArtifacts = patch.artifacts ?? [];
-  const addedFindings = patch.findings ?? [];
-  const patched = {
-    ...original,
-    status: nextStatus,
-    ...(nextReason !== undefined ? { reason: nextReason } : {}),
-    artifact_ids: [...original.artifact_ids, ...addedArtifacts.map((a) => a.id)],
-    finding_ids: [...original.finding_ids, ...addedFindings.map((f) => f.id)]
-  };
-  const nextStates = [...run.states];
-  nextStates[latestIndex] = patched;
-  return {
-    ...run,
-    states: nextStates,
-    artifacts: addedArtifacts.length > 0 ? [...run.artifacts, ...addedArtifacts] : run.artifacts,
-    findings: addedFindings.length > 0 ? [...run.findings, ...addedFindings] : run.findings
-  };
-}
-
 function addInboxItem(run, item) {
   if (run.inbox.some((existing) => existing.id === item.id)) {
     return run;
   }
   return { ...run, inbox: [...run.inbox, item] };
-}
-
-function rejectCapInboxItem(stateName) {
-  return {
-    id: `inbox_reject_cap_${stateName}`,
-    status: "open",
-    title: "Interactive reject limit reached",
-    detail: `state '${stateName}' reached the interactive reject iteration cap; inspect artifacts and start a fresh run with adjusted input/config`,
-    action: { kind: "triage", reason: `interactive reject cap for state '${stateName}'` },
-    created_at: new Date().toISOString()
-  };
 }
 
 function reviewCapInboxItem() {
@@ -501,41 +377,28 @@ function reviewCapInboxItem() {
       "qa stage did not report pass within policies.loop.max_review_iterations; builder did not converge. " +
       "Inspect run.states and run.findings, then start a fresh run with adjusted input/config.",
     action: { kind: "triage", reason: "qa review loop cap reached in auto mode" },
-    created_at: new Date().toISOString()
+    created_at: nowIso()
   };
 }
 
-function strayInboxItem(entry, index) {
-  return {
-    id: `inbox_stray_${entry.kind}_${entry.payload?.state ?? "unknown"}_${index}`,
-    status: "open",
-    title: "Stray interaction signal",
-    detail: `kind=${entry.kind} state=${entry.payload?.state ?? "(unknown)"} payload=${JSON.stringify(entry.payload)}`,
-    action: {
-      kind: "triage",
-      reason: `stray ${entry.kind} signal for state '${entry.payload?.state ?? "(unknown)"}'`
-    },
-    created_at: new Date().toISOString()
-  };
-}
-
-async function done(run, cwd, signalQueue, summary) {
+async function done(run, cwd, interaction, summary, runState, worktreePath) {
   let finalRun = run;
-  if (signalQueue.length > 0) {
-    signalQueue.forEach((entry, index) => {
-      finalRun = addInboxItem(finalRun, strayInboxItem(entry, index));
+  const straySignals = interaction.drainStraySignals();
+  if (straySignals.length > 0) {
+    straySignals.forEach((entry, index) => {
+      finalRun = addInboxItem(
+        finalRun,
+        interaction.strayInteractionSignalInboxItem(entry, {
+          id: `inbox_stray_${entry.kind}_${entry.state}_${index}`,
+          createdAt: nowIso()
+        })
+      );
     });
-    signalQueue.length = 0;
+    finalRun = runState.update(finalRun, { worktreePath });
   }
   const fin = await finalizeRunActivity({ run: finalRun, summary });
   finalRun = apply(finalRun, fin);
-  return {
-    runId: finalRun.id,
-    status: finalRun.status,
-    run: finalRun,
-    artifactRoot: `${cwd}/.tychonic/runs/${finalRun.id}`,
-    ...(finalRun.summary ? { summary: finalRun.summary } : {})
-  };
+  return runState.result(finalRun, { artifactRoot: `${cwd}/.tychonic/runs/${finalRun.id}`, worktreePath });
 }
 
 function architectPrompt(goal) {

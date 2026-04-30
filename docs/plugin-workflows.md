@@ -20,12 +20,12 @@ activities; operators pass workflow input as a JSON object and do not put
 
 ```sh
 mkdir myWorkflow
-(cd myWorkflow && npm init -y && npm install @temporalio/workflow)
 ```
 
 ```js
 // myWorkflow/workflow.mjs
 import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicRunState } from "tychonic/workflow";
 
 const {
   startRunActivity,
@@ -55,14 +55,17 @@ npm test`
 };
 
 export async function myWorkflow(input) {
+  const runState = createTychonicRunState();
   let run = await startRunActivity({
     template: "my_workflow",
     cwd: input.cwd,
     profile: input.profile,
     goal: input.goal
   });
+  run = runState.update({ ...run, status: "running" });
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
+  run = runState.update(run, { worktreePath: wt.worktreePath });
   const work = await runWorkerActivity({
     stateName: "work",
     run,
@@ -71,7 +74,7 @@ export async function myWorkflow(input) {
     worktreePath: wt.worktreePath,
     prompt: input.goal ?? ""
   });
-  run = apply(run, work);
+  run = runState.update(apply(run, work), { worktreePath: wt.worktreePath });
 
   const verify = await runVerifyActivity({
     stateName: "verify",
@@ -80,7 +83,7 @@ export async function myWorkflow(input) {
     profile: input.profile,
     worktreePath: wt.worktreePath
   });
-  run = apply(run, verify);
+  run = runState.update(apply(run, verify), { worktreePath: wt.worktreePath });
 
   const review = await runReviewActivity({
     stateName: "review",
@@ -90,11 +93,11 @@ export async function myWorkflow(input) {
     worktreePath: wt.worktreePath,
     prompt: "Review the worker result and return the structured review payload."
   });
-  run = apply(run, review);
+  run = runState.update(apply(run, review), { worktreePath: wt.worktreePath });
 
   const final = await finalizeRunActivity({ run });
   run = apply(run, final);
-  return { runId: run.id, status: run.status, run };
+  return runState.result(run, { worktreePath: wt.worktreePath });
 }
 
 function apply(run, result) {
@@ -235,11 +238,12 @@ the normalizer. Kiro states may set `model`, but not
 reasoning/effort/thinking option.
 
 QA/review states may inspect files and run checks. They must not modify source
-code or silently repair findings. Kiro review states that need non-interactive
+code or silently repair findings. Review activities compare the git worktree
+before and after the reviewer command when a git worktree is available; a net
+source mutation fails the review. Kiro review states that need non-interactive
 tool use may set `trust_all_tools: true`; the adapter still rejects direct file
-writes and fails the review if tracked files change during the turn. If a
-workflow wants automated repair after QA, call an explicit work state with its
-own NAME and config.
+writes. If a workflow wants automated repair after QA, call an explicit work
+state with its own NAME and config.
 
 Every activity returns records through `ActivityResult.delta` and optional
 TYPE-specific outcome payloads. The activity does not mutate `input.run`; the
@@ -254,32 +258,52 @@ Temporal workflow code runs in a deterministic sandbox.
   `node:net` inside `workflow.mjs`.
 - Do not make workflow decisions from non-deterministic top-level values.
 - Put file, shell, and network work inside activities.
-- Use only `@temporalio/workflow`, copied relative support modules, or real
-  package dependencies installed in the bundle.
+- Use `@temporalio/workflow`, `tychonic/workflow`, copied relative support
+  modules, or real package dependencies shipped with the bundle. Tychonic
+  provides `@temporalio/workflow` and `tychonic/workflow`; other package
+  dependencies are bundle-owned.
 
 Tychonic installs the bundle directory as-is. It does not run `npm install`,
-copy host `node_modules`, create symlinks, or rewrite resolver paths.
+copy arbitrary host `node_modules`, create symlinks, or rewrite resolver paths.
 
 ## Policies And Signals
 
 `policies.*` is workflow-owned data. The host schema validates only the outer
 profile shape; each workflow validates the policy keys it consumes.
 
-Signal names, query names, payloads, and recovery behavior are also part of the
-workflow bundle contract. Document them in that bundle's README.
+Custom signal names, query names, payloads, and recovery behavior are also part
+of the workflow bundle contract. Document them in that bundle's README.
 
-If a long-running workflow should support `tychonic run --wait` or
-`tychonic wait <workflow-id>` before final completion, expose its current run
-snapshot through the standard `tychonic.workflow_state` query. The query
-returns the same run-result shape the workflow returns at completion.
+If a long-running workflow should support `tychonic run --wait`,
+`tychonic wait <workflow-id>`, or status checks before final completion, create
+a run-state helper:
 
-If a workflow uses the standard interactive CLI commands, register these names
-directly in the workflow:
+```js
+import { createTychonicRunState } from "tychonic/workflow";
 
-- `tychonic.interaction.approve_state`
-- `tychonic.interaction.reject_state`
-- `tychonic.interaction.modify_state`
-- `tychonic.interaction.pending_state` query
+const runState = createTychonicRunState();
+run = runState.update({ ...run, status: "running" });
+return runState.result(run);
+```
+
+The helper registers the standard `tychonic.workflow_state` query and returns
+the same run-result shape the workflow returns at completion.
+
+If a workflow uses the standard interactive CLI commands, create an interaction
+helper:
+
+```js
+import { createTychonicInteraction } from "tychonic/workflow";
+
+const interaction = createTychonicInteraction(input.profile?.policies?.interaction);
+const decision = await interaction.waitForStateApproval("qa");
+```
+
+The helper registers the standard signal/query names as one unit and exposes
+the workflow-side gate, modify patch application, stray-signal drain, and
+standard inbox item helpers. It also validates the standard raw signal payloads
+inside the workflow. Do not hand-register the standard interaction names one by
+one.
 
 ## References
 

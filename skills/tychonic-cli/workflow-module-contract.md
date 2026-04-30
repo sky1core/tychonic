@@ -33,10 +33,11 @@ with `tychonic run --config <file>`, not by putting `profile` in workflow JSON
 input.
 
 The bundle may include `README.md`, `package.json`, lockfiles, relative modules
-imported by `workflow.mjs`, assets, and `node_modules`. If `workflow.mjs`
-imports a package, install that package in the bundle directory or pre-bundle it
-into `workflow.mjs`.
-Tychonic does not synthesize resolver state during install.
+imported by `workflow.mjs`, assets, and `node_modules`. Tychonic provides
+`@temporalio/workflow` and `tychonic/workflow` while bundling workflow code. If
+`workflow.mjs` imports any other package, ship that package in the bundle
+directory or pre-bundle it into `workflow.mjs`. Tychonic does not synthesize
+resolver state during install.
 
 ## Boundaries
 
@@ -101,11 +102,12 @@ Tychonic supplies the lightweight normalizer model flag internally (`claude`
 gets `haiku`; `codex` gets `gpt-5.3-codex-spark`).
 
 QA/review is allowed to run checks; it is not limited to visual inspection.
-The boundary is source modification. Kiro review states may use
+The boundary is source modification. Review activities compare the git
+worktree before and after the reviewer command when a git worktree is
+available; a net source mutation fails the review. Kiro review states may use
 `trust_all_tools: true` when they need non-interactive inspection or test
-execution, but the Kiro review adapter rejects direct file writes and fails the
-review if tracked files change during the turn. Automated repair belongs in an
-explicit work state, not inside review.
+execution, but the Kiro review adapter still rejects direct file writes.
+Automated repair belongs in an explicit work state, not inside review.
 
 `resume` is a numeric budget a workflow may read when it explicitly chooses to
 continue a recorded session. Omit it unless the workflow needs same-session
@@ -144,23 +146,32 @@ Temporal workflow code is deterministic.
   workflow code.
 - Do not make workflow decisions from top-level non-deterministic values.
 - Put file, shell, network, and OS work in activities.
-- Use only `@temporalio/workflow`, relative modules shipped in the bundle, and
-  installed bundle dependencies.
+- Use `@temporalio/workflow`, `tychonic/workflow`, relative modules shipped in
+  the bundle, and installed bundle dependencies. Tychonic provides
+  `@temporalio/workflow` and `tychonic/workflow`; other package dependencies
+  are bundle-owned.
 
 ## Signals
 
-A workflow may register any signal/query names it owns. Document each name,
+A workflow may register custom signal/query names it owns. Document each name,
 payload shape, and recovery behavior in the bundle README.
 
-Register `tychonic.workflow_state` when the workflow should support
-`tychonic run --wait` or `tychonic wait <workflow-id>` before final completion.
-The query returns the workflow's current run-result snapshot.
+Use `createTychonicRunState` from `tychonic/workflow` when the workflow should
+support `tychonic run --wait`, `tychonic wait <workflow-id>`, or status checks
+before final completion. The helper owns the standard `tychonic.workflow_state`
+query registration. Workflow code only updates the current run snapshot:
 
-Standard interaction names are optional. Register them only if the workflow is
-designed to be driven by `tychonic approve`, `tychonic reject`, or
-`tychonic modify`:
+```js
+import { createTychonicRunState } from "tychonic/workflow";
 
-- `tychonic.interaction.approve_state`
-- `tychonic.interaction.reject_state`
-- `tychonic.interaction.modify_state`
-- `tychonic.interaction.pending_state` query
+const runState = createTychonicRunState();
+run = runState.update({ ...run, status: "running" });
+return runState.result(run);
+```
+
+Use `createTychonicInteraction(policy)` from `tychonic/workflow` only when the
+workflow is designed to be driven by `tychonic approve`, `tychonic reject`, or
+`tychonic modify`. The helper registers the standard signal/query names as one
+unit and exposes the approval gate, modify patch application, stray-signal
+drain, standard inbox item helpers, and standard raw payload validation. Do not
+hand-register the standard interaction names one by one.

@@ -23,6 +23,7 @@ import {
   type InteractionModifyStatePayload,
   type InteractionRejectStatePayload
 } from "../src/temporal/types.js";
+import { createTychonicInteraction } from "../src/workflow.js";
 
 type SignalHandler = (payload: unknown) => void;
 type QueryHandler = () => unknown;
@@ -149,12 +150,34 @@ describe("interactionHook", () => {
     });
   });
 
+  describe("createTychonicInteraction", () => {
+    it("registers the standard interaction surface as one workflow helper", async () => {
+      const interaction = createTychonicInteraction({ mode: "interactive", max_reject_iterations: 2 });
+      expect(interaction.mode()).toBe("interactive");
+      expect(interaction.rejectCap()).toBe(2);
+      expect(harness.signalHandlersByName.has(interactionApproveStateSignalName)).toBe(true);
+      expect(harness.signalHandlersByName.has(interactionRejectStateSignalName)).toBe(true);
+      expect(harness.signalHandlersByName.has(interactionModifyStateSignalName)).toBe(true);
+      expect(harness.queryHandlersByName.has(interactionPendingStateQueryName)).toBe(true);
+
+      const pending = interaction.waitForStateApproval("qa");
+      dispatchSignal(harness, interactionApproveStateSignalName, { state: "qa" });
+      await expect(pending).resolves.toEqual({ kind: "approve" });
+    });
+  });
+
   describe("waitForStateApproval", () => {
     it("returns approve immediately under auto mode without touching signal queues", async () => {
       registerInteractionSignals();
       setInteractionPolicy({ mode: "auto" });
       const decision = await waitForStateApproval("work");
       expect(decision).toEqual({ kind: "approve" });
+    });
+
+    it("rejects an empty workflow-owned state name before waiting", async () => {
+      registerInteractionSignals();
+      setInteractionPolicy({ mode: "interactive" });
+      await expect(waitForStateApproval("")).rejects.toThrow(/stateName must be a non-empty string/);
     });
 
     it("suspends until an approveState signal arrives in interactive mode", async () => {
@@ -212,16 +235,48 @@ describe("interactionHook", () => {
       await expect(verifyPending).resolves.toEqual({ kind: "approve" });
     });
 
-    it("rejects an empty feedback string (validation at consumption)", async () => {
+    it("keeps an invalid reject payload from satisfying the approval gate", async () => {
       registerInteractionSignals();
       setInteractionPolicy({ mode: "interactive" });
+      const pending = waitForStateApproval("work");
+      let resolved = false;
+      pending.then(() => {
+        resolved = true;
+      });
       dispatchSignal(harness, interactionRejectStateSignalName, {
         state: "work",
         feedback: ""
       });
-      await expect(waitForStateApproval("work")).rejects.toThrow(
-        /empty feedback string/
-      );
+      await flushMicrotasks();
+      expect(resolved).toBe(false);
+      expect(drainStraySignals()).toMatchObject([
+        {
+          kind: "invalid",
+          state: "<invalid>",
+          reason: "reject payload feedback must be a non-empty string"
+        }
+      ]);
+      dispatchSignal(harness, interactionApproveStateSignalName, { state: "work" } satisfies InteractionApproveStatePayload);
+      await expect(pending).resolves.toEqual({ kind: "approve" });
+    });
+
+    it("keeps an invalid modify payload from satisfying the approval gate", async () => {
+      registerInteractionSignals();
+      setInteractionPolicy({ mode: "interactive" });
+      const pending = waitForStateApproval("work");
+      dispatchSignal(harness, interactionModifyStateSignalName, {
+        state: "work"
+      });
+      await flushMicrotasks();
+      expect(drainStraySignals()).toMatchObject([
+        {
+          kind: "invalid",
+          state: "<invalid>",
+          reason: "modify payload patch must be an object"
+        }
+      ]);
+      dispatchSignal(harness, interactionApproveStateSignalName, { state: "work" } satisfies InteractionApproveStatePayload);
+      await expect(pending).resolves.toEqual({ kind: "approve" });
     });
 
     it("consumes signals buffered before the workflow reached the hook (R-07)", async () => {
@@ -245,19 +300,12 @@ describe("interactionHook", () => {
       });
       dispatchSignal(harness, interactionModifyStateSignalName, {
         state: "typo3",
-        stateRecord: {
-          id: "s",
-          name: "typo3",
-          status: "succeeded",
-          reason: "",
-          activity_attempt_ids: [],
-          artifact_ids: [],
-          finding_ids: []
-        }
+        patch: { status: "succeeded" }
       });
+      dispatchSignal(harness, interactionApproveStateSignalName, {});
       const strays = drainStraySignals();
-      expect(strays.map((item) => item.kind)).toEqual(["approve", "reject", "modify"]);
-      expect(strays.map((item) => item.state)).toEqual(["typo1", "typo2", "typo3"]);
+      expect(strays.map((item) => item.kind)).toEqual(["approve", "reject", "modify", "invalid"]);
+      expect(strays.map((item) => item.state)).toEqual(["typo1", "typo2", "typo3", "<invalid>"]);
       // Subsequent call returns empty — queues were drained.
       expect(drainStraySignals()).toEqual([]);
     });

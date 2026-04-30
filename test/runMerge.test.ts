@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   applyActivityResult,
-  applyAgentSessionRegistration,
   applyModifyStateDecision
 } from "../src/workflows/runMerge.js";
-import type { AgentSessionRecord, WorkflowRunRecord, WorkflowStateRecord } from "../src/domain/types.js";
+import type { WorkflowRunRecord, WorkflowStateRecord } from "../src/domain/types.js";
 import type { ActivityResult } from "../src/temporal/types.js";
 
 describe("applyActivityResult", () => {
@@ -98,6 +97,39 @@ describe("applyActivityResult", () => {
     expect(next.agent_sessions).toHaveLength(1);
   });
 
+  it("appends reviewOutcome artifacts and sessions for command failures", () => {
+    const run = baseRun("run_rev_failed_out");
+    const result: ActivityResult = {
+      delta: { states: [], activityAttempts: [] },
+      reviewOutcome: {
+        kind: "command_failed",
+        status: "failed",
+        reviewerSessionId: "sess_failed",
+        artifacts: [
+          {
+            id: "artifact_failed",
+            kind: "review_output",
+            path: "failed",
+            created_at: "2026-01-01T00:00:00Z"
+          }
+        ],
+        agentSessions: [
+          {
+            id: "sess_failed",
+            agent: "claude",
+            role: "reviewer",
+            cwd: "/ignored",
+            status: "failed",
+            started_at: "2026-01-01T00:00:00Z"
+          }
+        ]
+      }
+    };
+    const next = applyActivityResult(run, result);
+    expect(next.artifacts).toHaveLength(1);
+    expect(next.agent_sessions).toHaveLength(1);
+  });
+
   it("appends workerOutcome artifacts and sessions for executed outcomes", () => {
     const run = baseRun("run_wrk_out");
     const result: ActivityResult = {
@@ -116,44 +148,6 @@ describe("applyActivityResult", () => {
     const next = applyActivityResult(run, result);
     expect(next.artifacts).toHaveLength(1);
     expect(next.agent_sessions).toHaveLength(1);
-  });
-});
-
-describe("applyAgentSessionRegistration", () => {
-  it("appends when id is new", () => {
-    const run = baseRun("run_sess_new");
-    const session: AgentSessionRecord = {
-      id: "sess_new",
-      agent: "codex",
-      role: "worker",
-      cwd: "/ignored",
-      status: "running",
-      started_at: "2026-01-01T00:00:00Z"
-    };
-    const next = applyAgentSessionRegistration(run, session);
-    expect(next.agent_sessions).toHaveLength(1);
-    expect(next.agent_sessions[0]?.id).toBe("sess_new");
-  });
-
-  it("replaces when id already exists", () => {
-    const run = baseRun("run_sess_replace");
-    run.agent_sessions = [
-      {
-        id: "sess_existing",
-        agent: "codex",
-        role: "worker",
-        cwd: "/ignored",
-        status: "running",
-        started_at: "2026-01-01T00:00:00Z"
-      }
-    ];
-    const updated: AgentSessionRecord = {
-      ...run.agent_sessions[0]!,
-      status: "succeeded"
-    };
-    const next = applyAgentSessionRegistration(run, updated);
-    expect(next.agent_sessions).toHaveLength(1);
-    expect(next.agent_sessions[0]?.status).toBe("succeeded");
   });
 });
 

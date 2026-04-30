@@ -2,13 +2,13 @@
 //
 // Install with:
 //
-//   (cd examples/workflows/verifyOnlyWorkflow && npm install)
 //   tychonic workflows install ./examples/workflows/verifyOnlyWorkflow
 //
 // This is the smallest runnable example: one deterministic verify state and
 // no external AI agent dependency.
 
 import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicRunState } from "tychonic/workflow";
 
 const {
   startRunActivity,
@@ -46,16 +46,17 @@ function rejectUnknownInputFields(input) {
 
 export async function verifyOnlyWorkflow(input) {
   rejectUnknownInputFields(input);
+  const runState = createTychonicRunState();
   const profile = input.profile;
   let run = await startRunActivity({
     template: "verify_only",
     cwd: input.cwd,
     ...(profile ? { profile } : {})
   });
-  run = { ...run, status: "running" };
+  run = runState.update({ ...run, status: "running" });
 
   const facts = await collectGitFactsActivity({ run, cwd: input.cwd });
-  run = apply(run, facts);
+  run = runState.update(apply(run, facts));
 
   const verify = await runVerifyActivity({
     stateName: "verify",
@@ -63,17 +64,12 @@ export async function verifyOnlyWorkflow(input) {
     cwd: input.cwd,
     ...(profile ? { profile } : {})
   });
-  run = apply(run, verify);
+  run = runState.update(apply(run, verify));
 
   const final = await finalizeRunActivity({ run });
   run = apply(run, final);
 
-  return {
-    runId: run.id,
-    status: run.status,
-    run,
-    artifactRoot: `${input.cwd}/.tychonic/runs/${run.id}`
-  };
+  return runState.result(run);
 }
 
 function apply(run, result) {

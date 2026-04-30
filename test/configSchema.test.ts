@@ -297,11 +297,8 @@ describe("activity-centric config schema", () => {
 
 });
 
-// The state block's `resume_command` slot is gone;
-// `agent` must be a built-in adapter; `resume` is a plain numeric workflow
-// budget with no TYPE/NAME/command-path inference.
 describe("schema tighten", () => {
-  it("rejects resume_command anywhere in a state block", () => {
+  it("rejects unknown fields in a state block", () => {
     expect(() =>
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
@@ -309,7 +306,7 @@ describe("schema tighten", () => {
           work: {
             type: "work",
             agent: "claude",
-            resume_command: "claude --continue"
+            continuationCommand: "claude --continue"
           }
         }
       })

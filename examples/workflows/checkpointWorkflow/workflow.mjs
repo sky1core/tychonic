@@ -2,7 +2,6 @@
 //
 // Install with:
 //
-//   (cd examples/workflows/checkpointWorkflow && npm install)
 //   tychonic workflows install ./examples/workflows/checkpointWorkflow
 //
 // Operational installs refresh the LaunchAgent worker when one is installed.
@@ -15,6 +14,7 @@
 // meaning.
 
 import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicRunState } from "tychonic/workflow";
 import { validateIntegrationPolicy } from "./integrationPolicy.mjs";
 
 const act = proxyActivities({
@@ -40,7 +40,6 @@ export const defaultProfile = {
     semantic_review: {
       type: "review",
       agent: "codex",
-      sandbox: "read-only",
       approval: "never",
       timeout: "20m"
     },
@@ -74,6 +73,7 @@ function rejectUnknownInputFields(input) {
 export async function checkpointWorkflow(input) {
   rejectUnknownInputFields(input);
   validateIntegrationPolicy(input.profile?.policies);
+  const runState = createTychonicRunState();
   const profile = input.profile;
   let run = await startRunActivity({
     template: "checkpoint",
@@ -81,11 +81,11 @@ export async function checkpointWorkflow(input) {
     ...(profile ? { profile } : {}),
     ...(input.goal ? { goal: input.goal } : {})
   });
-  run = { ...run, status: "running" };
+  run = runState.update({ ...run, status: "running" });
 
   // Collect git facts to drive skip decisions.
   const facts = await collectGitFactsActivity({ run, cwd: input.cwd });
-  run = applyResult(run, facts);
+  run = runState.update(applyResult(run, facts));
 
   const integrationPosition = profile?.policies?.integration?.position ?? "final_gate";
 
@@ -96,7 +96,7 @@ export async function checkpointWorkflow(input) {
       ...(profile ? { profile } : {}),
       cwd: input.cwd
     });
-    run = applyResult(run, res);
+    run = runState.update(applyResult(run, res));
   }
 
   // Stage: unit_test
@@ -106,7 +106,7 @@ export async function checkpointWorkflow(input) {
       ...(profile ? { profile } : {}),
       cwd: input.cwd
     });
-    run = applyResult(run, res);
+    run = runState.update(applyResult(run, res));
   }
 
   // Stage: integration (pre-review when policy says before_ai_review)
@@ -116,7 +116,7 @@ export async function checkpointWorkflow(input) {
       ...(profile ? { profile } : {}),
       cwd: input.cwd
     });
-    run = applyResult(run, res);
+    run = runState.update(applyResult(run, res));
   }
 
   // Stage: semantic_review
@@ -127,7 +127,7 @@ export async function checkpointWorkflow(input) {
       cwd: input.cwd,
       prompt: structuredReviewPrompt("changes")
     });
-    run = applyResult(run, res);
+    run = runState.update(applyResult(run, res));
   }
 
   // Stage: integration (after semantic review, before test review).
@@ -137,7 +137,7 @@ export async function checkpointWorkflow(input) {
       ...(profile ? { profile } : {}),
       cwd: input.cwd
     });
-    run = applyResult(run, res);
+    run = runState.update(applyResult(run, res));
   }
 
   // Stage: test_review
@@ -148,7 +148,7 @@ export async function checkpointWorkflow(input) {
       cwd: input.cwd,
       prompt: structuredReviewPrompt("test coverage")
     });
-    run = applyResult(run, res);
+    run = runState.update(applyResult(run, res));
   }
 
   // Stage: integration (final_gate, the default)
@@ -158,18 +158,13 @@ export async function checkpointWorkflow(input) {
       ...(profile ? { profile } : {}),
       cwd: input.cwd
     });
-    run = applyResult(run, res);
+    run = runState.update(applyResult(run, res));
   }
 
   const fin = await finalizeRunActivity({ run });
   run = applyResult(run, fin);
 
-  return {
-    runId: run.id,
-    status: run.status,
-    run,
-    artifactRoot: `${input.cwd}/.tychonic/runs/${run.id}`
-  };
+  return runState.result(run);
 }
 
 function applyResult(run, result) {
@@ -177,7 +172,7 @@ function applyResult(run, result) {
   if (result?.commandOutcome) {
     next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
   }
-  if (result?.reviewOutcome && (result.reviewOutcome.kind === "parsed" || result.reviewOutcome.kind === "unparseable")) {
+  if (result?.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
     next = {
       ...next,
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],

@@ -41,13 +41,39 @@ export interface WorkflowArtifactEvidenceView extends ArtifactRecord {
 export interface WorkflowLogEvidenceView {
   id: string;
   state_id: string;
+  state_name?: string;
   kind: string;
   status: string;
   reason: string;
   exit_code?: number;
   started_at: string;
   finished_at?: string;
+  duration_ms?: number;
   read_command: string;
+}
+
+export interface WorkflowTimingByKindView {
+  kind: string;
+  count: number;
+  duration_ms: number;
+}
+
+export interface WorkflowAttemptTimingView {
+  id: string;
+  state_id: string;
+  state_name?: string;
+  kind: ActivityAttemptRecord["kind"];
+  status: ActivityAttemptRecord["status"];
+  duration_ms: number;
+}
+
+export interface WorkflowTimingView {
+  run_ms?: number;
+  activity_ms: number;
+  non_activity_ms?: number;
+  activity_count: number;
+  by_kind: WorkflowTimingByKindView[];
+  slowest_attempts: WorkflowAttemptTimingView[];
 }
 
 export interface WorkflowEvidenceView {
@@ -71,6 +97,7 @@ export interface WorkflowEvidenceView {
   logs: WorkflowLogEvidenceView[];
   sessions: AgentSessionRecord[];
   findings: FindingRecord[];
+  timing: WorkflowTimingView;
 }
 
 export function assertTychonicWorkflowResult(result: unknown): asserts result is TychonicWorkflowResult {
@@ -97,6 +124,7 @@ export function workflowEvidenceView(
   const logs = listLiveOutputAttempts(result);
   const states = result.run.states;
   const latestState = states.length > 0 ? states[states.length - 1] : undefined;
+  const stateNameById = stateNameMap(result.run);
   return {
     run_id: result.run.id,
     template: result.run.template,
@@ -118,19 +146,10 @@ export function workflowEvidenceView(
       ...artifact,
       read_command: `${evidenceCommand("artifacts", workflowId, runId)} --artifact ${shellArg(artifact.id)}`
     })),
-    logs: logs.map((attempt) => ({
-      id: attempt.id,
-      state_id: attempt.state_id,
-      kind: attempt.kind,
-      status: attempt.status,
-      reason: attempt.reason,
-      ...(attempt.exit_code !== undefined ? { exit_code: attempt.exit_code } : {}),
-      started_at: attempt.started_at,
-      ...(attempt.finished_at ? { finished_at: attempt.finished_at } : {}),
-      read_command: `${evidenceCommand("logs", workflowId, runId)} --attempt ${shellArg(attempt.id)}`
-    })),
+    logs: logs.map((attempt) => liveOutputAttemptView(attempt, stateNameById, workflowId, runId)),
     sessions: result.run.agent_sessions,
-    findings: result.run.findings
+    findings: result.run.findings,
+    timing: workflowTimingView(result)
   };
 }
 
@@ -155,6 +174,17 @@ export function listLiveOutputAttempts(result: TychonicWorkflowResult): Activity
   return result.run.activity_attempts.filter((attempt) => attempt.live_output_path);
 }
 
+export function listLiveOutputAttemptViews(
+  result: TychonicWorkflowResult,
+  workflowId: string,
+  runId?: string
+): WorkflowLogEvidenceView[] {
+  const stateNameById = stateNameMap(result.run);
+  return listLiveOutputAttempts(result).map((attempt) =>
+    liveOutputAttemptView(attempt, stateNameById, workflowId, runId)
+  );
+}
+
 export function liveOutputContentPath(result: TychonicWorkflowResult, attemptId: string): string {
   return artifactStore(result.run).liveOutputPath(result.run, attemptId);
 }
@@ -165,6 +195,46 @@ export function listInboxItems(result: TychonicWorkflowResult): DecisionInboxIte
 
 export function listAgentSessions(result: TychonicWorkflowResult, limit: number): AgentSessionRecord[] {
   return result.run.agent_sessions.slice(0, limit);
+}
+
+export function workflowTimingView(result: TychonicWorkflowResult): WorkflowTimingView {
+  const stateNameById = stateNameMap(result.run);
+  const attemptTimings = result.run.activity_attempts
+    .map((attempt) => {
+      const durationMs = elapsedMs(attempt.started_at, attempt.finished_at);
+      if (durationMs === undefined) return undefined;
+      const stateName = stateNameById.get(attempt.state_id);
+      return {
+        id: attempt.id,
+        state_id: attempt.state_id,
+        ...(stateName ? { state_name: stateName } : {}),
+        kind: attempt.kind,
+        status: attempt.status,
+        duration_ms: durationMs
+      } satisfies WorkflowAttemptTimingView;
+    })
+    .filter((attempt): attempt is WorkflowAttemptTimingView => attempt !== undefined);
+
+  const activityMs = attemptTimings.reduce((sum, attempt) => sum + attempt.duration_ms, 0);
+  const runMs = workflowObservedElapsedMs(result.run);
+  const byKind = Array.from(
+    attemptTimings.reduce((map, attempt) => {
+      const current = map.get(attempt.kind) ?? { kind: attempt.kind, count: 0, duration_ms: 0 };
+      current.count += 1;
+      current.duration_ms += attempt.duration_ms;
+      map.set(attempt.kind, current);
+      return map;
+    }, new Map<string, WorkflowTimingByKindView>()).values()
+  ).sort((a, b) => b.duration_ms - a.duration_ms);
+
+  return {
+    ...(runMs !== undefined ? { run_ms: runMs } : {}),
+    activity_ms: activityMs,
+    ...(runMs !== undefined ? { non_activity_ms: Math.max(0, runMs - activityMs) } : {}),
+    activity_count: attemptTimings.length,
+    by_kind: byKind,
+    slowest_attempts: [...attemptTimings].sort((a, b) => b.duration_ms - a.duration_ms).slice(0, 5)
+  };
 }
 
 function artifactStore(run: WorkflowRunRecord): RunArtifactStore {
@@ -183,6 +253,59 @@ function evidenceCommands(workflowId: string, runId?: string): WorkflowEvidenceC
 
 function evidenceCommand(command: "inbox" | "artifacts" | "logs" | "sessions", workflowId: string, runId?: string): string {
   return `tychonic ${command} ${workflowSelector(workflowId, runId)}`;
+}
+
+function liveOutputAttemptView(
+  attempt: ActivityAttemptRecord,
+  stateNameById: Map<string, string>,
+  workflowId: string,
+  runId?: string
+): WorkflowLogEvidenceView {
+  const durationMs = elapsedMs(attempt.started_at, attempt.finished_at);
+  const stateName = stateNameById.get(attempt.state_id);
+  return {
+    id: attempt.id,
+    state_id: attempt.state_id,
+    ...(stateName ? { state_name: stateName } : {}),
+    kind: attempt.kind,
+    status: attempt.status,
+    reason: attempt.reason,
+    ...(attempt.exit_code !== undefined ? { exit_code: attempt.exit_code } : {}),
+    started_at: attempt.started_at,
+    ...(attempt.finished_at ? { finished_at: attempt.finished_at } : {}),
+    ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+    read_command: `${evidenceCommand("logs", workflowId, runId)} --attempt ${shellArg(attempt.id)}`
+  };
+}
+
+function stateNameMap(run: WorkflowRunRecord): Map<string, string> {
+  return new Map(run.states.map((state) => [state.id, state.name]));
+}
+
+function elapsedMs(start: string | undefined, finish: string | undefined): number | undefined {
+  if (!start || !finish) return undefined;
+  const startMs = Date.parse(start);
+  const finishMs = Date.parse(finish);
+  if (!Number.isFinite(startMs) || !Number.isFinite(finishMs) || finishMs < startMs) {
+    return undefined;
+  }
+  return finishMs - startMs;
+}
+
+function workflowObservedElapsedMs(run: WorkflowRunRecord): number | undefined {
+  const startMs = Date.parse(run.created_at);
+  if (!Number.isFinite(startMs)) return undefined;
+
+  const candidates = [
+    run.updated_at,
+    ...run.states.flatMap((state) => [state.started_at, state.finished_at]),
+    ...run.activity_attempts.flatMap((attempt) => [attempt.started_at, attempt.finished_at])
+  ]
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter((value) => Number.isFinite(value));
+  const latestMs = Math.max(startMs, ...candidates);
+  if (latestMs < startMs) return undefined;
+  return latestMs - startMs;
 }
 
 function workflowSelector(workflowId: string, runId?: string): string {

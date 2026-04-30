@@ -65,7 +65,6 @@ From a source checkout, use `EXAMPLES_DIR="./examples/workflows"`.
 EXAMPLES_DIR="./examples/workflows"
 # npm global install:
 # EXAMPLES_DIR="$(npm root -g)/tychonic/examples/workflows"
-(cd "$EXAMPLES_DIR/verifyOnlyWorkflow" && npm install)
 tychonic workflows install "$EXAMPLES_DIR/verifyOnlyWorkflow"
 tychonic workflows list
 ```
@@ -135,8 +134,9 @@ The response may also include `runId`; ordinary follow-up commands use
 tychonic wait <workflow-id>
 ```
 
-Inspect a run. `status --workflow-id` includes an evidence summary and the read
-commands for artifacts and logs.
+Inspect a run. `status --workflow-id` gives the workflow metadata, evidence
+summary, timing summary, and read commands for artifacts and logs. It does not
+dump the full raw run record by default.
 
 ```sh
 tychonic status --workflow-id <id>
@@ -152,8 +152,7 @@ tychonic sessions --workflow-id <id>
 ```
 
 Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
-it includes the workflow's Tychonic run result and evidence summary when
-available.
+it returns the evidence needed to decide the next operator action.
 
 After the no-agent smoke passes, install an agent workflow such as
 `simpleWorkflow`. Its default profile uses external agent CLIs and verifies
@@ -161,7 +160,6 @@ with `npm run typecheck`, `npm run build`, and `npm test`, so make sure those
 CLIs and scripts are available in the target repository.
 
 ```sh
-(cd "$EXAMPLES_DIR/simpleWorkflow" && npm install)
 tychonic workflows install "$EXAMPLES_DIR/simpleWorkflow"
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```

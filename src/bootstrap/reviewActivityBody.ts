@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 import {
   optionalStateConfig
 } from "../catalog/types.js";
@@ -19,7 +21,7 @@ import { parseBuiltInReviewOutput, parseReviewOutput } from "../review/parse.js"
 import type { ReviewActivityOutcome } from "../review/outcome.js";
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
-import { runCommand, withPeriodicProgress } from "./commandRunner.js";
+import { runCommand, sanitizeChildEnv, withPeriodicProgress } from "./commandRunner.js";
 
 /**
  * Resolved reviewer invocation inputs. Callers build this from their own
@@ -54,6 +56,8 @@ const NORMALIZER_MODEL_BY_AGENT: Record<Extract<BuiltInAgentName, "claude" | "co
   claude: "haiku",
   codex: "gpt-5.3-codex-spark"
 };
+
+const execFileAsync = promisify(execFile);
 
 const DIRECT_BUILT_IN_REVIEW_CONTRACT = [
   "",
@@ -112,9 +116,28 @@ export async function runReviewActivityBody(
   await mkdir(store.liveDir(run.id), { recursive: true });
   const liveOutputPath = join(store.liveDir(run.id), `${attempt.id}.log`);
   attempt.live_output_path = relativeToCwd(input.cwd, liveOutputPath);
+
+  const artifactsDir = store.artifactsDir(run.id);
+  await mkdir(artifactsDir, { recursive: true });
+  const artifacts: ArtifactRecord[] = [];
+  const promptArtifact = await writeReviewArtifact({
+    store,
+    artifactsDir,
+    id: nextId("artifact"),
+    kind: `${input.stateName}_prompt`,
+    attemptId: attempt.id,
+    ext: "txt",
+    content: prompt,
+    stateId: state.id,
+    createdAt: now().toISOString()
+  });
+  artifacts.push(promptArtifact);
+  state.artifact_ids.push(promptArtifact.id);
+
   const progress = (): void => heartbeat?.({ runId: run.id, state: state.name, attemptId: attempt.id });
 
-  const result = await withPeriodicProgress(progress, async () =>
+  const reviewMutationBefore = await snapshotReviewMutationBoundary(executionCwd, env);
+  let result = await withPeriodicProgress(progress, async () =>
     await runCommand({
       command,
       cwd: executionCwd,
@@ -125,6 +148,15 @@ export async function runReviewActivityBody(
       onProgress: progress
     })
   );
+  const reviewMutationViolation = await detectReviewMutation(reviewMutationBefore, executionCwd, env);
+  if (reviewMutationViolation) {
+    result = {
+      ...result,
+      status: "failed",
+      exitCode: result.exitCode ?? 1,
+      output: `${result.output}\n${reviewMutationViolation}\n`
+    };
+  }
 
   attempt.status = result.status;
   attempt.reason = result.status;
@@ -132,40 +164,6 @@ export async function runReviewActivityBody(
     attempt.exit_code = result.exitCode;
   }
   attempt.finished_at = now().toISOString();
-
-  if (result.status !== "succeeded") {
-    state.status = result.status;
-    state.reason = "reviewer command did not succeed";
-    state.finished_at = now().toISOString();
-    const outcome: ReviewActivityOutcome = {
-      kind: "command_failed",
-      status: result.status,
-      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {})
-    };
-    return {
-      delta: { states: [state], activityAttempts: [attempt] },
-      reviewOutcome: outcome
-    };
-  }
-
-  const artifactsDir = store.artifactsDir(run.id);
-  await mkdir(artifactsDir, { recursive: true });
-  const createdAt = now().toISOString();
-  const artifacts: ArtifactRecord[] = [];
-
-  const promptArtifact = await writeReviewArtifact({
-    store,
-    artifactsDir,
-    id: nextId("artifact"),
-    kind: `${input.stateName}_prompt`,
-    attemptId: attempt.id,
-    ext: "txt",
-    content: prompt,
-    stateId: state.id,
-    createdAt
-  });
-  artifacts.push(promptArtifact);
-  state.artifact_ids.push(promptArtifact.id);
 
   const outputArtifact = await writeReviewArtifact({
     store,
@@ -176,7 +174,7 @@ export async function runReviewActivityBody(
     ext: "txt",
     content: result.output,
     stateId: state.id,
-    createdAt
+    createdAt: now().toISOString()
   });
   artifacts.push(outputArtifact);
   state.artifact_ids.push(outputArtifact.id);
@@ -192,17 +190,41 @@ export async function runReviewActivityBody(
     agent: reviewOptions.agent,
     role: "reviewer",
     cwd: executionCwd,
-    status: "succeeded",
+    status:
+      result.status === "succeeded"
+        ? "succeeded"
+        : result.status === "timed_out"
+          ? "timed_out"
+          : "failed",
     prompt_artifact_id: promptArtifact.id,
     result_artifact_id: outputArtifact.id,
     started_at: attempt.started_at,
     ...(attempt.finished_at ? { finished_at: attempt.finished_at } : {})
   };
-
   attempt.agent_session_id = session.id;
+  const agentSessions: AgentSessionRecord[] = [session];
+
+  if (result.status !== "succeeded") {
+    state.status = result.status;
+    state.reason = "reviewer command did not succeed";
+    state.finished_at = now().toISOString();
+    const outcome: ReviewActivityOutcome = {
+      kind: "command_failed",
+      status: result.status,
+      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+      reviewerSessionId: session.id,
+      artifacts,
+      agentSessions
+    };
+    return {
+      delta: { states: [state], activityAttempts: [attempt] },
+      reviewOutcome: outcome
+    };
+  }
+
   let outputToParse = result.output;
   let parseBuiltInEnvelope = reviewOptions.adapterDispatch !== undefined;
-  const agentSessions: AgentSessionRecord[] = [session];
+  const createdAt = now().toISOString();
 
   if (reviewOptions.normalizerAgent !== undefined) {
     const normalized = await runReviewNormalizer({
@@ -506,4 +528,62 @@ function relativeToCwd(cwd: string, targetPath: string): string {
     return relativePath;
   }
   return targetPath;
+}
+
+type ReviewMutationSnapshot =
+  | { supported: false }
+  | {
+      supported: true;
+      status: string;
+    };
+
+async function snapshotReviewMutationBoundary(
+  cwd: string,
+  env: NodeJS.ProcessEnv | undefined
+): Promise<ReviewMutationSnapshot> {
+  try {
+    await execGit(cwd, env, ["rev-parse", "--is-inside-work-tree"]);
+    const status = await execGit(cwd, env, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--ignored=no"
+    ]);
+    return { supported: true, status };
+  } catch {
+    return { supported: false };
+  }
+}
+
+async function detectReviewMutation(
+  before: ReviewMutationSnapshot,
+  cwd: string,
+  env: NodeJS.ProcessEnv | undefined
+): Promise<string | undefined> {
+  if (!before.supported) return undefined;
+  const after = await snapshotReviewMutationBoundary(cwd, env);
+  if (!after.supported) {
+    return "review mutation guard failed: git worktree became unavailable during review";
+  }
+  if (after.status === before.status) return undefined;
+  return [
+    "review mutation guard failed: review changed the git worktree.",
+    "Review states may inspect files and run checks, but must not modify source files.",
+    "Before:",
+    before.status || "<clean>",
+    "After:",
+    after.status || "<clean>"
+  ].join("\n");
+}
+
+async function execGit(
+  cwd: string,
+  env: NodeJS.ProcessEnv | undefined,
+  args: string[]
+): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+    env: sanitizeChildEnv(env),
+    maxBuffer: 1_000_000
+  });
+  return stdout.trimEnd();
 }

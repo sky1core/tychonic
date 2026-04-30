@@ -1,8 +1,0 @@
-{
-  "name": "@tychonic/example-architect-builder-kiro-repair-qa-workflow",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@temporalio/workflow": "1.16.0"
-  }
-}

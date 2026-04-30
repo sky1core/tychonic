@@ -1,6 +1,8 @@
 import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { bundleWorkflowCode, NativeConnection, Worker } from "@temporalio/worker";
+import { createRequire } from "node:module";
+import { dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { bundleWorkflowCode, NativeConnection, Worker, type BundleOptions } from "@temporalio/worker";
 import * as activities from "../activities/index.js";
 import { normalizeTemporalConfig, tychonicRuntimeDirs, type TemporalConfig } from "./manager.js";
 import {
@@ -9,6 +11,12 @@ import {
   workflowModuleFileUrl
 } from "./workflowModules.js";
 import { getActiveInstance } from "../runtime/instance.js";
+
+const requireFromHere = createRequire(import.meta.url);
+const temporalWorkflowPackageRoot = dirname(requireFromHere.resolve("@temporalio/workflow/package.json"));
+const moduleFilePath = fileURLToPath(import.meta.url);
+const tychonicWorkflowHelperPath = join(dirname(dirname(moduleFilePath)), `workflow${extname(moduleFilePath)}`);
+type WebpackConfig = Parameters<NonNullable<BundleOptions["webpackConfigHook"]>>[0];
 
 // Local operation favors letting in-flight activities reach their own configured
 // command timeout instead of cancelling them during worker shutdown.
@@ -111,10 +119,8 @@ export async function resolveWorkflowModulePath(): Promise<string> {
   }
   await assertNoInstalledWorkflowExportConflicts(installedBundles);
 
-  // The Temporal bundler's generated entrypoint imports
-  // `@temporalio/workflow` relative to `workflowsPath`. Keep that path inside
-  // a real installed bundle package so standard package resolution can find
-  // the bundle's own dependencies. Do not inject Tychonic's node_modules.
+  // Keep the entrypoint inside a real installed bundle package so bundle-owned
+  // dependencies still resolve from the bundle's standard package layout.
   const generatedDir = join(dirname(installedBundles[0]!.workflowPath), ".tychonic");
   await mkdir(generatedDir, { recursive: true });
   const combinedPath = join(await realpath(generatedDir), "combined-workflows.mjs");
@@ -137,5 +143,22 @@ export async function resolveWorkflowModulePath(): Promise<string> {
 
 export async function buildWorkflowBundle(): Promise<{ code: string }> {
   const workflowsPath = await resolveWorkflowModulePath();
-  return bundleWorkflowCode({ workflowsPath });
+  return bundleWorkflowCode({
+    workflowsPath,
+    webpackConfigHook: withTychonicWorkflowSdkResolver
+  });
+}
+
+function withTychonicWorkflowSdkResolver(config: WebpackConfig): WebpackConfig {
+  return {
+    ...config,
+    resolve: {
+      ...config.resolve,
+      alias: {
+        ...config.resolve?.alias,
+        "@temporalio/workflow": temporalWorkflowPackageRoot,
+        "tychonic/workflow": tychonicWorkflowHelperPath
+      }
+    }
+  };
 }

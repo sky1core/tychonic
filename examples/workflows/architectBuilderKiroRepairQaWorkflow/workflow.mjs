@@ -2,6 +2,7 @@
 // structured final QA gate.
 
 import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicRunState } from "tychonic/workflow";
 
 const {
   startRunActivity,
@@ -79,6 +80,9 @@ function rejectUnknownInputFields(input) {
 
 export async function architectBuilderKiroRepairQaWorkflow(input) {
   rejectUnknownInputFields(input);
+  const runState = createTychonicRunState();
+  let worktreePath;
+  const updateRun = (next) => runState.update(next, worktreePath ? { worktreePath } : {});
   const profile = input.profile;
   let run = await startRunActivity({
     template: "architect_builder_kiro_repair_qa",
@@ -86,9 +90,11 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
     ...(profile ? { profile } : {}),
     ...(input.goal ? { goal: input.goal } : {})
   });
+  run = updateRun({ ...run, status: "running" });
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
-  const worktreePath = wt.worktreePath;
+  worktreePath = wt.worktreePath;
+  run = updateRun(run);
 
   const architect = await runWorkerActivity({
     stateName: "architect",
@@ -98,9 +104,9 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
     worktreePath,
     prompt: input.architectPrompt ?? architectPrompt(input.goal ?? "")
   });
-  run = apply(run, architect);
+  run = updateRun(apply(run, architect));
   if (architect.workerOutcome?.status !== "succeeded") {
-    return done(run, input.cwd, "architect failed");
+    return done(run, input.cwd, "architect failed", runState, worktreePath);
   }
 
   const builder = await runWorkerActivity({
@@ -111,9 +117,9 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
     worktreePath,
     prompt: input.builderPrompt ?? builderPrompt({ cwd: input.cwd, runId: run.id, worktreePath })
   });
-  run = apply(run, builder);
+  run = updateRun(apply(run, builder));
   if (builder.workerOutcome?.status !== "succeeded") {
-    return done(run, input.cwd, "builder failed");
+    return done(run, input.cwd, "builder failed", runState, worktreePath);
   }
 
   const preReview = await runWorkerActivity({
@@ -124,9 +130,9 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
     worktreePath,
     prompt: input.kiroPreReviewPrompt ?? kiroPreReviewPrompt({ cwd: input.cwd, runId: run.id, worktreePath })
   });
-  run = apply(run, preReview);
+  run = updateRun(apply(run, preReview));
   if (preReview.workerOutcome?.status !== "succeeded") {
-    return done(run, input.cwd, "kiro pre-review failed");
+    return done(run, input.cwd, "kiro pre-review failed", runState, worktreePath);
   }
 
   const repair = await runWorkerActivity({
@@ -137,9 +143,9 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
     worktreePath,
     prompt: input.kiroFixPrompt ?? kiroFixPrompt({ cwd: input.cwd, runId: run.id, worktreePath })
   });
-  run = apply(run, repair);
+  run = updateRun(apply(run, repair));
   if (repair.workerOutcome?.status !== "succeeded") {
-    return done(run, input.cwd, "kiro repair failed");
+    return done(run, input.cwd, "kiro repair failed", runState, worktreePath);
   }
 
   const finalQa = await runReviewActivity({
@@ -150,9 +156,9 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
     worktreePath,
     prompt: input.finalQaPrompt ?? finalQaPrompt({ cwd: input.cwd, runId: run.id, worktreePath })
   });
-  run = apply(run, finalQa);
+  run = updateRun(apply(run, finalQa));
 
-  return done(run, input.cwd, "architectBuilderKiroRepairQaWorkflow completed");
+  return done(run, input.cwd, "architectBuilderKiroRepairQaWorkflow completed", runState, worktreePath);
 }
 
 function apply(run, result) {
@@ -160,10 +166,7 @@ function apply(run, result) {
   if (result?.commandOutcome) {
     next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
   }
-  if (
-    result?.reviewOutcome &&
-    (result.reviewOutcome.kind === "parsed" || result.reviewOutcome.kind === "unparseable")
-  ) {
+  if (result?.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
     next = {
       ...next,
       artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
@@ -256,16 +259,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-async function done(run, cwd, summary) {
+async function done(run, cwd, summary, runState, worktreePath) {
   const final = await finalizeRunActivity({ run, summary });
   run = apply(run, final);
-  return {
-    runId: run.id,
-    status: run.status,
-    run,
-    artifactRoot: `${cwd}/.tychonic/runs/${run.id}`,
-    ...(run.summary ? { summary: run.summary } : {})
-  };
+  return runState.result(run, { artifactRoot: `${cwd}/.tychonic/runs/${run.id}`, worktreePath });
 }
 
 function architectPrompt(goal) {

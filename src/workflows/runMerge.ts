@@ -40,7 +40,7 @@ export function applyActivityResult(
 
   if (result.reviewOutcome) {
     const outcome = result.reviewOutcome;
-    if (outcome.kind === "parsed" || outcome.kind === "unparseable") {
+    if (outcome.kind !== "skipped") {
       next = {
         ...next,
         artifacts: [...next.artifacts, ...outcome.artifacts],
@@ -58,27 +58,6 @@ export function applyActivityResult(
   }
 
   return next;
-}
-
-/**
- * Append an `AgentSessionRecord` registered through a workflow signal
- * (e.g. `simple_workflow.register_session`). Replaces an existing record with
- * the same id if one exists — otherwise appends. Pure.
- */
-export function applyAgentSessionRegistration(
-  run: WorkflowRunRecord,
-  session: import("../domain/types.js").AgentSessionRecord
-): WorkflowRunRecord {
-  const existingIndex = run.agent_sessions.findIndex((candidate) => candidate.id === session.id);
-  if (existingIndex < 0) {
-    return {
-      ...run,
-      agent_sessions: [...run.agent_sessions, session]
-    };
-  }
-  const next = [...run.agent_sessions];
-  next[existingIndex] = session;
-  return { ...run, agent_sessions: next };
 }
 
 /**

@@ -2,7 +2,6 @@
 //
 // Install with:
 //
-//   (cd examples/workflows/simpleWorkflow && npm install)
 //   tychonic workflows install ./examples/workflows/simpleWorkflow
 //
 // Operational installs refresh the LaunchAgent worker when one is installed.
@@ -15,7 +14,8 @@
 // failed); recovery is sent via `tychonic signal` from a separate process
 // when the user wants async signal-driven follow-ups.
 
-import { defineQuery, defineSignal, proxyActivities, setHandler } from "@temporalio/workflow";
+import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicRunState } from "tychonic/workflow";
 import {
   applyResult,
   appendReviewFindingsAndInbox,
@@ -68,9 +68,6 @@ npm test`,
   policies: { loop: { auto_continue: true, max_review_iterations: 3 } }
 };
 
-const workflowStateQuery = defineQuery("tychonic.workflow_state");
-const registerSessionSignal = defineSignal("tychonic.simple_workflow.register_session");
-
 /**
  * `simpleWorkflow` — work / verify / review loop.
  *
@@ -107,40 +104,41 @@ export async function simpleWorkflow(input) {
   // caps from this snapshot, never from a re-read of the input — a mid-run
   // "reinstall" of the bundle does not change the running cap values.
   const profileSnapshot = input.profile;
-  let latestResult;
-  const sessionRegistrationQueue = [];
+  const runState = createTychonicRunState();
 
-  setHandler(workflowStateQuery, () => latestResult);
-  // The host's worker activity registers each spawned agent session with
-  // the workflow via this signal as the run progresses. The handler queues
-  // registrations until a result snapshot exists, then folds them in.
-  setHandler(registerSessionSignal, (registration) => {
-    sessionRegistrationQueue.push(registration);
-    if (latestResult) {
-      applySessionRegistrations(latestResult, sessionRegistrationQueue);
-    }
-  });
+  const publishRun = (run, worktreePath) => {
+    const published = runState.update(run, worktreePath ? { worktreePath } : {});
+    return published;
+  };
 
   // Run work -> verify -> review with optional auto-continue. The
   // workflow returns once it reaches a Tychonic terminal status.
-  latestResult = await runMainPipeline({ ...input, profile: profileSnapshot });
-  applySessionRegistrations(latestResult, sessionRegistrationQueue);
+  let latestResult = await runMainPipeline({ ...input, profile: profileSnapshot }, runState, publishRun);
+  runState.update(latestResult.run, {
+    artifactRoot: latestResult.artifactRoot,
+    worktreePath: latestResult.worktreePath,
+    summary: latestResult.summary
+  });
+  latestResult = runState.current() ?? latestResult;
 
   return latestResult;
 }
 
-async function runMainPipeline(input) {
+async function runMainPipeline(input, runState, publishRun) {
   const profile = input.profile;
+  let worktreePath;
+  const updateRun = (next) => publishRun(next, worktreePath);
   let run = await startRunActivity({
     template: "simple_workflow",
     cwd: input.cwd,
     ...(profile ? { profile } : {}),
     ...(input.goal ? { goal: input.goal } : {})
   });
-  run = { ...run, status: "running" };
+  run = updateRun({ ...run, status: "running" });
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
-  const worktreePath = wt.worktreePath;
+  worktreePath = wt.worktreePath;
+  run = updateRun(run);
 
   // Stage: work
   const workRes = await runWorkerActivity({
@@ -151,13 +149,13 @@ async function runMainPipeline(input) {
     worktreePath,
     ...(input.goal ? { goal: input.goal } : {})
   });
-  run = applyResult(run, workRes);
+  run = updateRun(applyResult(run, workRes));
   const workSession = workRes.workerOutcome?.kind === "executed"
     ? workRes.workerOutcome.agentSessions[0]
     : undefined;
 
   if (workRes.delta?.states?.[0]?.status !== "succeeded") {
-    return finalize(run, input.cwd, worktreePath, "work failed");
+    return finalize(run, input.cwd, worktreePath, runState, "work failed");
   }
 
   // Stage: verify
@@ -168,9 +166,9 @@ async function runMainPipeline(input) {
     cwd: input.cwd,
     worktreePath
   });
-  run = applyResult(run, verifyRes);
+  run = updateRun(applyResult(run, verifyRes));
   if (verifyRes.delta?.states?.[0]?.status !== "succeeded") {
-    return finalize(run, input.cwd, worktreePath, "verify failed");
+    return finalize(run, input.cwd, worktreePath, runState, "verify failed");
   }
 
   // Stage: review (optional)
@@ -184,8 +182,8 @@ async function runMainPipeline(input) {
       prompt: buildReviewPrompt(run, "initial work output"),
       verificationCommands: verificationCommands(profile)
     });
-    run = applyResult(run, reviewRes);
-    run = appendReviewFindingsAndInbox(run, reviewRes);
+    run = updateRun(applyResult(run, reviewRes));
+    run = updateRun(appendReviewFindingsAndInbox(run, reviewRes));
 
     if (input.autoContinue || profile?.policies?.loop?.auto_continue) {
       const maxIter = normalizeMaxIterations(
@@ -197,12 +195,13 @@ async function runMainPipeline(input) {
         worktreePath,
         workSession,
         maxIterations: maxIter,
-        activities: defaultActivities()
+        activities: defaultActivities(),
+        onRunUpdate: updateRun
       });
     }
   }
 
-  return finalize(run, input.cwd, worktreePath);
+  return finalize(run, input.cwd, worktreePath, runState);
 }
 
 function defaultActivities() {
@@ -213,40 +212,8 @@ function defaultActivities() {
   };
 }
 
-function applySessionRegistrations(result, queue) {
-  while (queue.length > 0) {
-    const registration = queue.shift();
-    if (!registration) continue;
-    const existing = result.run.agent_sessions.find((s) => s.id === registration.id);
-    if (existing) {
-      existing.agent = registration.agent;
-      existing.role = registration.role;
-      existing.cwd = registration.cwd;
-      existing.status = registration.status ?? existing.status;
-      existing.started_at = registration.startedAt;
-      existing.resumable = registration.resumable ?? existing.resumable;
-    } else {
-      result.run.agent_sessions.push({
-        id: registration.id,
-        agent: registration.agent,
-        role: registration.role,
-        cwd: registration.cwd,
-        status: registration.status ?? "unknown",
-        ...(registration.resumable ? { resumable: true } : {}),
-        started_at: registration.startedAt
-      });
-    }
-  }
-}
-
-async function finalize(run, cwd, worktreePath, summary) {
+async function finalize(run, cwd, worktreePath, runState, summary) {
   const fin = await finalizeRunActivity({ run, ...(summary ? { summary } : {}) });
   run = applyResult(run, fin);
-  return {
-    runId: run.id,
-    status: run.status,
-    run,
-    artifactRoot: `${cwd}/.tychonic/runs/${run.id}`,
-    worktreePath
-  };
+  return runState.result(run, { artifactRoot: `${cwd}/.tychonic/runs/${run.id}`, worktreePath });
 }

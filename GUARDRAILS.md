@@ -112,3 +112,21 @@ Escape-hatch commands are different because they bypass the built-in adapter
 normalization layer. A custom reviewer command must emit the documented wire
 format itself, but that is the wrapper command's responsibility, not the
 model's semantic reasoning task.
+
+## Do Not Make Bundle Authors Hand-Wire Standard Temporal Handlers
+
+The standard Tychonic workflow control surface is host-owned. A bundle author
+should not copy/paste `defineSignal`, `defineQuery`, and `setHandler` calls for
+Tychonic's standard run-state or interaction names.
+
+The failure pattern is pushing low-level Temporal handler wiring into every
+example workflow and then expecting future workflow-writing agents to remember
+which names, payloads, validation rules, and queues must match the CLI. That is
+not a workflow contract; it is duplicated host plumbing.
+
+The correct boundary is a public helper from `tychonic/workflow`: the helper
+registers the standard names as one unit, owns standard raw payload validation,
+and exposes workflow-level operations such as publishing the run snapshot or
+waiting for an interaction decision. Workflow code may still define custom
+signals for custom recovery behavior, but those names and payloads are that
+bundle's own contract and must be documented by that bundle.

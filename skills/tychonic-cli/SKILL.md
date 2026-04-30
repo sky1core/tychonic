@@ -55,7 +55,6 @@ hide the failure.
 Ordinary agent path:
 
 ```sh
-(cd ./examples/workflows/<name> && npm install)
 tychonic workflows validate ./examples/workflows/<name>
 tychonic workflows install ./examples/workflows/<name>
 tychonic run <workflow-name> --input-file ./input.json --wait
@@ -106,8 +105,9 @@ reporting.
 State names are workflow-owned. If a message names a state, use the bundle
 README to understand that state before sending an interaction command.
 
-Inspect a run with `status --workflow-id` first. It includes an evidence
-summary and read commands for artifacts and logs.
+Inspect a run with `status --workflow-id` first. It includes workflow metadata,
+an evidence summary, a timing summary, and read commands for artifacts and
+logs. It does not dump the full raw run record by default.
 
 ```sh
 tychonic status --workflow-id <id>
@@ -124,8 +124,7 @@ tychonic sessions --workflow-id <id>
 ```
 
 Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
-it includes the workflow's Tychonic run result and evidence summary when
-available.
+it returns the evidence needed to decide the next operator action.
 
 `tychonic run` prints a JSON object. Do not require the operator to inspect
 Temporal UI/API for ordinary monitoring.
@@ -280,10 +279,11 @@ normalizer structures that output into the semantic review payload.
 
 The `kiro` adapter runs non-interactively. If a Kiro state must inspect files
 or run checks, set `trust_all_tools: true` only for that state and only in an
-isolated worktree. QA/review may execute checks, but must not edit code; the
-Kiro review path rejects direct file writes and fails if tracked files change
-during the review turn. Without tool trust, Kiro can stop on tool approval
-instead of completing the workflow.
+isolated worktree. QA/review may execute checks, but must not edit code.
+Review activities compare the git worktree before and after the reviewer
+command when a git worktree is available; a net source mutation fails the
+review. The Kiro review path also rejects direct file writes. Without tool
+trust, Kiro can stop on tool approval instead of completing the workflow.
 
 `TYCHONIC_AGENT_PATH` prepends directories to the agent CLI lookup path. Use it
 when a smoke test or local setup needs Tychonic to find agent binaries outside
@@ -314,10 +314,13 @@ When writing or changing a workflow bundle, read
 [workflow-module-contract.md](./workflow-module-contract.md). Keep workflow
 code deterministic and keep file/shell/network work inside activities.
 
-Workflow bundles are normal package directories. Install dependencies in the
-bundle directory before `tychonic workflows install`. Tychonic does not run
-`npm install`, synthesize `node_modules`, add symlinks, or rewrite resolver
-paths.
+Example bundles that import only `@temporalio/workflow` and `tychonic/workflow`
+need no per-bundle npm install. Tychonic provides those workflow imports while
+bundling workflow code. If a custom bundle imports any other package, ship that
+dependency inside the bundle directory or pre-bundle it before
+`tychonic workflows install`.
+Tychonic does not run `npm install`, synthesize arbitrary `node_modules`, add
+symlinks, or rewrite resolver paths.
 
 ## Waiting User And Signals
 
@@ -335,7 +338,7 @@ Use documented workflow signals only:
 tychonic signal <workflow-id> <signal-name> --payload-file ./payload.json
 ```
 
-For workflows that register standard interaction signals, use:
+For workflows that expose the standard interaction helper, use:
 
 ```sh
 tychonic approve <workflow-id> --state <state>
@@ -367,8 +370,8 @@ npm run verify:agents-live
 
 - Use Temporal-backed CLI commands for state.
 - Do not add repo-local workflow state stores.
-- Do not fake bundle resolution with symlinks, copied host `node_modules`, or
-  environment rewrites.
+- Do not fake arbitrary bundle resolution with symlinks, copied host
+  `node_modules`, or environment rewrites.
 - Keep user-facing docs focused on product behavior. Put workflow-specific
   behavior in that workflow's bundle README.
 - For notification troubleshooting, use

@@ -35,9 +35,10 @@ export type ApprovalDecision =
   | { kind: "modify"; patch: StateRecordPatch };
 
 export interface StraySignal {
-  kind: "approve" | "reject" | "modify";
+  kind: "approve" | "reject" | "modify" | "invalid";
   state: string;
-  payload: InteractionApproveStatePayload | InteractionRejectStatePayload | InteractionModifyStatePayload;
+  payload: unknown;
+  reason?: string;
 }
 
 /**
@@ -102,7 +103,13 @@ interface QueuedModify {
   kind: "modify";
   payload: InteractionModifyStatePayload;
 }
-type QueuedInteraction = QueuedApprove | QueuedReject | QueuedModify;
+interface QueuedInvalid {
+  kind: "invalid";
+  state: string;
+  payload: unknown;
+  reason: string;
+}
+type QueuedInteraction = QueuedApprove | QueuedReject | QueuedModify | QueuedInvalid;
 
 /**
  * Single FIFO queue across all three interaction kinds. The queue
@@ -147,14 +154,17 @@ export function registerInteractionSignals(): void {
   const rejectSignal = harness.defineSignal<[InteractionRejectStatePayload]>(interactionRejectStateSignalName);
   const modifySignal = harness.defineSignal<[InteractionModifyStatePayload]>(interactionModifyStateSignalName);
 
-  harness.setHandler(approveSignal, (payload: InteractionApproveStatePayload) => {
-    signalQueue.push({ kind: "approve", payload });
+  harness.setHandler(approveSignal, (payload: unknown) => {
+    const parsed = parseApprovePayload(payload);
+    signalQueue.push(parsed.ok ? { kind: "approve", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
   });
-  harness.setHandler(rejectSignal, (payload: InteractionRejectStatePayload) => {
-    signalQueue.push({ kind: "reject", payload });
+  harness.setHandler(rejectSignal, (payload: unknown) => {
+    const parsed = parseRejectPayload(payload);
+    signalQueue.push(parsed.ok ? { kind: "reject", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
   });
-  harness.setHandler(modifySignal, (payload: InteractionModifyStatePayload) => {
-    signalQueue.push({ kind: "modify", payload });
+  harness.setHandler(modifySignal, (payload: unknown) => {
+    const parsed = parseModifyPayload(payload);
+    signalQueue.push(parsed.ok ? { kind: "modify", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
   });
 
   if (!queryRegistered) {
@@ -207,16 +217,19 @@ export function resolveRejectCap(): number {
 }
 
 function hasQueuedSignalFor(stateName: string): boolean {
-  return signalQueue.some((entry) => entry.payload.state === stateName);
+  return signalQueue.some((entry) => entry.kind !== "invalid" && entry.payload.state === stateName);
 }
 
 function takeQueuedDecision(stateName: string): ApprovalDecision | undefined {
-  const index = signalQueue.findIndex((entry) => entry.payload.state === stateName);
+  const index = signalQueue.findIndex((entry) => entry.kind !== "invalid" && entry.payload.state === stateName);
   if (index < 0) {
     return undefined;
   }
   const [entry] = signalQueue.splice(index, 1);
   if (!entry) {
+    return undefined;
+  }
+  if (entry.kind === "invalid") {
     return undefined;
   }
   if (entry.kind === "approve") {
@@ -231,7 +244,11 @@ function takeQueuedDecision(stateName: string): ApprovalDecision | undefined {
     }
     return { kind: "reject", feedback };
   }
-  return { kind: "modify", patch: entry.payload.patch };
+  const patch = entry.payload.patch;
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    throw new Error(`modifyState for '${stateName}' carried no patch object`);
+  }
+  return { kind: "modify", patch };
 }
 
 /**
@@ -248,6 +265,9 @@ function takeQueuedDecision(stateName: string): ApprovalDecision | undefined {
  *   through `drainStraySignals()` at workflow finalize.
  */
 export async function waitForStateApproval(stateName: string): Promise<ApprovalDecision> {
+  if (typeof stateName !== "string" || stateName.length === 0) {
+    throw new Error("waitForStateApproval stateName must be a non-empty string");
+  }
   if (policyCache.mode === "auto") {
     return { kind: "approve" };
   }
@@ -280,8 +300,9 @@ export async function waitForStateApproval(stateName: string): Promise<ApprovalD
 export function drainStraySignals(): StraySignal[] {
   const strays: StraySignal[] = signalQueue.map((entry) => ({
     kind: entry.kind,
-    state: entry.payload.state,
-    payload: entry.payload
+    state: entry.kind === "invalid" ? entry.state : entry.payload.state,
+    payload: entry.payload,
+    ...(entry.kind === "invalid" ? { reason: entry.reason } : {})
   }));
   signalQueue.length = 0;
   return strays;
@@ -346,7 +367,7 @@ export function strayInteractionSignalInboxItem(
     id: options.id,
     status: "open",
     title: "Stray interaction signal",
-    detail: `kind=${signal.kind} state=${signal.state} payload=${detail}`,
+    detail: `kind=${signal.kind} state=${signal.state}${signal.reason ? ` reason=${signal.reason}` : ""} payload=${detail}`,
     action: { kind: "triage", reason: `stray ${signal.kind} signal for state '${signal.state}'` },
     created_at: options.createdAt
   };
@@ -366,4 +387,54 @@ export function isRejectCapReached(
   }
   const cap = policy.max_reject_iterations ?? INTERACTION_DEFAULT_MAX_REJECT_ITERATIONS;
   return (counts.get(stateName) ?? 0) >= cap;
+}
+
+type ParsedPayload<T> = { ok: true; payload: T } | { ok: false; reason: string };
+
+function parseApprovePayload(payload: unknown): ParsedPayload<InteractionApproveStatePayload> {
+  const state = payloadState(payload);
+  if (!state) {
+    return { ok: false, reason: "approve payload state must be a non-empty string" };
+  }
+  return { ok: true, payload: { state } };
+}
+
+function parseRejectPayload(payload: unknown): ParsedPayload<InteractionRejectStatePayload> {
+  const state = payloadState(payload);
+  if (!state) {
+    return { ok: false, reason: "reject payload state must be a non-empty string" };
+  }
+  const feedback = objectField(payload, "feedback");
+  if (typeof feedback !== "string" || feedback.length === 0) {
+    return { ok: false, reason: "reject payload feedback must be a non-empty string" };
+  }
+  return { ok: true, payload: { state, feedback } };
+}
+
+function parseModifyPayload(payload: unknown): ParsedPayload<InteractionModifyStatePayload> {
+  const state = payloadState(payload);
+  if (!state) {
+    return { ok: false, reason: "modify payload state must be a non-empty string" };
+  }
+  const patch = objectField(payload, "patch");
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return { ok: false, reason: "modify payload patch must be an object" };
+  }
+  return { ok: true, payload: { state, patch: patch as StateRecordPatch } };
+}
+
+function invalidSignal(payload: unknown, reason: string): QueuedInvalid {
+  return { kind: "invalid", state: "<invalid>", payload, reason };
+}
+
+function payloadState(payload: unknown): string | undefined {
+  const state = objectField(payload, "state");
+  return typeof state === "string" && state.length > 0 ? state : undefined;
+}
+
+function objectField(payload: unknown, key: string): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+  return (payload as Record<string, unknown>)[key];
 }

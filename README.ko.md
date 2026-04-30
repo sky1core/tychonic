@@ -64,7 +64,6 @@ npm으로 설치했다면 `EXAMPLES_DIR="$(npm root -g)/tychonic/examples/workfl
 EXAMPLES_DIR="./examples/workflows"
 # npm global install:
 # EXAMPLES_DIR="$(npm root -g)/tychonic/examples/workflows"
-(cd "$EXAMPLES_DIR/verifyOnlyWorkflow" && npm install)
 tychonic workflows install "$EXAMPLES_DIR/verifyOnlyWorkflow"
 tychonic workflows list
 ```
@@ -134,8 +133,9 @@ no-wait 응답에는 나중에 사용할 handle이 들어 있습니다.
 tychonic wait <workflow-id>
 ```
 
-run 조회는 `status --workflow-id`부터 시작합니다. 이 출력에는 evidence
-summary와 artifact/log를 읽는 명령이 같이 들어 있습니다.
+run 조회는 `status --workflow-id`부터 시작합니다. 이 출력에는 workflow
+metadata, evidence summary, timing summary, artifact/log를 읽는 명령이 같이
+들어 있습니다. 기본 출력은 full raw run record를 덤프하지 않습니다.
 
 ```sh
 tychonic status --workflow-id <id>
@@ -151,8 +151,8 @@ tychonic sessions --workflow-id <id>
 ```
 
 `--workflow-id` 없이 `status`를 실행하면 최근 workflow 목록을 보여줍니다.
-`--workflow-id`를 붙이면 가능한 경우 Tychonic run result와 evidence summary를
-포함합니다.
+`--workflow-id`를 붙이면 다음 operator action을 판단하는 데 필요한 evidence를
+반환합니다.
 
 no-agent smoke가 통과한 뒤에는 `simpleWorkflow` 같은 agent workflow를 설치합니다.
 기본 profile은 외부 agent CLI를 사용하고 `npm run typecheck`, `npm run build`,
@@ -160,7 +160,6 @@ no-agent smoke가 통과한 뒤에는 `simpleWorkflow` 같은 agent workflow를 
 있어야 합니다.
 
 ```sh
-(cd "$EXAMPLES_DIR/simpleWorkflow" && npm install)
 tychonic workflows install "$EXAMPLES_DIR/simpleWorkflow"
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```

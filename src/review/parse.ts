@@ -59,6 +59,9 @@ function collectReviewCandidates(output: string, options: ReviewCandidateOptions
       candidates.push(line);
     }
 
+    if (options.normalizeBuiltInEnvelopes) {
+      candidates.push(...extractSemanticPayloadCandidates(parsed));
+    }
     candidates.push(...extractDocumentedEnvelopeCandidates(parsed, options));
   }
   return candidates;
@@ -120,6 +123,13 @@ function extractDocumentedEnvelopeCandidates(
   }
 
   return out;
+}
+
+function extractSemanticPayloadCandidates(value: Record<string, unknown>): string[] {
+  if (typeof value.status !== "string" || typeof value.summary !== "string" || !Array.isArray(value.findings)) {
+    return [];
+  }
+  return [JSON.stringify(normalizeBuiltInStructuredOutput(value))];
 }
 
 function normalizeBuiltInStructuredOutput(value: Record<string, unknown>): Record<string, unknown> {

@@ -16,7 +16,14 @@ export type ParsedReviewResult = ReviewResult;
  */
 export type ReviewActivityOutcome =
   | { kind: "skipped"; reason: string }
-  | { kind: "command_failed"; status: "failed" | "timed_out"; exitCode?: number }
+  | {
+      kind: "command_failed";
+      status: "failed" | "timed_out";
+      exitCode?: number;
+      reviewerSessionId?: string;
+      artifacts: ArtifactRecord[];
+      agentSessions: AgentSessionRecord[];
+    }
   | {
       kind: "unparseable";
       detail: string;

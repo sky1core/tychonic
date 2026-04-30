@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Example bundle contract: every `defaultProfile` worker / review
 // state runs through a built-in adapter (`agent: "<name>"`), not through a
-// hand-rolled `command` / `resume_command`. The deterministic `verify` type
-// is the legitimate escape-hatch path and keeps `command`.
+// hand-rolled `command`. The deterministic `verify` type is the legitimate
+// escape-hatch path and keeps `command`.
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - bundle modules export plain JS, no TS types.
@@ -79,6 +81,11 @@ const BUNDLES: readonly Bundle[] = [
 describe("example bundle defaultProfile shape", () => {
   for (const bundle of BUNDLES) {
     describe(bundle.name, () => {
+      it("does not carry per-example package metadata for Temporal SDK resolution", () => {
+        const packagePath = join(process.cwd(), "examples", "workflows", bundle.name, "package.json");
+        expect(existsSync(packagePath), `${bundle.name} should not require per-bundle npm install`).toBe(false);
+      });
+
       it("exports only defaultProfile and the workflow function", () => {
         expect(Object.keys(bundle.module).sort()).toEqual(["defaultProfile", bundle.name].sort());
       });
@@ -103,13 +110,13 @@ describe("example bundle defaultProfile shape", () => {
         }
       });
 
-      it("never declares resume_command on any state", () => {
+      it("declares only schema-owned fields on every state", () => {
         for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
-          const b = block as any;
-          expect(
-            b.resume_command,
-            `${bundle.name}.${stateName} must not declare resume_command`
-          ).toBeUndefined();
+          const result = TychonicConfigSchema.safeParse({
+            version: "tychonic.config.v1",
+            states: { [stateName]: block }
+          });
+          expect(result.success, `${bundle.name}.${stateName} carries an unknown state field`).toBe(true);
         }
       });
 

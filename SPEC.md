@@ -192,7 +192,12 @@ follows:
 | parsed `fail` verdict | `failed` |
 | parsed `pass` verdict | `succeeded` |
 
-Malformed reviewer output is never a pass. It must leave evidence for triage.
+Reviewer command failure, timeout, and malformed output are never a pass. Each
+must leave prompt/output artifact evidence for triage.
+Review states may inspect files and run checks, but must not modify the source
+worktree or act as hidden repair. When the execution cwd is a git worktree, the
+review activity compares git status before and after the reviewer command; a
+net worktree mutation fails the activity.
 Review findings and triage inbox items are appended by workflow code after it
 merges the review activity result; the shared activity body does not mutate the
 caller-owned run record to add them.
@@ -264,9 +269,16 @@ The bundle contract is fixed:
 - a bundle may also be a normal package directory: `README.md`, `package.json`,
   lockfiles, `node_modules`, relative support modules, and pre-bundled assets
   are allowed.
-  Dependencies are installed separately by the operator before
-  `tychonic workflows install`; Tychonic copies the directory tree verbatim and
-  does not run a package manager during install.
+  `@temporalio/workflow` and `tychonic/workflow` are part of Tychonic's
+  workflow runtime surface and are resolved from the installed Tychonic package
+  while the worker bundles workflow code. Bundle authors do not install
+  `@temporalio/workflow` just to use Temporal workflow helpers such as
+  `proxyActivities`, and do not install `tychonic/workflow` just to publish
+  Tychonic's standard run-state snapshot or standard interaction handlers.
+  Any other package dependency is bundle-owned: prepare it in the bundle
+  directory before `tychonic workflows install`, or pre-bundle it into
+  `workflow.mjs`. Tychonic copies the directory tree verbatim and does not run
+  a package manager during install.
 
 Bundles are installed with `tychonic workflows install <directory>`.
 Installation copies the directory tree verbatim to
@@ -288,8 +300,10 @@ The runtime workflow module registry is the set of installed bundle
 directories. The worker loads every `<name>/workflow.mjs` under that
 registry and rejects startup if two bundles contribute the same exported
 workflow name. Bundle imports resolve through standard package resolution from
-the installed bundle directory; Tychonic does not inject host package
-`node_modules`, symlinks, or staging resolver state.
+the installed bundle directory, except `@temporalio/workflow` and
+`tychonic/workflow`, which resolve to the Tychonic package's own workflow
+runtime surface. Tychonic does not inject arbitrary host package `node_modules`,
+symlinks, or staging resolver state.
 
 Tychonic ships **no** workflow bundles inside the host package. A fresh
 `tychonic service install` produces an empty workflow module registry. The
@@ -482,6 +496,16 @@ Supporting fields are optional and exist for automation or follow-up commands:
 
 The CLI does not expose a second wait mode or a caller-selected wait condition.
 
+`tychonic status --workflow-id <id>` is the ordinary evidence view for a
+workflow. Its default output includes workflow metadata, evidence counts,
+focused read commands, inbox/artifact/log/session/finding summaries, and a
+timing summary computed from the run timestamps and activity attempt
+timestamps. It must not dump the full raw run record by default, because raw
+adapter commands and large result payloads make the operator surface harder to
+read. Focused commands such as `tychonic artifacts --artifact <id>` and
+`tychonic logs --attempt <id>` print raw content only when the caller asks for
+that specific evidence item.
+
 ### Immutability
 
 At workflow start Tychonic loads the bundle's `defaultProfile`, optionally
@@ -663,10 +687,11 @@ That part is the user's responsibility.
 state either runs through a built-in adapter (`agent`) or through an
 explicit escape hatch (`command`). A block that sets both is invalid.
 
-`resume_command` is **not a Tychonic concept**. Built-in adapters that support
-same-session resume know their own resume invocation. An escape-hatch
-`command` user who wants resume-aware behavior has to build that into their
-own CLI wrapper — Tychonic core does not carry a separate resume-command field.
+Built-in adapters that support same-session resume know their own resume
+invocation. An escape-hatch `command` user who wants resume-aware behavior has
+to build that into their own CLI wrapper. Tychonic core carries only one
+execution selector for a state, plus the numeric `resume` budget used by
+workflow code.
 
 Activity call sites execute the one selector declared by the validated state
 block: `command` runs the state-block escape hatch, and `agent` runs a
@@ -796,15 +821,15 @@ Host-side invariants:
   deterministic check can cheaply reject bad work.
 - Integration checks run only when configuration and policy allow it; skipped
   checks must record a reason.
-- A `waiting_user` workflow run accepts operator-driven recovery only when
-  the workflow registered the matching signal handler and the workflow start
-  input opted into hold-open behavior. The `tychonic signal` CLI sends those
-  signals; the bundle's README documents the signal name and payload shape.
+- A `waiting_user` workflow run accepts operator-driven recovery only through
+  workflow-owned signal/query surface: either the standard Tychonic
+  interaction helper or custom signals documented by that bundle. The workflow
+  start input must opt into hold-open behavior.
 
 ### Interaction Signal Contract
 
 Tychonic CLI exposes three convenience commands for workflows that choose to
-register the standard interaction signal/query names:
+use the standard interaction signal/query names:
 
 - `tychonic approve <workflow-id> [--state <name>]`
 - `tychonic reject <workflow-id> [--state <name>] --feedback <text>`
@@ -832,21 +857,27 @@ string.
 - `artifacts`: `ArtifactRecord[]`
 - `findings`: `FindingRecord[]`
 
-The CLI validates this payload before signaling. Workflow code must still
-validate or reject incoming signal payloads because callers may bypass the CLI
-with raw Temporal signals.
+The CLI validates this payload before signaling. The standard interaction
+helper revalidates these payloads inside the workflow and treats malformed raw
+Temporal signals as stray input instead of letting them drive the gate. Custom
+signals are workflow-owned and must validate their own raw Temporal payloads.
 
 When `--state` is omitted, the CLI queries
 `tychonic.interaction.pending_state`. If the workflow has not registered that
 query, the query fails, or it returns no state, the CLI must fail with a clear
 message and ask the operator to pass `--state` explicitly.
 
-Registering these signal names is optional. A workflow that does not register
-them is not interactive from the point of view of `tychonic approve`,
-`tychonic reject`, and `tychonic modify`.
+Using these signal names is optional. A workflow that does not create the
+standard interaction helper is not interactive from the point of view of
+`tychonic approve`, `tychonic reject`, and `tychonic modify`.
 
-The host does **not** assign semantics to `policies.interaction` and does not
-require a workflow to use any utility named `waitForStateApproval`.
+`createTychonicInteraction(policy)` from `tychonic/workflow` registers the
+standard signal/query handlers as one unit and exposes the workflow-side gate
+for waiting on state approval, applying modify patches, draining stray signals,
+and creating standard inbox items. Workflow code must not hand-register these
+standard names one by one.
+
+The host does **not** assign semantics to `policies.interaction`.
 `policies.interaction`, reject accumulation, per-state reject caps, signal
 parking, and whether interaction replaces or composes with auto retry loops are
 bundle-owned workflow contracts documented by the bundle that implements them.
@@ -1049,11 +1080,12 @@ Each bundle directory contains at minimum:
 - `workflow.mjs`
 
 It may also contain `README.md`, `package.json`, lockfiles, `node_modules`,
-relative support modules, and pre-bundled assets. This mirrors the install-time bundle
-contract in "Workflow Modules": dependencies resolve through the installed
-bundle directory's standard package layout. Tychonic does not add host
-`node_modules`, symlinks, or private resolver state when the worker bundles
-installed workflows.
+relative support modules, and pre-bundled assets. This mirrors the install-time
+bundle contract in "Workflow Modules": Tychonic provides the
+`@temporalio/workflow` and `tychonic/workflow` imports, while all other package
+dependencies resolve through the installed bundle directory's standard package
+layout. Tychonic does not add arbitrary host `node_modules`, symlinks, or
+private resolver state when the worker bundles installed workflows.
 
 ## Verification Boundary
 

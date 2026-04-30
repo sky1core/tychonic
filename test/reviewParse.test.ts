@@ -164,6 +164,20 @@ describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () =>
     expect(parsed?.status).toBe("pass");
   });
 
+  it("uses a final semantic payload line after a malformed codex tool event", () => {
+    const semanticPass = `{"status":"pass","summary":"last message file","findings":[]}`;
+    const stream = [
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"checking"}}`,
+      `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","aggregated_output":"unterminated`,
+      semanticPass
+    ].join("\n");
+    const parsed = parseBuiltInReviewOutput(stream);
+    expect(parsed?.schema_version).toBe("tychonic.review.v1");
+    expect(parsed?.status).toBe("pass");
+    expect(parsed?.summary).toBe("last message file");
+  });
+
 });
 
 describe("parseBuiltInReviewOutput — gemini envelope is not unwrapped", () => {
