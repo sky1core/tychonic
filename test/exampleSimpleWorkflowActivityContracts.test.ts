@@ -476,7 +476,7 @@ describe("simpleWorkflow rejects unknown input fields at start", () => {
     );
   });
 
-  it.each(["command", "agent", "verifyCommand", "reviewAgent"])(
+  it.each(["command", "agent", "verifyCommand", "reviewAgent", "autoContinue", "maxIterations"])(
     "rejects execution selector input field %s",
     async (field) => {
       await expect(simpleWorkflow({ ...baseInput, [field]: "value" })).rejects.toThrow(

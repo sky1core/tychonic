@@ -31,6 +31,26 @@ with a bounded builder/QA loop. Switch `policies.interaction.mode` to
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
+## Minimal Run
+
+```sh
+tychonic workflows install ./examples/workflows/architectBuilderQaWorkflow
+tychonic runtime up
+```
+
+In another terminal:
+
+```sh
+cat > ./architect-builder-qa-input.json <<'JSON'
+{
+  "cwd": "/abs/path/to/project",
+  "goal": "Implement the requested change and leave evidence in artifacts."
+}
+JSON
+
+tychonic run architectBuilderQaWorkflow --input-file ./architect-builder-qa-input.json --wait
+```
+
 ## Run Mode
 
 Use `tychonic run architectBuilderQaWorkflow --input-file <file> --wait` when

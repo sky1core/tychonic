@@ -19,6 +19,7 @@ same-session continuation when review finds fixable issues.
 Inspect the installed profile:
 
 ```sh
+tychonic workflows install ./examples/workflows/simpleWorkflow
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```
 
@@ -43,12 +44,18 @@ to the workflow.
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
 | `goal` | no | Prompt text for the worker. |
-| `autoContinue` | no | Enables the review-fail continuation loop for this run. |
-| `maxIterations` | no | Per-run loop budget override. |
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
-Minimal run:
+## Minimal Run
+
+Start the runtime in one terminal:
+
+```sh
+tychonic runtime up
+```
+
+In another terminal:
 
 ```sh
 cat > ./simple-input.json <<'JSON'
@@ -71,9 +78,9 @@ The bundle default profile includes `policies.loop`. The workflow reads:
 | `policies.loop.max_review_iterations` | Outer review-loop budget. |
 | `states.work.resume` | Same-session resume budget for the worker state. |
 
-Per-run `maxIterations` takes precedence over
-`policies.loop.max_review_iterations`. If both are omitted, the workflow uses
-its internal default.
+Loop behavior is configured through the profile, not workflow input. If
+`policies.loop.max_review_iterations` is omitted while auto-continue is enabled,
+the workflow uses its internal default.
 
 ## Recovery
 

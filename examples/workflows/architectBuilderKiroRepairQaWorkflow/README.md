@@ -45,6 +45,26 @@ explicitly named as `kiro_fix`.
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
+## Minimal Run
+
+```sh
+tychonic workflows install ./examples/workflows/architectBuilderKiroRepairQaWorkflow
+tychonic runtime up
+```
+
+In another terminal:
+
+```sh
+cat > ./architect-builder-kiro-repair-qa-input.json <<'JSON'
+{
+  "cwd": "/abs/path/to/project",
+  "goal": "Implement the requested change, let Kiro pre-review/repair, then run final QA."
+}
+JSON
+
+tychonic run architectBuilderKiroRepairQaWorkflow --input-file ./architect-builder-kiro-repair-qa-input.json --wait
+```
+
 ## Trade-Off
 
 This uses more Kiro work and adds latency before final QA. It can reduce final

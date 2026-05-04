@@ -9,13 +9,13 @@ const WORKFLOW_FILE_PATH = fileURLToPath(WORKFLOW_PATH);
 describe("pipelineWorkflow bundle example", () => {
   it("falls back to goal when launched through the generic workflow starter", async () => {
     const source = await readFile(WORKFLOW_PATH, "utf8");
-    expect(source).toContain("prompt: input.prompt ?? input.goal ?? \"\"");
+    expect(source).toContain('ctx.work("work", input.prompt ?? input.goal ?? "")');
   });
 
   it("routes blocked review stages to triage instead of falling through to success", async () => {
     const source = await readFile(WORKFLOW_PATH, "utf8");
-    expect(source).toContain("gateReviewStage(run, review1, \"review_1\")");
-    expect(source).toContain("addReviewTriageInbox");
+    expect(source).toContain('gateReviewStage(review1, "review_1")');
+    expect(source).toContain("reviewTriageInboxItem");
   });
 
   it("asks for semantic review payload without host wire fields", async () => {

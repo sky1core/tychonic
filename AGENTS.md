@@ -32,6 +32,13 @@ type system.
 
 Workflow behavior belongs in TypeScript Temporal workflow code.
 
+Workflow authoring must stay simple. Workflow code should make the workflow's
+state order, branches, loops, prompts, and stop conditions obvious at a glance.
+Common run-record bookkeeping — applying activity results, attaching artifacts
+and findings, publishing status snapshots, finalizing runs, and standard
+interaction-gate plumbing — belongs in reusable `tychonic/workflow` helpers,
+not copy-pasted into every workflow module.
+
 Tychonic core ships **zero first-party workflows**. The host package contains
 no built-in workflow modules. Workflows are user-supplied bundles installed via
 `tychonic workflows install`. Reference example bundles live under
@@ -68,6 +75,9 @@ silently fill fields.
 Workflow behavior is TypeScript code. Configuration never defines workflow
 graphs, branching, retry, or type-based orchestration.
 Workflows reference activities by name and call each activity explicitly.
+Helpers may reduce boilerplate around a named activity call, but they must not
+hide ordering, branching, retry, or loop decisions inside configuration or
+generic data lists.
 
 ## Agent Principle
 

@@ -5,6 +5,14 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  printHelp();
+  process.exit(0);
+}
+if (process.argv.slice(2).length > 0) {
+  throw new Error("unsupported arguments; run `node scripts/tychonic-bootstrap-check.mjs --help`");
+}
+
 const repoRoot = process.cwd();
 const liveScope = resolveLiveScope();
 const verbose = process.env.TYCHONIC_BOOTSTRAP_VERBOSE === "1";
@@ -22,6 +30,18 @@ if (liveScope !== "none") {
 await runDocumentationChecks();
 
 console.log(JSON.stringify({ ok: true, results }, null, 2));
+
+function printHelp() {
+  console.log(`Usage: node scripts/tychonic-bootstrap-check.mjs
+
+Runs Tychonic's bootstrap verification workflow against the current checkout.
+
+Environment:
+  TYCHONIC_BOOTSTRAP_LIVE_AGENTS=0   Skip live agent workflow checks
+  TYCHONIC_BOOTSTRAP_LIVE_SCOPE      none | smoke | examples (default: smoke)
+  TYCHONIC_BOOTSTRAP_VERBOSE=1       Print child command output while running
+`);
+}
 
 async function runPackagedExampleRuntimeSmoke() {
   const target = await createFixtureRepo("tychonic-bootstrap-runtime-target-");
@@ -56,7 +76,7 @@ async function runLiveExampleWorkflows(scope) {
     "the bootstrap script runs the release secret scanner separately.";
   const inputs = {
     verifyOnlyWorkflow: { cwd: target },
-    simpleWorkflow: { cwd: target, goal: prompt, autoContinue: false, maxIterations: 1 },
+    simpleWorkflow: { cwd: target, goal: prompt },
     pipelineWorkflow: { cwd: target, goal: prompt, prompt, reviewPrompt: review, reviewPrompt2: review },
     checkpointWorkflow: { cwd: target, goal: review },
     architectBuilderQaWorkflow: {
@@ -359,7 +379,7 @@ async function recordWorkflowTiming(instance, name, workflowId) {
   results.push({
     name: `workflow timing ${name}`,
     status: "observed",
-    workflow_id: workflowId,
+    workflowId,
     timing
   });
 }

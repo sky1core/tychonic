@@ -22,7 +22,7 @@ describe("Temporal result views", () => {
     const result = fakeResult(cwd);
 
     expect(workflowResultView(result)).toEqual({
-      run_id: "run_temporal_view",
+      runId: "run_temporal_view",
       template: "simple_workflow",
       status: "waiting_user",
       goal: "inspect Temporal result"
@@ -32,7 +32,7 @@ describe("Temporal result views", () => {
     expect(listInboxItems(result).map((item) => item.id)).toEqual(["inbox_1"]);
     expect(listAgentSessions(result, 1).map((session) => session.id)).toEqual(["session_1"]);
     expect(workflowEvidenceView(result, "wf_1", "run_1")).toMatchObject({
-      run_id: "run_temporal_view",
+      runId: "run_temporal_view",
       template: "simple_workflow",
       status: "waiting_user",
       counts: {

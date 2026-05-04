@@ -10,7 +10,6 @@ coverage/
 .vite/
 .playwright-cli/
 .claude/
-CLAUDE.md
 
 .tychonic/
 .agents/

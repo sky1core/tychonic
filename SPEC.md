@@ -103,6 +103,15 @@ functions, install it into the runtime workflow module registry, and
 make the relevant runtime load that registry through its documented
 runtime path.
 
+Workflow authoring must stay simple. A workflow module should expose the
+workflow's state order, branches, loops, prompts, and stop conditions without
+forcing authors to copy Tychonic run-record plumbing. `tychonic/workflow`
+helpers may automate common bookkeeping around explicit state calls: applying
+activity results, attaching artifacts and parsed review findings, publishing
+run-state snapshots, standard interaction-gate retry plumbing, and finalizing a
+run. Those helpers must remain NAME-parameterized and must not decide which
+state runs next, encode workflow graphs, rotate candidates, or branch by TYPE.
+
 A workflow module's `defaultProfile` export pulls the state and policy
 contract into the workflow code itself: it is the workflow's author-supplied
 `TychonicConfig` that ships with the bundle and is validated once at install
@@ -322,7 +331,7 @@ a `TychonicConfig` (`version: "tychonic.config.v1"`) that declares the
 export const defaultProfile = {
   version: "tychonic.config.v1",
   states: {
-    work:   { type: "work",   command: "..." },
+    work:   { type: "work",   agent: "codex" },
     verify: {
       type: "verify",
       command: `npm run typecheck
@@ -823,10 +832,14 @@ Host-side invariants:
   deterministic check can cheaply reject bad work.
 - Integration checks run only when configuration and policy allow it; skipped
   checks must record a reason.
-- A `waiting_user` workflow run accepts operator-driven recovery only through
-  workflow-owned signal/query surface: either the standard Tychonic
+- `waiting_user` means the run needs human attention. It does not by itself
+  mean the Temporal workflow execution is still open.
+- A workflow that keeps execution open for operator-driven continuation must
+  expose a workflow-owned signal/query surface: either the standard Tychonic
   interaction helper or custom signals documented by that bundle. The workflow
-  start input must opt into hold-open behavior.
+  start input must opt into that hold-open behavior.
+- A terminal `waiting_user` result may require a fresh run with adjusted input
+  or config. That recovery path must be documented by the bundle.
 
 ### Interaction Signal Contract
 

@@ -362,13 +362,12 @@ const runtimeCommand = program.command("runtime").description("Run the local Tyc
 
 runtimeCommand
   .command("up")
-  .option("--project-dir <dir>", "project directory", process.cwd())
-  .option("--temporal-mode <mode>", "Temporal runtime mode: managed-local or external")
-  .option("--temporal-port <port>", "managed-local Temporal API port", (value) => Number(value))
-  .option("--temporal-address <address>", "Temporal API address")
-  .option("--temporal-namespace <name>", "Temporal namespace")
-  .option("--temporal-task-queue <name>", "Temporal task queue")
-  .option("--shutdown-grace-time <duration>", "worker drain time on shutdown before cancelling in-flight activities")
+  .option("--temporal-mode <mode>", "advanced: Temporal runtime mode, managed-local or external")
+  .option("--temporal-port <port>", "advanced: managed-local Temporal API port", (value) => Number(value))
+  .option("--temporal-address <address>", "advanced: Temporal API address")
+  .option("--temporal-namespace <name>", "advanced: Temporal namespace")
+  .option("--temporal-task-queue <name>", "advanced: Temporal task queue")
+  .option("--shutdown-grace-time <duration>", "advanced: worker drain time on shutdown before cancelling in-flight activities")
   .option(
     "--detach",
     "spawn the runtime in a new session and exit; requires an active instance from --instance or TYCHONIC_INSTANCE. PID is written under <stateDir>/runtime.pid, stdout/stderr tee into <logDir>/runtime.log.",
@@ -378,7 +377,6 @@ runtimeCommand
   .addHelpText("after", INSTANCE_SELECTION_HELP)
   .action(
     async (options: {
-      projectDir: string;
       temporalMode?: TemporalConfig["mode"];
       temporalPort?: number;
       temporalAddress?: string;
@@ -464,7 +462,7 @@ runtimeCommand
           });
         };
         const onSigterm = (): void => cascadeAndExit("SIGTERM");
-        const onSigint = (): void => cascadeAndExit("SIGTERM");
+        const onSigint = (): void => cascadeAndExit("SIGINT");
         process.on("SIGTERM", onSigterm);
         process.on("SIGINT", onSigint);
 
@@ -575,7 +573,7 @@ program
       });
       console.log(
         JSON.stringify(
-          { ok: true, mode: "tychonic", ...stoppedWorkflowCliPayload(result), _meta: cliInstanceMeta() },
+          { ok: true, ...stoppedWorkflowCliPayload(result), _meta: cliInstanceMeta() },
           null,
           2
         )
@@ -648,7 +646,6 @@ program
         JSON.stringify(
           {
             ok: true,
-            mode: "temporal",
             signalName,
             ...result,
             _meta: cliInstanceMeta()
@@ -702,7 +699,7 @@ program
         });
         const output: Record<string, unknown> = {
           ok: true,
-          mode: "temporal"
+          message: `Workflow status inspected. To wait for the next action point, run \`tychonic wait ${shellArg(options.workflowId)}\`.`
         };
         if (workflow.result !== undefined) {
           try {
@@ -712,7 +709,7 @@ program
             output.evidenceError = error instanceof Error ? error.message : String(error);
           }
         }
-        output.workflow = options.includeResult ? workflow : workflowStatusWithoutRawResult(workflow);
+        output.workflow = options.includeResult ? workflow : workflowOperatorView(workflow);
         output._meta = cliInstanceMeta();
         console.log(
           JSON.stringify(output, null, 2)
@@ -725,8 +722,21 @@ program
         ...(options.visibilityQuery ? { query: options.visibilityQuery } : {}),
         ...temporalConfigFromOptions(options)
       });
+      const workflows = result.workflows.map(workflowOperatorView);
       console.log(
-        JSON.stringify({ ok: true, mode: "temporal", ...result, _meta: cliInstanceMeta() }, null, 2)
+        JSON.stringify(
+          {
+            ok: true,
+            message:
+              workflows.length > 0
+                ? "Recent workflows listed. Inspect one with `tychonic status --workflow-id <id>` or wait with `tychonic wait <id>`."
+                : "No Tychonic workflows found.",
+            workflows,
+            _meta: cliInstanceMeta()
+          },
+          null,
+          2
+        )
       );
     }
   );
@@ -763,7 +773,7 @@ program
       });
       console.log(
         JSON.stringify(
-          { ok: true, mode: "temporal", state, ...result, _meta: cliInstanceMeta() },
+          { ok: true, state, ...result, _meta: cliInstanceMeta() },
           null,
           2
         )
@@ -809,7 +819,7 @@ program
       });
       console.log(
         JSON.stringify(
-          { ok: true, mode: "temporal", state, ...result, _meta: cliInstanceMeta() },
+          { ok: true, state, ...result, _meta: cliInstanceMeta() },
           null,
           2
         )
@@ -864,7 +874,7 @@ program
       });
       console.log(
         JSON.stringify(
-          { ok: true, mode: "temporal", state, ...result, _meta: cliInstanceMeta() },
+          { ok: true, state, ...result, _meta: cliInstanceMeta() },
           null,
           2
         )
@@ -893,8 +903,7 @@ program
       JSON.stringify(
         {
           ok: true,
-          mode: "temporal",
-          workflow_id: options.workflowId,
+          workflowId: options.workflowId,
           ...workflowResultView(result),
           artifacts: listArtifacts(result)
         },
@@ -925,8 +934,7 @@ program
       JSON.stringify(
         {
           ok: true,
-          mode: "temporal",
-          workflow_id: options.workflowId,
+          workflowId: options.workflowId,
           ...workflowResultView(result),
           attempts: listLiveOutputAttemptViews(result, options.workflowId, options.runId)
         },
@@ -953,8 +961,7 @@ const inboxCommand = program
       JSON.stringify(
         {
           ok: true,
-          mode: "temporal",
-          workflow_id: options.workflowId,
+          workflowId: options.workflowId,
           ...workflowResultView(result),
           inbox: listInboxItems(result)
         },
@@ -964,11 +971,30 @@ const inboxCommand = program
     );
   });
 
-function workflowStatusWithoutRawResult(
-  workflow: TychonicTemporalWorkflowStatus
-): Omit<TychonicTemporalWorkflowStatus, "result"> {
-  const { result: _result, ...rest } = workflow;
-  return rest;
+function workflowOperatorView(
+  workflow: Pick<
+    TychonicTemporalWorkflowStatus,
+    "workflowId" | "runId" | "status" | "startTime" | "executionTime" | "closeTime"
+  > & { pendingActivities?: TychonicTemporalWorkflowStatus["pendingActivities"] }
+): Record<string, unknown> {
+  return {
+    workflowId: workflow.workflowId,
+    runId: workflow.runId,
+    status: workflow.status,
+    startTime: workflow.startTime,
+    ...(workflow.executionTime ? { executionTime: workflow.executionTime } : {}),
+    ...(workflow.closeTime ? { closeTime: workflow.closeTime } : {}),
+    ...(workflow.pendingActivities && workflow.pendingActivities.length > 0
+      ? { pendingActivityCount: workflow.pendingActivities.length }
+      : {})
+  };
+}
+
+function shellArg(value: string): string {
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 const serviceCommand = program
@@ -1175,8 +1201,7 @@ const sessionsCommand = program
       JSON.stringify(
         {
           ok: true,
-          mode: "temporal",
-          workflow_id: options.workflowId,
+          workflowId: options.workflowId,
           ...workflowResultView(result),
           sessions: listAgentSessions(result, options.limit)
         },
@@ -1230,7 +1255,6 @@ async function startNamedWorkflowFromCli(workflowName: string, options: RunComma
       JSON.stringify(
         {
           ok: true,
-          mode: "tychonic",
           ...stoppedWorkflowCliPayload(waitResult),
           _meta: cliInstanceMeta()
         },
@@ -1244,7 +1268,6 @@ async function startNamedWorkflowFromCli(workflowName: string, options: RunComma
     JSON.stringify(
       {
         ok: true,
-        mode: "tychonic",
         message: `Workflow started. To wait until it needs caller action or returns a result, run \`tychonic wait ${result.workflowId}\`.`,
         workflowId: result.workflowId,
         runId: result.firstExecutionRunId,
@@ -1469,7 +1492,6 @@ async function tryReplaceLaunchdWorker(): Promise<{ worker_replacement: unknown 
  * instances only.
  */
 async function handleRuntimeUpDetach(options: {
-  projectDir: string;
   temporalMode?: TemporalConfig["mode"];
   temporalPort?: number;
   temporalAddress?: string;
@@ -1522,7 +1544,6 @@ async function handleRuntimeUpDetach(options: {
   // not forwarded (child runs foreground); `--instance` is re-passed
   // explicitly inside spawnDetachedRuntime.
   const extraArgs: string[] = [];
-  if (options.projectDir) extraArgs.push("--project-dir", options.projectDir);
   if (options.temporalMode) extraArgs.push("--temporal-mode", options.temporalMode);
   if (options.temporalPort !== undefined)
     extraArgs.push("--temporal-port", String(options.temporalPort));

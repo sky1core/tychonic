@@ -1,5 +1,10 @@
 import { applyRunDelta } from "../domain/runDelta.js";
-import type { WorkflowRunRecord, WorkflowStateRecord, WorkflowStateStatus } from "../domain/types.js";
+import type {
+  DecisionInboxItemRecord,
+  WorkflowRunRecord,
+  WorkflowStateRecord,
+  WorkflowStateStatus
+} from "../domain/types.js";
 import type { ActivityResult, StateRecordPatch } from "../temporal/types.js";
 
 const TERMINAL_STATE_STATUSES: readonly WorkflowStateStatus[] = [
@@ -23,7 +28,9 @@ const TERMINAL_STATE_STATUSES: readonly WorkflowStateStatus[] = [
  *   body never pushes into `input.run` itself (SPEC §Activity Result And
  *   Evidence Invariants).
  *
- * `applyActivityResult` applies both halves in one step.
+ * `applyActivityResult` applies both halves in one step. Parsed failed review
+ * findings are promoted into `run.findings` and linked back to the review
+ * state record; workflow-specific inbox routing still belongs to the workflow.
  */
 export function applyActivityResult(
   run: WorkflowRunRecord,
@@ -46,6 +53,7 @@ export function applyActivityResult(
         artifacts: [...next.artifacts, ...outcome.artifacts],
         agent_sessions: [...next.agent_sessions, ...outcome.agentSessions]
       };
+      next = appendParsedReviewFindings(next, result);
     }
   }
 
@@ -58,6 +66,86 @@ export function applyActivityResult(
   }
 
   return next;
+}
+
+export function latestStateByName(
+  run: WorkflowRunRecord,
+  stateName: string
+): WorkflowStateRecord | undefined {
+  for (let i = run.states.length - 1; i >= 0; i -= 1) {
+    if (run.states[i]?.name === stateName) return run.states[i];
+  }
+  return undefined;
+}
+
+export function addRunInboxItem(
+  run: WorkflowRunRecord,
+  item: DecisionInboxItemRecord
+): WorkflowRunRecord {
+  if (run.inbox.some((existing) => existing.id === item.id)) {
+    return run;
+  }
+  return { ...run, inbox: [...run.inbox, item] };
+}
+
+export function nextRunLocalId(run: WorkflowRunRecord, prefix: string): string {
+  const counter =
+    run.states.length +
+    run.activity_attempts.length +
+    run.artifacts.length +
+    run.findings.length +
+    run.inbox.length +
+    run.agent_sessions.length;
+  return `${prefix}_${counter + 1}`;
+}
+
+function appendParsedReviewFindings(
+  run: WorkflowRunRecord,
+  result: ActivityResult
+): WorkflowRunRecord {
+  const outcome = result.reviewOutcome;
+  if (!outcome || outcome.kind !== "parsed" || outcome.result.status !== "fail") {
+    return run;
+  }
+  const sourceState = result.delta.states?.[0];
+  if (!sourceState) {
+    return run;
+  }
+
+  let next = run;
+  const findingIds: string[] = [];
+  const createdAt = sourceState.finished_at ?? sourceState.started_at ?? run.updated_at;
+  for (const finding of outcome.result.findings) {
+    const id = nextRunLocalId(next, "finding");
+    findingIds.push(id);
+    next = {
+      ...next,
+      findings: [
+        ...next.findings,
+        {
+          id,
+          status: "new",
+          severity: finding.severity,
+          title: finding.title,
+          detail: finding.detail,
+          ...(finding.target ? { target: finding.target } : {}),
+          source_state_id: sourceState.id,
+          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
+          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
+          created_at: createdAt
+        }
+      ]
+    };
+  }
+
+  return {
+    ...next,
+    states: next.states.map((state) =>
+      state.id === sourceState.id
+        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
+        : state
+    )
+  };
 }
 
 /**

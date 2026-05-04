@@ -1,21 +1,12 @@
 // Example Tychonic workflow bundle: verifyOnlyWorkflow.
 //
-// Install with:
-//
-//   tychonic workflows install ./examples/workflows/verifyOnlyWorkflow
-//
-// This is the smallest runnable example: one deterministic verify state and
-// no external AI agent dependency.
+// Smallest runnable example: one deterministic verify state and no external AI
+// agent dependency.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicRunState } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
-const {
-  startRunActivity,
-  collectGitFactsActivity,
-  runVerifyActivity,
-  finalizeRunActivity
-} = proxyActivities({
+const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
   retry: { maximumAttempts: 1 }
@@ -46,51 +37,14 @@ function rejectUnknownInputFields(input) {
 
 export async function verifyOnlyWorkflow(input) {
   rejectUnknownInputFields(input);
-  const runState = createTychonicRunState();
-  const profile = input.profile;
-  let run = await startRunActivity({
+  const ctx = createTychonicWorkflowContext({
+    input,
     template: "verify_only",
-    cwd: input.cwd,
-    ...(profile ? { profile } : {})
+    activities: act
   });
-  run = runState.update({ ...run, status: "running" });
 
-  const facts = await collectGitFactsActivity({ run, cwd: input.cwd });
-  run = runState.update(apply(run, facts));
-
-  const verify = await runVerifyActivity({
-    stateName: "verify",
-    run,
-    cwd: input.cwd,
-    ...(profile ? { profile } : {})
-  });
-  run = runState.update(apply(run, verify));
-
-  const final = await finalizeRunActivity({ run });
-  run = apply(run, final);
-
-  return runState.result(run);
-}
-
-function apply(run, result) {
-  const delta = result?.delta ?? {};
-  let next = {
-    ...run,
-    states: delta.states ? [...run.states, ...delta.states] : [...run.states],
-    activity_attempts: delta.activityAttempts
-      ? [...run.activity_attempts, ...delta.activityAttempts]
-      : [...run.activity_attempts],
-    facts: delta.facts ? { ...(run.facts ?? {}), ...delta.facts } : run.facts,
-    status: delta.status ?? run.status,
-    agent_sessions: [...run.agent_sessions],
-    artifacts: [...run.artifacts],
-    findings: [...run.findings],
-    inbox: [...run.inbox]
-  };
-  if (delta.summary !== undefined) next.summary = delta.summary;
-  else if (run.summary !== undefined) next.summary = run.summary;
-  if (result?.commandOutcome) {
-    next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
-  }
-  return next;
+  await ctx.start();
+  ctx.apply(await act.collectGitFactsActivity({ run: ctx.run(), cwd: input.cwd }));
+  await ctx.verify("verify");
+  return ctx.finish("verifyOnlyWorkflow completed");
 }

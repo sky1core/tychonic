@@ -111,7 +111,7 @@ describe("bootstrap activities", () => {
   });
 
   describe("finalizeRunActivity", () => {
-    it("returns status 'failed' when any state is failed", async () => {
+    it("returns status 'failed' when any state is failed and no inbox item is open", async () => {
       const run = baseRun("run_fin_failed");
       run.states = [
         {
@@ -130,7 +130,7 @@ describe("bootstrap activities", () => {
       expect(result.delta.status).toBe("failed");
     });
 
-    it("returns 'waiting_user' when an inbox item is open and no state failed", async () => {
+    it("returns 'waiting_user' when an inbox item is open", async () => {
       const run = baseRun("run_fin_waiting");
       run.inbox = [
         {
@@ -142,6 +142,36 @@ describe("bootstrap activities", () => {
           created_at: "2026-01-01T00:00:00Z"
         }
       ];
+      const result = await finalizeRunActivity({ run });
+      expect(result.delta.status).toBe("waiting_user");
+    });
+
+    it("keeps explicit user attention ahead of failed states", async () => {
+      const run = baseRun("run_fin_waiting_failed");
+      run.states = [
+        {
+          id: "state_failed",
+          name: "review",
+          status: "failed",
+          reason: "review failed",
+          activity_attempt_ids: [],
+          artifact_ids: [],
+          finding_ids: [],
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:00:05Z"
+        }
+      ];
+      run.inbox = [
+        {
+          id: "inbox_1",
+          status: "open",
+          title: "needs triage",
+          detail: "operator attention required",
+          action: { kind: "triage", reason: "review cap reached" },
+          created_at: "2026-01-01T00:00:06Z"
+        }
+      ];
+
       const result = await finalizeRunActivity({ run });
       expect(result.delta.status).toBe("waiting_user");
     });

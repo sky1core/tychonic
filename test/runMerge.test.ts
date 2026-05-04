@@ -97,6 +97,62 @@ describe("applyActivityResult", () => {
     expect(next.agent_sessions).toHaveLength(1);
   });
 
+  it("promotes failed parsed review findings to run-level records", () => {
+    const run = baseRun("run_rev_findings");
+    const result: ActivityResult = {
+      delta: {
+        states: [
+          {
+            id: "state_review",
+            name: "review",
+            status: "failed",
+            reason: "has findings",
+            activity_attempt_ids: ["attempt_review"],
+            artifact_ids: [],
+            finding_ids: [],
+            started_at: "2026-01-01T00:00:00Z",
+            finished_at: "2026-01-01T00:00:05Z"
+          }
+        ],
+        activityAttempts: []
+      },
+      reviewOutcome: {
+        kind: "parsed",
+        result: {
+          schema_version: "tychonic.review.v1",
+          status: "fail",
+          summary: "needs work",
+          findings: [
+            {
+              severity: "high",
+              title: "Missing regression test",
+              detail: "Add a test for the changed behavior.",
+              target: "test/example.test.ts",
+              target_session_id: "sess_worker"
+            }
+          ]
+        },
+        reviewerSessionId: "sess_review",
+        artifacts: [],
+        agentSessions: []
+      }
+    };
+
+    const next = applyActivityResult(run, result);
+    expect(next.findings).toHaveLength(1);
+    expect(next.findings[0]).toMatchObject({
+      id: "finding_2",
+      status: "new",
+      severity: "high",
+      title: "Missing regression test",
+      source_state_id: "state_review",
+      source_review_session_id: "sess_review",
+      target_work_session_id: "sess_worker",
+      created_at: "2026-01-01T00:00:05Z"
+    });
+    expect(next.states[0]?.finding_ids).toEqual(["finding_2"]);
+  });
+
   it("appends reviewOutcome artifacts and sessions for command failures", () => {
     const run = baseRun("run_rev_failed_out");
     const result: ActivityResult = {

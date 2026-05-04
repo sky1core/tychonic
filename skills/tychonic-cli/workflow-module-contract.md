@@ -43,6 +43,10 @@ resolver state during install.
 
 - Workflow code decides order, branching, loops, retry, gating, and stop
   conditions.
+- Workflow code should stay small enough that the state order and stop
+  conditions are obvious. Use `tychonic/workflow` helpers for repeated
+  run-record bookkeeping; do not copy activity-result merge/finalize/standard
+  interaction plumbing into every bundle.
 - Config declares named state blocks and workflow-owned policies.
 - Activities execute one state invocation at a time.
 - State NAME is workflow-defined and product-facing.
@@ -133,10 +137,10 @@ must not choose which command or agent runs.
 
 Activities return `ActivityResult`. They do not mutate `input.run`; workflow
 code must merge returned states, attempts, artifacts, sessions, inbox items, and
-status into its local run copy. Parsed review findings are returned under
-`reviewOutcome.result.findings`; workflow code appends them to `run.findings`
-and the source state's `finding_ids` when the workflow wants run-level finding
-records.
+status into its local run copy. Prefer `createTychonicWorkflowContext` or
+`applyActivityResult` from `tychonic/workflow` for that merge path. Parsed
+failed review findings are promoted into run-level finding records by the
+standard helper; workflow-specific inbox routing remains workflow-owned.
 
 ## Workflow Sandbox
 
@@ -156,10 +160,42 @@ Temporal workflow code is deterministic.
 A workflow may register custom signal/query names it owns. Document each name,
 payload shape, and recovery behavior in the bundle README.
 
-Use `createTychonicRunState` from `tychonic/workflow` when the workflow should
-support `tychonic run --wait`, `tychonic wait <workflow-id>`, or status checks
-before final completion. The helper owns the standard `tychonic.workflow_state`
-query registration. Workflow code only updates the current run snapshot:
+Use `createTychonicWorkflowContext` from `tychonic/workflow` for ordinary
+workflow modules that need start/worktree/work/review/finalize bookkeeping plus
+standard status snapshots:
+
+```js
+import { proxyActivities } from "@temporalio/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
+
+const act = proxyActivities({
+  startToCloseTimeout: "24 hours",
+  heartbeatTimeout: "5 minutes",
+  retry: { maximumAttempts: 1 }
+});
+
+export async function myWorkflow(input) {
+  const ctx = createTychonicWorkflowContext({
+    input,
+    template: "my_workflow",
+    activities: act
+  });
+
+  await ctx.start();
+  await ctx.createWorktree();
+  await ctx.work("work", input.goal ?? "");
+  await ctx.review("review", "Review the worker result.");
+  return ctx.finish("myWorkflow completed");
+}
+```
+
+This helper does not choose the next state. The workflow still calls each state
+by NAME and owns branches, loops, and stop conditions.
+
+Use `createTychonicRunState` directly only when a workflow needs custom
+snapshot handling outside the context helper. It supports `tychonic run --wait`,
+`tychonic wait <workflow-id>`, or status checks before final completion. The
+helper owns the standard `tychonic.workflow_state` query registration:
 
 ```js
 import { createTychonicRunState } from "tychonic/workflow";
@@ -169,9 +205,9 @@ run = runState.update({ ...run, status: "running" });
 return runState.result(run);
 ```
 
-Use `createTychonicInteraction(policy)` from `tychonic/workflow` only when the
-workflow is designed to be driven by `tychonic approve`, `tychonic reject`, or
-`tychonic modify`. The helper registers the standard signal/query names as one
-unit and exposes the approval gate, modify patch application, stray-signal
-drain, standard inbox item helpers, and standard raw payload validation. Do not
-hand-register the standard interaction names one by one.
+Use `createTychonicInteraction(policy)` directly only when a workflow needs
+custom interactive behavior outside the context helper. It registers the
+standard signal/query names as one unit and exposes the approval gate, modify
+patch application, stray-signal drain, standard inbox item helpers, and standard
+raw payload validation. Do not hand-register the standard interaction names one
+by one.

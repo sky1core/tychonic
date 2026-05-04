@@ -1,6 +1,6 @@
 ---
 name: tychonic-cli
-description: Use when operating, documenting, or debugging Tychonic CLI workflows, runtime startup, Temporal-backed state, activity-centric configuration, agent permissions, session resume, or verification.
+description: "Tychonic CLI workflow operations: run, wait, status, inspect evidence, install or validate workflow bundles, start or check runtime, inspect Temporal-backed state, configure workflow states and policies, operate agent adapters, resume sessions, and verify delegated Tychonic work."
 ---
 
 # Tychonic CLI
@@ -15,6 +15,8 @@ verification.
 - Tychonic core ships no host-owned workflows.
 - Workflows are installed bundles with `workflow.mjs` and `defaultProfile`.
 - Workflow code owns ordering, branching, loops, retry, recovery, and signals.
+- Workflow modules should stay simple: use `tychonic/workflow` helpers for
+  repeated run-record bookkeeping, but keep ordering and branching explicit.
 - Config declares named `states.<name>` blocks and workflow-owned
   `policies.<name>` blocks. It is not a workflow graph.
 
@@ -34,7 +36,7 @@ tychonic status
 Foreground runtime:
 
 ```sh
-tychonic runtime up --project-dir "$PWD"
+tychonic runtime up
 ```
 
 Stop a foreground runtime with `Ctrl-C`. Detached isolated runtimes print a
@@ -63,7 +65,7 @@ tychonic run <workflow-name> --input-file ./input.json --wait
 Run commands require a Tychonic runtime started in another terminal:
 
 ```sh
-tychonic runtime up --project-dir "$PWD"
+tychonic runtime up
 ```
 
 Stop that foreground terminal with `Ctrl-C` when the workflow work is done.

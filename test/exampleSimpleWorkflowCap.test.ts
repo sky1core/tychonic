@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - bundle modules export plain JS, no TS types.
 import {
+  applyResult,
   appendReviewFindingsAndInboxForTests,
   runAutoContinueLoop
 } from "../examples/workflows/simpleWorkflow/reviewLoop.mjs";
@@ -601,45 +602,44 @@ describe("simpleWorkflow cap loop", () => {
       .reverse()
       .find((s: any) => s.role === "worker");
     expect(lastWorker).toBeDefined();
-    extended = appendReviewFindingsAndInboxForTests(
-      extended,
-      {
-        delta: {
-          states: [
+    const extendReviewResult = {
+      delta: {
+        states: [
+          {
+            id: "state_review_extend_seed",
+            name: "review",
+            status: "failed",
+            reason: "fresh fail after extend",
+            activity_attempt_ids: [],
+            artifact_ids: [],
+            finding_ids: [],
+            started_at: nowIso()
+          }
+        ]
+      },
+      reviewOutcome: {
+        kind: "parsed",
+        result: {
+          schema_version: "tychonic.review.v1",
+          status: "fail",
+          summary: "still failing",
+          findings: [
             {
-              id: "state_review_extend_seed",
-              name: "review",
-              status: "failed",
-              reason: "fresh fail after extend",
-              activity_attempt_ids: [],
-              artifact_ids: [],
-              finding_ids: [],
-              started_at: nowIso()
+              severity: "high",
+              title: "still broken",
+              detail: "fix it",
+              target: "src/a.ts",
+              target_session_id: lastWorker.id
             }
           ]
         },
-        reviewOutcome: {
-          kind: "parsed",
-          result: {
-            schema_version: "tychonic.review.v1",
-            status: "fail",
-            summary: "still failing",
-            findings: [
-              {
-                severity: "high",
-                title: "still broken",
-                detail: "fix it",
-                target: "src/a.ts",
-                target_session_id: lastWorker.id
-              }
-            ]
-          },
-          reviewerSessionId: "session_rev_extend_seed",
-          artifacts: [],
-          agentSessions: []
-        }
+        reviewerSessionId: "session_rev_extend_seed",
+        artifacts: [],
+        agentSessions: []
       }
-    );
+    };
+    extended = applyResult(extended, extendReviewResult);
+    extended = appendReviewFindingsAndInboxForTests(extended, extendReviewResult);
 
     // Re-enter the loop with the same caps and the latest worker session.
     const afterExtend = await runAutoContinueLoop({
@@ -666,7 +666,7 @@ describe("simpleWorkflow cap loop", () => {
 
   it("routes review findings without target_session_id to triage", () => {
     const run = makeBaseRun(makeWorkerSession("session_w0"));
-    const next = appendReviewFindingsAndInboxForTests(run, {
+    const reviewResult = {
       delta: {
         states: [
           {
@@ -700,12 +700,61 @@ describe("simpleWorkflow cap loop", () => {
         artifacts: [],
         agentSessions: []
       }
-    });
+    };
+    const withFindings = applyResult(run, reviewResult);
+    const next = appendReviewFindingsAndInboxForTests(withFindings, reviewResult);
 
     expect(next.inbox.at(-1)?.action.kind).toBe("triage");
     expect(next.inbox.at(-1)?.target_session_id).toBeUndefined();
     expect(next.inbox.at(-1)?.action.reason).toBe(
       "review finding does not identify a target worker session"
     );
+  });
+
+  it("does not duplicate inbox items when routing the same applied review findings twice", () => {
+    const run = makeBaseRun(makeWorkerSession("session_w0"));
+    const reviewResult = {
+      delta: {
+        states: [
+          {
+            id: "state_review_duplicate",
+            name: "review",
+            status: "failed",
+            reason: "review failed",
+            activity_attempt_ids: [],
+            artifact_ids: [],
+            finding_ids: [],
+            started_at: nowIso()
+          }
+        ]
+      },
+      reviewOutcome: {
+        kind: "parsed",
+        result: {
+          schema_version: "tychonic.review.v1",
+          status: "fail",
+          summary: "needs resume",
+          findings: [
+            {
+              severity: "high",
+              title: "targeted finding",
+              detail: "resume target session",
+              target: "src/a.ts",
+              target_session_id: "session_w0"
+            }
+          ]
+        },
+        reviewerSessionId: "session_rev_duplicate",
+        artifacts: [],
+        agentSessions: []
+      }
+    };
+    const withFindings = applyResult(run, reviewResult);
+    const once = appendReviewFindingsAndInboxForTests(withFindings, reviewResult);
+    const twice = appendReviewFindingsAndInboxForTests(once, reviewResult);
+    const findingId = once.findings.at(-1)?.id;
+
+    expect(findingId).toBeDefined();
+    expect(twice.inbox.filter((item: any) => item.finding_id === findingId)).toHaveLength(1);
   });
 });

@@ -2,15 +2,9 @@
 // primary QA reviewer and a lightweight structured-output normalizer.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicRunState } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
-const {
-  startRunActivity,
-  createWorktreeActivity,
-  runWorkerActivity,
-  runReviewActivity,
-  finalizeRunActivity
-} = proxyActivities({
+const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
   retry: { maximumAttempts: 1 }
@@ -62,163 +56,41 @@ function rejectUnknownInputFields(input) {
 
 export async function architectBuilderKiroQaWorkflow(input) {
   rejectUnknownInputFields(input);
-  const runState = createTychonicRunState();
-  let worktreePath;
-  const updateRun = (next) => runState.update(next, worktreePath ? { worktreePath } : {});
-  const profile = input.profile;
-  let run = await startRunActivity({
+  const ctx = createTychonicWorkflowContext({
+    input,
     template: "architect_builder_kiro_qa",
-    cwd: input.cwd,
-    ...(profile ? { profile } : {}),
-    ...(input.goal ? { goal: input.goal } : {})
+    activities: act
   });
-  run = updateRun({ ...run, status: "running" });
 
-  const wt = await createWorktreeActivity({ run, cwd: input.cwd });
-  worktreePath = wt.worktreePath;
-  run = updateRun(run);
+  await ctx.start();
+  await ctx.createWorktree();
 
-  const architect = await runWorkerActivity({
-    stateName: "architect",
-    run,
-    cwd: input.cwd,
-    profile,
-    worktreePath,
-    prompt: input.architectPrompt ?? architectPrompt(input.goal ?? "")
-  });
-  run = updateRun(apply(run, architect));
-  if (architect.workerOutcome?.status !== "succeeded") {
-    return done(run, input.cwd, "architect failed", runState, worktreePath);
-  }
+  const architect = await ctx.work(
+    "architect",
+    input.architectPrompt ?? architectPrompt(input.goal ?? "")
+  );
+  if (!architect.passed) return ctx.finish("architect failed");
 
-  const builder = await runWorkerActivity({
-    stateName: "builder",
-    run,
-    cwd: input.cwd,
-    profile,
-    worktreePath,
-    prompt: input.builderPrompt ?? builderPrompt({ cwd: input.cwd, runId: run.id, worktreePath })
-  });
-  run = updateRun(apply(run, builder));
-  if (builder.workerOutcome?.status !== "succeeded") {
-    return done(run, input.cwd, "builder failed", runState, worktreePath);
-  }
+  const builder = await ctx.work(
+    "builder",
+    input.builderPrompt ?? builderPrompt({
+      cwd: input.cwd,
+      runId: ctx.run().id,
+      worktreePath: ctx.worktreePath()
+    })
+  );
+  if (!builder.passed) return ctx.finish("builder failed");
 
-  const qa = await runReviewActivity({
-    stateName: "qa",
-    run,
-    cwd: input.cwd,
-    profile,
-    worktreePath,
-    prompt: input.qaPrompt ?? qaPrompt({ cwd: input.cwd, runId: run.id, worktreePath })
-  });
-  run = updateRun(apply(run, qa));
+  await ctx.review(
+    "qa",
+    input.qaPrompt ?? qaPrompt({
+      cwd: input.cwd,
+      runId: ctx.run().id,
+      worktreePath: ctx.worktreePath()
+    })
+  );
 
-  return done(run, input.cwd, "architectBuilderKiroQaWorkflow completed", runState, worktreePath);
-}
-
-function apply(run, result) {
-  let next = applyDelta(run, result?.delta ?? {});
-  if (result?.commandOutcome) {
-    next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
-  }
-  if (result?.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
-    };
-    next = appendReviewFindings(next, result);
-  }
-  if (result?.workerOutcome?.kind === "executed") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.workerOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.workerOutcome.agentSessions]
-    };
-  }
-  return next;
-}
-
-function appendReviewFindings(run, result) {
-  const outcome = result?.reviewOutcome;
-  if (!outcome || outcome.kind !== "parsed" || outcome.result.status !== "fail") return run;
-  const sourceState = result.delta?.states?.[0];
-  if (!sourceState) return run;
-
-  let next = run;
-  const findingIds = [];
-  for (const finding of outcome.result.findings) {
-    const id = nextLocalId(next, "finding");
-    findingIds.push(id);
-    next = {
-      ...next,
-      findings: [
-        ...next.findings,
-        {
-          id,
-          status: "new",
-          severity: finding.severity,
-          title: finding.title,
-          detail: finding.detail,
-          ...(finding.target ? { target: finding.target } : {}),
-          source_state_id: sourceState.id,
-          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
-          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
-          created_at: nowIso()
-        }
-      ]
-    };
-  }
-
-  return {
-    ...next,
-    states: next.states.map((state) =>
-      state.id === sourceState.id
-        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
-        : state
-    )
-  };
-}
-
-function applyDelta(run, delta) {
-  const next = {
-    ...run,
-    states: delta.states ? [...run.states, ...delta.states] : [...run.states],
-    activity_attempts: delta.activityAttempts
-      ? [...run.activity_attempts, ...delta.activityAttempts]
-      : [...run.activity_attempts],
-    facts: delta.facts ? { ...(run.facts ?? {}), ...delta.facts } : run.facts,
-    status: delta.status ?? run.status,
-    agent_sessions: [...run.agent_sessions],
-    artifacts: [...run.artifacts],
-    findings: [...run.findings],
-    inbox: [...run.inbox]
-  };
-  if (delta.summary !== undefined) next.summary = delta.summary;
-  else if (run.summary !== undefined) next.summary = run.summary;
-  return next;
-}
-
-function nextLocalId(run, prefix) {
-  const counter =
-    run.states.length +
-    run.activity_attempts.length +
-    run.artifacts.length +
-    run.findings.length +
-    run.inbox.length +
-    run.agent_sessions.length;
-  return `${prefix}_${counter + 1}`;
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-async function done(run, cwd, summary, runState, worktreePath) {
-  const final = await finalizeRunActivity({ run, summary });
-  run = apply(run, final);
-  return runState.result(run, { artifactRoot: `${cwd}/.tychonic/runs/${run.id}`, worktreePath });
+  return ctx.finish("architectBuilderKiroQaWorkflow completed");
 }
 
 function architectPrompt(goal) {

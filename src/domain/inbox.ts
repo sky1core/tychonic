@@ -41,10 +41,12 @@ export function recomputeWorkflowRunStatus(run: WorkflowRunRecord): void {
     latestStates.set(state.name, state);
   }
 
-  if ([...latestStates.values()].some((state) => state.status === "failed" || state.status === "timed_out")) {
-    run.status = "failed";
-  } else if (run.inbox.some((item) => item.status === "open")) {
+  if (run.inbox.some((item) => item.status === "open")) {
     run.status = "waiting_user";
+  } else if ([...latestStates.values()].some((state) => state.status === "failed" || state.status === "timed_out")) {
+    run.status = "failed";
+  } else if ([...latestStates.values()].some((state) => state.status === "blocked")) {
+    run.status = "blocked";
   } else {
     run.status = "succeeded";
   }

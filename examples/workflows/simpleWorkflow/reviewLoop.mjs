@@ -1,3 +1,9 @@
+import {
+  addRunInboxItem,
+  applyActivityResult,
+  nextRunLocalId
+} from "tychonic/workflow";
+
 const RESUME_CAP_DEFAULT = 0;
 const DEFAULT_AUTO_CONTINUE_MAX_ITERATIONS = 5;
 
@@ -62,8 +68,8 @@ export async function runAutoContinueLoop({
     }
 
     if (resumeConsumed >= maxResume) {
-      run = updateRun(appendInboxItem(run, {
-        id: nextLocalId(run, "inbox_cap"),
+      run = updateRun(addRunInboxItem(run, {
+        id: nextRunLocalId(run, "inbox_cap"),
         status: "open",
         title: "Resume cap exhausted with unresolved findings",
         detail: `states.work.resume (${maxResume}) reached without a passing review`,
@@ -125,48 +131,7 @@ export function verificationCommands(profile) {
 }
 
 export function applyResult(run, result) {
-  let next = applyDelta(run, result?.delta || {});
-  if (result?.commandOutcome) {
-    next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
-  }
-  if (result?.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
-    };
-  }
-  if (result?.workerOutcome?.kind === "executed") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.workerOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.workerOutcome.agentSessions]
-    };
-  }
-  return next;
-}
-
-function applyDelta(run, delta) {
-  const next = {
-    ...run,
-    states: delta.states ? [...run.states, ...delta.states] : [...run.states],
-    activity_attempts: delta.activityAttempts
-      ? [...run.activity_attempts, ...delta.activityAttempts]
-      : [...run.activity_attempts],
-    facts: delta.facts ? { ...(run.facts ?? {}), ...delta.facts } : run.facts,
-    status: delta.status ?? run.status,
-    agent_sessions: [...run.agent_sessions],
-    artifacts: [...run.artifacts],
-    findings: [...run.findings],
-    inbox: [...run.inbox]
-  };
-  if (delta.summary !== undefined) next.summary = delta.summary;
-  else if (run.summary !== undefined) next.summary = run.summary;
-  return next;
-}
-
-function appendInboxItem(run, item) {
-  return { ...run, inbox: [...run.inbox, item] };
+  return applyActivityResult(run, result);
 }
 
 function markInboxResolved(run, inboxItemId) {
@@ -186,37 +151,33 @@ export function appendReviewFindingsAndInbox(run, reviewRes) {
   if (outcome.result.status !== "fail") return run;
   const sourceState = reviewRes.delta?.states?.[0];
   const sourceStateId = sourceState?.id ?? "";
-  const sourceReviewSessionId = outcome.reviewerSessionId;
   let next = run;
-  for (const finding of outcome.result.findings) {
-    const targetSessionId = finding.target_session_id;
+  const appliedState = next.states.find((state) => state.id === sourceStateId);
+  const appliedFindingIds = new Set(appliedState?.finding_ids ?? []);
+  const appliedFindings = next.findings.filter(
+    (finding) => finding.source_state_id === sourceStateId && appliedFindingIds.has(finding.id)
+  );
+  if (outcome.result.findings.length > 0 && appliedFindings.length === 0) {
+    throw new Error("appendReviewFindingsAndInbox requires applyResult(run, reviewRes) before inbox routing");
+  }
+
+  for (const findingRecord of appliedFindings) {
+    if (next.inbox.some((item) => item.finding_id === findingRecord.id)) {
+      continue;
+    }
+    const targetSessionId = findingRecord.target_work_session_id;
     const targetSession = targetSessionId
       ? next.agent_sessions.find((s) => s.id === targetSessionId)
       : undefined;
     const isResumable = Boolean(targetSession?.resumable);
 
-    const findingId = nextLocalId(next, "finding");
-    const findingRecord = {
-      id: findingId,
-      status: "new",
-      severity: finding.severity,
-      title: finding.title,
-      detail: finding.detail,
-      ...(finding.target ? { target: finding.target } : {}),
-      source_state_id: sourceStateId,
-      ...(sourceReviewSessionId ? { source_review_session_id: sourceReviewSessionId } : {}),
-      ...(targetSessionId ? { target_work_session_id: targetSessionId } : {}),
-      created_at: nowIso()
-    };
-    next = { ...next, findings: [...next.findings, findingRecord] };
-
     const inboxItem = isResumable
       ? {
-          id: nextLocalId(next, "inbox"),
+          id: nextRunLocalId(next, "inbox"),
           status: "open",
-          title: `Resume work: ${finding.title}`,
+          title: `Resume work: ${findingRecord.title}`,
           detail: `resume prior worker session ${targetSession.id}`,
-          finding_id: findingId,
+          finding_id: findingRecord.id,
           target_session_id: targetSession.id,
           action: {
             kind: "resume_work",
@@ -225,13 +186,13 @@ export function appendReviewFindingsAndInbox(run, reviewRes) {
           created_at: nowIso()
         }
       : {
-          id: nextLocalId(next, "inbox"),
+          id: nextRunLocalId(next, "inbox"),
           status: "open",
-          title: `Triage finding: ${finding.title}`,
+          title: `Triage finding: ${findingRecord.title}`,
           detail: targetSessionId
             ? `target worker session is not resumable: ${targetSessionId}`
             : "review finding does not identify a target worker session",
-          finding_id: findingId,
+          finding_id: findingRecord.id,
           ...(targetSessionId ? { target_session_id: targetSessionId } : {}),
           action: {
             kind: "triage",
@@ -241,7 +202,7 @@ export function appendReviewFindingsAndInbox(run, reviewRes) {
           },
           created_at: nowIso()
         };
-    next = { ...next, inbox: [...next.inbox, inboxItem] };
+    next = addRunInboxItem(next, inboxItem);
   }
   return next;
 }
@@ -258,17 +219,6 @@ export function normalizeMaxIterations(value) {
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function nextLocalId(run, prefix) {
-  const counter =
-    run.states.length +
-    run.activity_attempts.length +
-    run.artifacts.length +
-    run.findings.length +
-    run.inbox.length +
-    run.agent_sessions.length;
-  return `${prefix}_${counter + 1}`;
 }
 
 function buildResumePrompt(run) {

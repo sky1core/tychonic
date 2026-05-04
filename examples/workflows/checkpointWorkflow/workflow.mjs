@@ -1,20 +1,11 @@
 // Example Tychonic workflow bundle: checkpointWorkflow.
 //
-// Install with:
-//
-//   tychonic workflows install ./examples/workflows/checkpointWorkflow
-//
-// Operational installs refresh the LaunchAgent worker when one is installed.
-// Isolated-instance installs require restarting that instance's runtime.
-// See docs/plugin-workflows.md for the authoring guide.
-//
-// Single-pass deterministic gates (lint -> unit_test -> integration) plus
-// two structured reviews (semantic_review, test_review). Deterministic gates
-// all use the `verify` TYPE; their state NAMEs carry the workflow-specific
-// meaning.
+// Single-pass deterministic gates (lint -> unit_test -> integration) plus two
+// structured reviews (semantic_review, test_review). Deterministic gates all
+// use the `verify` TYPE; their state NAMEs carry workflow-specific meaning.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicRunState } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 import { validateIntegrationPolicy } from "./integrationPolicy.mjs";
 
 const act = proxyActivities({
@@ -22,14 +13,6 @@ const act = proxyActivities({
   heartbeatTimeout: "5 minutes",
   retry: { maximumAttempts: 1 }
 });
-
-const {
-  startRunActivity,
-  collectGitFactsActivity,
-  runVerifyActivity,
-  runReviewActivity,
-  finalizeRunActivity
-} = act;
 
 export const defaultProfile = {
   version: "tychonic.config.v1",
@@ -53,12 +36,6 @@ export const defaultProfile = {
   policies: { integration: { position: "final_gate" } }
 };
 
-/**
- * `checkpointWorkflow` — deterministic gates plus structured reviews.
- *
- * Input: { cwd, goal? }
- * Host-injected: profile?: TychonicConfig
- */
 const CHECKPOINT_WORKFLOW_INPUT_FIELDS = new Set(["cwd", "profile", "goal"]);
 
 function rejectUnknownInputFields(input) {
@@ -73,205 +50,52 @@ function rejectUnknownInputFields(input) {
 export async function checkpointWorkflow(input) {
   rejectUnknownInputFields(input);
   validateIntegrationPolicy(input.profile?.policies);
-  const runState = createTychonicRunState();
-  const profile = input.profile;
-  let run = await startRunActivity({
+
+  const ctx = createTychonicWorkflowContext({
+    input,
     template: "checkpoint",
-    cwd: input.cwd,
-    ...(profile ? { profile } : {}),
-    ...(input.goal ? { goal: input.goal } : {})
+    activities: act
   });
-  run = runState.update({ ...run, status: "running" });
-
-  // Collect git facts to drive skip decisions.
-  const facts = await collectGitFactsActivity({ run, cwd: input.cwd });
-  run = runState.update(applyResult(run, facts));
-
+  const profile = input.profile;
   const integrationPosition = profile?.policies?.integration?.position ?? "final_gate";
 
-  // Stage: lint
+  await ctx.start();
+  ctx.apply(await act.collectGitFactsActivity({ run: ctx.run(), cwd: input.cwd }));
+
   if (profile?.states?.lint) {
-    const res = await runVerifyActivity({
-      stateName: "lint", run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd
-    });
-    run = runState.update(applyResult(run, res));
+    await ctx.verify("lint");
   }
-
-  // Stage: unit_test
   if (profile?.states?.unit_test) {
-    const res = await runVerifyActivity({
-      stateName: "unit_test", run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd
-    });
-    run = runState.update(applyResult(run, res));
+    await ctx.verify("unit_test");
   }
-
-  // Stage: integration (pre-review when policy says before_ai_review)
   if (integrationPosition === "before_ai_review" && profile?.states?.integration) {
-    const res = await runVerifyActivity({
-      stateName: "integration", run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd
-    });
-    run = runState.update(applyResult(run, res));
+    await ctx.verify("integration");
   }
-
-  // Stage: semantic_review
   if (profile?.states?.semantic_review) {
-    const res = await runReviewActivity({
-      stateName: "semantic_review", run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd,
-      prompt: structuredReviewPrompt("changes")
-    });
-    run = runState.update(applyResult(run, res));
+    await ctx.review("semantic_review", structuredReviewPrompt("changes", input.goal));
   }
-
-  // Stage: integration (after semantic review, before test review).
   if (integrationPosition === "after_ai_review" && profile?.states?.integration) {
-    const res = await runVerifyActivity({
-      stateName: "integration", run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd
-    });
-    run = runState.update(applyResult(run, res));
+    await ctx.verify("integration");
   }
-
-  // Stage: test_review
   if (profile?.states?.test_review) {
-    const res = await runReviewActivity({
-      stateName: "test_review", run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd,
-      prompt: structuredReviewPrompt("test coverage")
-    });
-    run = runState.update(applyResult(run, res));
+    await ctx.review("test_review", structuredReviewPrompt("test coverage", input.goal));
   }
-
-  // Stage: integration (final_gate, the default)
   if (integrationPosition === "final_gate" && profile?.states?.integration) {
-    const res = await runVerifyActivity({
-      stateName: "integration", run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd
-    });
-    run = runState.update(applyResult(run, res));
+    await ctx.verify("integration");
   }
 
-  const fin = await finalizeRunActivity({ run });
-  run = applyResult(run, fin);
-
-  return runState.result(run);
+  return ctx.finish("checkpointWorkflow completed");
 }
 
-function applyResult(run, result) {
-  let next = applyDelta(run, result?.delta || {});
-  if (result?.commandOutcome) {
-    next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
-  }
-  if (result?.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
-    };
-    next = appendReviewFindings(next, result);
-  }
-  if (result?.workerOutcome?.kind === "executed") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.workerOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.workerOutcome.agentSessions]
-    };
-  }
-  return next;
-}
-
-function appendReviewFindings(run, result) {
-  const outcome = result?.reviewOutcome;
-  if (!outcome || outcome.kind !== "parsed" || outcome.result.status !== "fail") return run;
-  const sourceState = result.delta?.states?.[0];
-  if (!sourceState) return run;
-
-  let next = run;
-  const findingIds = [];
-  for (const finding of outcome.result.findings) {
-    const id = nextLocalId(next, "finding");
-    findingIds.push(id);
-    next = {
-      ...next,
-      findings: [
-        ...next.findings,
-        {
-          id,
-          status: "new",
-          severity: finding.severity,
-          title: finding.title,
-          detail: finding.detail,
-          ...(finding.target ? { target: finding.target } : {}),
-          source_state_id: sourceState.id,
-          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
-          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
-          created_at: nowIso()
-        }
-      ]
-    };
-  }
-
-  return {
-    ...next,
-    states: next.states.map((state) =>
-      state.id === sourceState.id
-        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
-        : state
-    )
-  };
-}
-
-function applyDelta(run, delta) {
-  const next = {
-    ...run,
-    states: delta.states ? [...run.states, ...delta.states] : [...run.states],
-    activity_attempts: delta.activityAttempts
-      ? [...run.activity_attempts, ...delta.activityAttempts]
-      : [...run.activity_attempts],
-    facts: delta.facts ? { ...(run.facts ?? {}), ...delta.facts } : run.facts,
-    status: delta.status ?? run.status,
-    agent_sessions: [...run.agent_sessions],
-    artifacts: [...run.artifacts],
-    findings: [...run.findings],
-    inbox: [...run.inbox]
-  };
-  if (delta.summary !== undefined) next.summary = delta.summary;
-  else if (run.summary !== undefined) next.summary = run.summary;
-  return next;
-}
-
-function nextLocalId(run, prefix) {
-  const counter =
-    run.states.length +
-    run.activity_attempts.length +
-    run.artifacts.length +
-    run.findings.length +
-    run.inbox.length +
-    run.agent_sessions.length;
-  return `${prefix}_${counter + 1}`;
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function structuredReviewPrompt(scope) {
-  return [
+function structuredReviewPrompt(scope, goal) {
+  const lines = [
     `Review ${scope} for correctness, regressions, missing tests, and risky assumptions.`,
     "",
+    ...(goal ? ["Workflow goal and review scope:", goal, ""] : []),
     "Report a semantic review verdict with status, summary, and findings.",
     "Each finding needs severity, title, and actionable detail.",
     "Add target only when you can identify a file or state.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
-  ].join("\n");
+  ];
+  return lines.join("\n");
 }

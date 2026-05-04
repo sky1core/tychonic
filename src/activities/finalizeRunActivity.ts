@@ -15,8 +15,8 @@ export type FinalizeRunActivityResult = ActivityResult;
  * `applyRunDelta`.
  *
  * Mirrors `src/domain/inbox.ts` `recomputeWorkflowRunStatus`:
- * - any latest state-by-NAME in `failed` or `timed_out` → `failed`
- * - otherwise any open inbox item → `waiting_user`
+ * - any open inbox item → `waiting_user`
+ * - otherwise any latest state-by-NAME in `failed` or `timed_out` → `failed`
  * - otherwise any latest state-by-NAME in `blocked` → `blocked`
  * - otherwise → `succeeded`
  */
@@ -32,11 +32,11 @@ export async function finalizeRunActivity(
 }
 
 function computeStatus(run: WorkflowRunRecord): WorkflowRunStatus {
-  if (latestStatesByName(run).some((state) => state.status === "failed" || state.status === "timed_out")) {
-    return "failed";
-  }
   if (run.inbox.some((item) => item.status === "open")) {
     return "waiting_user";
+  }
+  if (latestStatesByName(run).some((state) => state.status === "failed" || state.status === "timed_out")) {
+    return "failed";
   }
   if (latestStatesByName(run).some((state) => state.status === "blocked")) {
     return "blocked";

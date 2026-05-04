@@ -115,16 +115,16 @@ describe("signalNamedWorkflow client contract", () => {
     const mod = await import("../src/temporal/client.js");
     const result = await mod.signalNamedWorkflow({
       workflowId: "tychonic_simpleWorkflow_test",
-      signalName: "tychonic.simple_workflow.extend_iterations",
-      payload: { maxIterations: 7 },
+      signalName: "example.signal",
+      payload: { note: "operator input" },
       address: "127.0.0.1:7233",
       namespace: "default",
       taskQueue: "tychonic"
     });
 
     expect(getHandle).toHaveBeenCalledWith("tychonic_simpleWorkflow_test", undefined);
-    expect(signal).toHaveBeenCalledWith("tychonic.simple_workflow.extend_iterations", {
-      maxIterations: 7
+    expect(signal).toHaveBeenCalledWith("example.signal", {
+      note: "operator input"
     });
     expect(result).toEqual({
       workflowId: "tychonic_simpleWorkflow_test",

@@ -20,7 +20,7 @@ export interface TychonicWorkflowResult {
 }
 
 export interface WorkflowResultView {
-  run_id: string;
+  runId: string;
   template: string;
   status: string;
   goal?: string;
@@ -77,7 +77,7 @@ export interface WorkflowTimingView {
 }
 
 export interface WorkflowEvidenceView {
-  run_id: string;
+  runId: string;
   template: string;
   status: string;
   summary?: string;
@@ -109,7 +109,7 @@ export function assertTychonicWorkflowResult(result: unknown): asserts result is
 
 export function workflowResultView(result: TychonicWorkflowResult): WorkflowResultView {
   return {
-    run_id: result.run.id,
+    runId: result.run.id,
     template: result.run.template,
     status: result.run.status,
     ...(result.run.goal ? { goal: result.run.goal } : {})
@@ -126,7 +126,7 @@ export function workflowEvidenceView(
   const latestState = states.length > 0 ? states[states.length - 1] : undefined;
   const stateNameById = stateNameMap(result.run);
   return {
-    run_id: result.run.id,
+    runId: result.run.id,
     template: result.run.template,
     status: result.run.status,
     ...(result.run.summary ? { summary: result.run.summary } : {}),

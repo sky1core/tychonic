@@ -1,25 +1,16 @@
 // architectBuilderQaWorkflow — interactive 3-stage delegated-work pipeline.
 //
 // Stages:
-//   1. architect (work)   — an agent drafts the design / plan.
-//   2. builder   (work)   — a second agent implements it.
-//   3. qa        (review) — a reviewer returns `tychonic.review.v1`.
+//   1. architect (work) — drafts the design / plan.
+//   2. builder   (work) — implements the design.
+//   3. qa        (review) — returns `tychonic.review.v1`.
 //
-// Under `policies.interaction.mode: interactive` every stage pauses after
-// the activity finishes and waits for the standard Tychonic interaction
-// commands. The public `tychonic/workflow` helper registers those signal/query
-// handlers and exposes the state approval gate.
-//
-// Reject attempts per stage are capped by
-// `policies.interaction.max_reject_iterations` (default 5). At the cap
-// the run is promoted to `waiting_user` with an inbox item.
-//
-// Install (from the project that will host the run):
-//
-//   tychonic workflows install ./examples/workflows/architectBuilderQaWorkflow
+// The workflow owns the state order and the QA loop. Shared Tychonic run
+// bookkeeping is handled by `createTychonicWorkflowContext` so the module stays
+// focused on orchestration.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicInteraction, createTychonicRunState } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 import {
   validateInteractionPolicy,
   validateLoopPolicy
@@ -32,14 +23,6 @@ const act = proxyActivities({
   heartbeatTimeout: "5 minutes",
   retry: { maximumAttempts: 1 }
 });
-
-const {
-  startRunActivity,
-  createWorktreeActivity,
-  runWorkerActivity,
-  runReviewActivity,
-  finalizeRunActivity
-} = act;
 
 export const defaultProfile = {
   version: "tychonic.config.v1",
@@ -93,279 +76,73 @@ export async function architectBuilderQaWorkflow(input) {
   rejectUnknownInputFields(input);
   validateInteractionPolicy(input.profile?.policies);
   validateLoopPolicy(input.profile?.policies);
-  const runState = createTychonicRunState();
-  const interaction = createTychonicInteraction(input.profile?.policies?.interaction);
-  let worktreePath;
-  const updateRun = (next) => runState.update(next, worktreePath ? { worktreePath } : {});
 
-  const interactive = interaction.mode() === "interactive";
-  const maxReject = interaction.rejectCap();
-
-  let run = await startRunActivity({
+  const ctx = createTychonicWorkflowContext({
+    input,
     template: "architect_builder_qa",
-    cwd: input.cwd,
-    ...(input.profile ? { profile: input.profile } : {}),
-    goal: input.goal
+    activities: act
   });
-  run = updateRun({ ...run, status: "running" });
 
-  const wt = await createWorktreeActivity({ run, cwd: input.cwd });
-  worktreePath = wt.worktreePath;
-  run = updateRun(run);
+  await ctx.start();
+  await ctx.createWorktree();
 
-  const rejectCounts = new Map();
+  const architect = await ctx.work(
+    "architect",
+    input.architectPrompt ?? architectPrompt(input.goal ?? "")
+  );
+  if (!architect.passed) return ctx.finish(architect.summary ?? "architect failed");
 
-  const architect = await runStage({
-    stateName: "architect",
-    activity: runWorkerActivity,
-    basePrompt: input.architectPrompt ?? architectPrompt(input.goal ?? ""),
-    run, input, worktreePath, rejectCounts, maxReject, interaction, updateRun
-  });
-  if (architect.halted) return done(architect.run, input.cwd, interaction, architect.summary, runState, worktreePath);
-  run = architect.run;
-
-  // builder <-> qa review loop.
-  //
-  // - Interactive mode: each stage's inner gate already handles rerun via
-  //   `rejectState` on that same stage, so we run builder + qa exactly once
-  //   here; when qa is approved the workflow exits.
-  // - Auto mode (no external gating): if qa reports `fail` (state.status =
-  //   "failed" per SPEC §Activity Result And Evidence Invariants), loop
-  //   back to builder with the qa reason threaded into the next prompt. Capped by
-  //   `policies.loop.max_review_iterations` (default 3). At the cap the run
-  //   enters terminal `waiting_user`; recovery is a fresh run with adjusted
-  //   input/config, not another signal into this completed workflow.
   const maxReviewIterations =
     input.profile?.policies?.loop?.max_review_iterations ?? DEFAULT_MAX_REVIEW_ITERATIONS;
   const qaFeedbacks = [];
   let reviewIteration = 0;
-  // eslint-disable-next-line no-constant-condition
+
   while (true) {
     reviewIteration += 1;
 
-    const builderBase = input.builderPrompt ?? builderPrompt({ runId: run.id, worktreePath });
-    const builderBaseWithFeedback =
-      qaFeedbacks.length > 0
-        ? `${builderBase}\n\n[qa findings from previous iteration(s)]\n${qaFeedbacks
-            .map((f, i) => `${i + 1}. ${f}`)
-            .join("\n")}\n[/qa findings]`
-        : builderBase;
+    const builder = await ctx.work(
+      "builder",
+      withQaFeedback(
+        input.builderPrompt ?? builderPrompt({
+          runId: ctx.run().id,
+          worktreePath: ctx.worktreePath()
+        }),
+        qaFeedbacks
+      )
+    );
+    if (!builder.passed) return ctx.finish(builder.summary ?? "builder failed");
 
-    const builder = await runStage({
-      stateName: "builder",
-      activity: runWorkerActivity,
-      basePrompt: builderBaseWithFeedback,
-      run, input, worktreePath, rejectCounts, maxReject, interaction, updateRun
-    });
-    if (builder.halted) return done(builder.run, input.cwd, interaction, builder.summary, runState, worktreePath);
-    run = builder.run;
+    const qa = await ctx.review(
+      "qa",
+      input.qaPrompt ?? qaPrompt({
+        runId: ctx.run().id,
+        worktreePath: ctx.worktreePath()
+      })
+    );
+    if (qa.halted) return ctx.finish(qa.summary);
 
-    const qa = await runStage({
-      stateName: "qa",
-      activity: runReviewActivity,
-      basePrompt: input.qaPrompt ?? qaPrompt({ runId: run.id, worktreePath }),
-      run, input, worktreePath, rejectCounts, maxReject, interaction, updateRun
-    });
-    if (qa.halted) return done(qa.run, input.cwd, interaction, qa.summary, runState, worktreePath);
-    run = qa.run;
-
-    if (interactive) {
-      // Interactive gating already decided pass/rerun per stage; exit the
-      // outer loop after one builder+qa round.
-      break;
-    }
-
-    const latestQa = findLastStateByName(run, "qa");
-    if (latestQa?.status === "succeeded") {
+    if (ctx.isInteractive() || qa.passed) {
       break;
     }
     if (reviewIteration >= maxReviewIterations) {
-      run = updateRun(addInboxItem(run, reviewCapInboxItem()));
-      run = updateRun({ ...run, status: "waiting_user" });
-      return done(
-        run,
-        input.cwd,
-        interaction,
+      return ctx.finishWaitingUser(
         `qa review did not pass within ${maxReviewIterations} iterations`,
-        runState,
-        worktreePath
+        reviewCapInboxItem()
       );
     }
     qaFeedbacks.push(
-      `QA iteration ${reviewIteration} verdict: ${latestQa?.reason ?? "(no reason recorded)"}`
+      `QA iteration ${reviewIteration} verdict: ${qa.reason ?? "(no reason recorded)"}`
     );
   }
 
-  return done(run, input.cwd, interaction, "architectBuilderQaWorkflow completed", runState, worktreePath);
+  return ctx.finish("architectBuilderQaWorkflow completed");
 }
 
-function findLastStateByName(run, name) {
-  for (let i = run.states.length - 1; i >= 0; i -= 1) {
-    if (run.states[i].name === name) return run.states[i];
-  }
-  return undefined;
-}
-
-async function runStage({
-  stateName,
-  activity,
-  basePrompt,
-  run,
-  input,
-  worktreePath,
-  rejectCounts,
-  maxReject,
-  interaction,
-  updateRun
-}) {
-  const feedbacks = [];
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const prompt = feedbacks.length > 0
-      ? `${basePrompt}\n\n[reviewer feedback from previous attempts]\n${feedbacks
-          .map((f, i) => `${i + 1}. ${f}`)
-          .join("\n")}\n[/reviewer feedback]`
-      : basePrompt;
-    const result = await activity({
-      stateName,
-      run,
-      cwd: input.cwd,
-      profile: input.profile,
-      worktreePath,
-      prompt
-    });
-    run = updateRun(apply(run, result));
-
-    const decision = await interaction.waitForStateApproval(stateName);
-    if (decision.kind === "approve") {
-      return { run, halted: false };
-    }
-    if (decision.kind === "modify") {
-      run = updateRun(interaction.applyApprovalDecision(run, stateName, decision));
-      return { run, halted: false };
-    }
-    const nextCount = (rejectCounts.get(stateName) ?? 0) + 1;
-    rejectCounts.set(stateName, nextCount);
-    if (nextCount >= maxReject) {
-      run = updateRun(
-        addInboxItem(
-          run,
-          interaction.rejectCapInboxItem(stateName, {
-            id: `inbox_reject_cap_${stateName}`,
-            createdAt: nowIso()
-          })
-        )
-      );
-      run = updateRun({ ...run, status: "waiting_user" });
-      return { run, halted: true, summary: `${stateName} reached reject cap` };
-    }
-    feedbacks.push(decision.feedback);
-  }
-}
-
-function apply(run, result) {
-  let next = applyDelta(run, result.delta || {});
-  if (result.commandOutcome) {
-    next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
-  }
-  if (result.reviewOutcome && result.reviewOutcome.kind !== "skipped") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
-    };
-    next = appendReviewFindings(next, result);
-  }
-  if (result.workerOutcome?.kind === "executed") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.workerOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.workerOutcome.agentSessions]
-    };
-  }
-  return next;
-}
-
-function appendReviewFindings(run, result) {
-  const outcome = result?.reviewOutcome;
-  if (!outcome || outcome.kind !== "parsed" || outcome.result.status !== "fail") return run;
-  const sourceState = result.delta?.states?.[0];
-  if (!sourceState) return run;
-
-  let next = run;
-  const findingIds = [];
-  for (const finding of outcome.result.findings) {
-    const id = nextLocalId(next, "finding");
-    findingIds.push(id);
-    next = {
-      ...next,
-      findings: [
-        ...next.findings,
-        {
-          id,
-          status: "new",
-          severity: finding.severity,
-          title: finding.title,
-          detail: finding.detail,
-          ...(finding.target ? { target: finding.target } : {}),
-          source_state_id: sourceState.id,
-          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
-          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
-          created_at: nowIso()
-        }
-      ]
-    };
-  }
-
-  return {
-    ...next,
-    states: next.states.map((state) =>
-      state.id === sourceState.id
-        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
-        : state
-    )
-  };
-}
-
-function applyDelta(run, delta) {
-  const next = {
-    ...run,
-    states: delta.states ? [...run.states, ...delta.states] : [...run.states],
-    activity_attempts: delta.activityAttempts
-      ? [...run.activity_attempts, ...delta.activityAttempts]
-      : [...run.activity_attempts],
-    facts: delta.facts ? { ...(run.facts ?? {}), ...delta.facts } : run.facts,
-    status: delta.status ?? run.status,
-    agent_sessions: [...run.agent_sessions],
-    artifacts: [...run.artifacts],
-    findings: [...run.findings],
-    inbox: [...run.inbox]
-  };
-  if (delta.summary !== undefined) next.summary = delta.summary;
-  else if (run.summary !== undefined) next.summary = run.summary;
-  return next;
-}
-
-function nextLocalId(run, prefix) {
-  const counter =
-    run.states.length +
-    run.activity_attempts.length +
-    run.artifacts.length +
-    run.findings.length +
-    run.inbox.length +
-    run.agent_sessions.length;
-  return `${prefix}_${counter + 1}`;
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function addInboxItem(run, item) {
-  if (run.inbox.some((existing) => existing.id === item.id)) {
-    return run;
-  }
-  return { ...run, inbox: [...run.inbox, item] };
+function withQaFeedback(basePrompt, feedbacks) {
+  if (feedbacks.length === 0) return basePrompt;
+  return `${basePrompt}\n\n[qa findings from previous iteration(s)]\n${feedbacks
+    .map((feedback, index) => `${index + 1}. ${feedback}`)
+    .join("\n")}\n[/qa findings]`;
 }
 
 function reviewCapInboxItem() {
@@ -377,28 +154,8 @@ function reviewCapInboxItem() {
       "qa stage did not report pass within policies.loop.max_review_iterations; builder did not converge. " +
       "Inspect run.states and run.findings, then start a fresh run with adjusted input/config.",
     action: { kind: "triage", reason: "qa review loop cap reached in auto mode" },
-    created_at: nowIso()
+    created_at: new Date().toISOString()
   };
-}
-
-async function done(run, cwd, interaction, summary, runState, worktreePath) {
-  let finalRun = run;
-  const straySignals = interaction.drainStraySignals();
-  if (straySignals.length > 0) {
-    straySignals.forEach((entry, index) => {
-      finalRun = addInboxItem(
-        finalRun,
-        interaction.strayInteractionSignalInboxItem(entry, {
-          id: `inbox_stray_${entry.kind}_${entry.state}_${index}`,
-          createdAt: nowIso()
-        })
-      );
-    });
-    finalRun = runState.update(finalRun, { worktreePath });
-  }
-  const fin = await finalizeRunActivity({ run: finalRun, summary });
-  finalRun = apply(finalRun, fin);
-  return runState.result(finalRun, { artifactRoot: `${cwd}/.tychonic/runs/${finalRun.id}`, worktreePath });
 }
 
 function architectPrompt(goal) {

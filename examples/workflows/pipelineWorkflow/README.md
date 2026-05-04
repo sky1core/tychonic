@@ -32,11 +32,35 @@ appear more than once without adding new activity kinds.
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
+## Minimal Run
+
+```sh
+tychonic workflows install ./examples/workflows/pipelineWorkflow
+tychonic runtime up
+```
+
+In another terminal:
+
+```sh
+cat > ./pipeline-input.json <<'JSON'
+{
+  "cwd": "/abs/path/to/project",
+  "goal": "Run the full delivery pipeline and report actionable failures."
+}
+JSON
+
+tychonic run pipelineWorkflow --input-file ./pipeline-input.json --wait
+```
+
 ## Behavior
 
 The pipeline runs once and short-circuits when any stage fails or blocks. It
-does not register signal handlers and does not enter `waiting_user`; recovery is
-a fresh run with adjusted input or config.
+does not wait for standard interaction approval; recovery is a fresh run with
+adjusted input or config.
+
+The shared workflow context still registers the standard interaction handlers.
+Unexpected standard interaction signals are surfaced as inbox evidence instead
+of being ignored.
 
 ## Config
 

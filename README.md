@@ -240,6 +240,8 @@ and fails the review if tracked files change during the review turn.
 
 - `verifyOnlyWorkflow`: no-agent runtime smoke.
 - `simpleWorkflow`: one work state, one verify state, one review state.
+- `pipelineWorkflow`: longer one-pass pipeline with repeated `review` states.
+- `checkpointWorkflow`: fixed deterministic gates plus two structured reviews.
 - `architectBuilderQaWorkflow`: standard architect/build/QA pattern.
 - `architectBuilderKiroQaWorkflow`: Kiro performs QA review, then a normalizer
   structures the verdict.

@@ -25,16 +25,9 @@ mkdir myWorkflow
 ```js
 // myWorkflow/workflow.mjs
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicRunState } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
-const {
-  startRunActivity,
-  createWorktreeActivity,
-  runWorkerActivity,
-  runVerifyActivity,
-  runReviewActivity,
-  finalizeRunActivity
-} = proxyActivities({
+const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
   retry: { maximumAttempts: 1 }
@@ -55,142 +48,21 @@ npm test`
 };
 
 export async function myWorkflow(input) {
-  const runState = createTychonicRunState();
-  let run = await startRunActivity({
+  const ctx = createTychonicWorkflowContext({
+    input,
     template: "my_workflow",
-    cwd: input.cwd,
-    profile: input.profile,
-    goal: input.goal
+    activities: act
   });
-  run = runState.update({ ...run, status: "running" });
 
-  const wt = await createWorktreeActivity({ run, cwd: input.cwd });
-  run = runState.update(run, { worktreePath: wt.worktreePath });
-  const work = await runWorkerActivity({
-    stateName: "work",
-    run,
-    cwd: input.cwd,
-    profile: input.profile,
-    worktreePath: wt.worktreePath,
-    prompt: input.goal ?? ""
-  });
-  run = runState.update(apply(run, work), { worktreePath: wt.worktreePath });
-
-  const verify = await runVerifyActivity({
-    stateName: "verify",
-    run,
-    cwd: input.cwd,
-    profile: input.profile,
-    worktreePath: wt.worktreePath
-  });
-  run = runState.update(apply(run, verify), { worktreePath: wt.worktreePath });
-
-  const review = await runReviewActivity({
-    stateName: "review",
-    run,
-    cwd: input.cwd,
-    profile: input.profile,
-    worktreePath: wt.worktreePath,
-    prompt: "Review the worker result and return the structured review payload."
-  });
-  run = runState.update(apply(run, review), { worktreePath: wt.worktreePath });
-
-  const final = await finalizeRunActivity({ run });
-  run = apply(run, final);
-  return runState.result(run, { worktreePath: wt.worktreePath });
-}
-
-function apply(run, result) {
-  const delta = result.delta ?? {};
-  let next = {
-    ...run,
-    states: delta.states ? [...run.states, ...delta.states] : [...run.states],
-    activity_attempts: delta.activityAttempts
-      ? [...run.activity_attempts, ...delta.activityAttempts]
-      : [...run.activity_attempts],
-    facts: delta.facts ? { ...(run.facts ?? {}), ...delta.facts } : run.facts,
-    status: delta.status ?? run.status,
-    agent_sessions: [...run.agent_sessions],
-    artifacts: [...run.artifacts],
-    findings: [...run.findings],
-    inbox: [...run.inbox]
-  };
-  if (delta.summary !== undefined) next.summary = delta.summary;
-  else if (run.summary !== undefined) next.summary = run.summary;
-  if (result.commandOutcome) {
-    next = { ...next, artifacts: [...next.artifacts, result.commandOutcome.artifact] };
-  }
-  if (result.reviewOutcome?.artifacts) {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.reviewOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.reviewOutcome.agentSessions]
-    };
-    if (result.reviewOutcome.kind === "parsed" && result.reviewOutcome.result.status === "fail") {
-      // Workflow code owns how review findings become run-level records and
-      // state finding_ids; the review activity only returns the parsed verdict.
-      next = appendReviewFindings(next, result);
-    }
-  }
-  if (result.workerOutcome?.kind === "executed") {
-    next = {
-      ...next,
-      artifacts: [...next.artifacts, ...result.workerOutcome.artifacts],
-      agent_sessions: [...next.agent_sessions, ...result.workerOutcome.agentSessions]
-    };
-  }
-  return next;
-}
-
-function appendReviewFindings(run, result) {
-  const outcome = result.reviewOutcome;
-  const sourceState = result.delta?.states?.[0];
-  if (!sourceState || outcome?.kind !== "parsed" || outcome.result.status !== "fail") return run;
-
-  let next = run;
-  const findingIds = [];
-  for (const finding of outcome.result.findings) {
-    const id = nextLocalId(next, "finding");
-    findingIds.push(id);
-    next = {
-      ...next,
-      findings: [
-        ...next.findings,
-        {
-          id,
-          status: "new",
-          severity: finding.severity,
-          title: finding.title,
-          detail: finding.detail,
-          ...(finding.target ? { target: finding.target } : {}),
-          source_state_id: sourceState.id,
-          ...(outcome.reviewerSessionId ? { source_review_session_id: outcome.reviewerSessionId } : {}),
-          ...(finding.target_session_id ? { target_work_session_id: finding.target_session_id } : {}),
-          created_at: new Date().toISOString()
-        }
-      ]
-    };
-  }
-
-  return {
-    ...next,
-    states: next.states.map((state) =>
-      state.id === sourceState.id
-        ? { ...state, finding_ids: [...state.finding_ids, ...findingIds] }
-        : state
-    )
-  };
-}
-
-function nextLocalId(run, prefix) {
-  const counter =
-    run.states.length +
-    run.activity_attempts.length +
-    run.artifacts.length +
-    run.findings.length +
-    run.inbox.length +
-    run.agent_sessions.length;
-  return `${prefix}_${counter + 1}`;
+  await ctx.start();
+  await ctx.createWorktree();
+  await ctx.work("work", input.goal ?? "");
+  await ctx.verify("verify");
+  await ctx.review(
+    "review",
+    "Review the worker result and return the structured review payload."
+  );
+  return ctx.finish("myWorkflow completed");
 }
 ```
 
@@ -248,7 +120,9 @@ state with its own NAME and config.
 Every activity returns records through `ActivityResult.delta` and optional
 TYPE-specific outcome payloads. The activity does not mutate `input.run`; the
 workflow must merge the returned records into its local run copy before the
-next step.
+next step. Prefer `createTychonicWorkflowContext` or `applyActivityResult` from
+`tychonic/workflow` for that bookkeeping so workflow modules stay focused on
+state order, branches, loops, prompts, and stop conditions.
 
 ## Workflow Sandbox
 
@@ -274,9 +148,24 @@ profile shape; each workflow validates the policy keys it consumes.
 Custom signal names, query names, payloads, and recovery behavior are also part
 of the workflow bundle contract. Document them in that bundle's README.
 
-If a long-running workflow should support `tychonic run --wait`,
-`tychonic wait <workflow-id>`, or status checks before final completion, create
-a run-state helper:
+For ordinary workflow modules, use `createTychonicWorkflowContext`. It wraps
+start/worktree/work/verify/review/finalize bookkeeping and standard status
+snapshots while the workflow still calls each state by NAME:
+
+```js
+const ctx = createTychonicWorkflowContext({ input, template: "my_workflow", activities: act });
+
+await ctx.start();
+await ctx.createWorktree();
+await ctx.work("work", input.goal ?? "");
+await ctx.verify("verify");
+await ctx.review("review", "Review the worker result.");
+return ctx.finish("myWorkflow completed");
+```
+
+Use `createTychonicRunState` directly only when a workflow needs custom
+snapshot handling outside the context helper. It supports `tychonic run --wait`,
+`tychonic wait <workflow-id>`, or status checks before final completion:
 
 ```js
 import { createTychonicRunState } from "tychonic/workflow";

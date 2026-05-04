@@ -242,6 +242,8 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 
 - `verifyOnlyWorkflow`: agent 없이 runtime만 확인하는 smoke workflow
 - `simpleWorkflow`: work, verify, review를 한 번씩 실행하는 기본 workflow
+- `pipelineWorkflow`: 여러 stage와 반복된 `review` state를 보여주는 one-pass pipeline
+- `checkpointWorkflow`: 고정 deterministic gate와 두 structured review를 실행하는 workflow
 - `architectBuilderQaWorkflow`: architect / build / QA 표준 pattern
 - `architectBuilderKiroQaWorkflow`: Kiro가 QA review를 수행하고 normalizer가 verdict를 구조화
 - `architectBuilderKiroRepairQaWorkflow`: Kiro가 pre-review repair를 수행한 뒤 최종 QA로 넘기는 pattern

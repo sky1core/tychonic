@@ -22,6 +22,25 @@ states.
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
+## Minimal Run
+
+```sh
+tychonic workflows install ./examples/workflows/verifyOnlyWorkflow
+tychonic runtime up
+```
+
+In another terminal:
+
+```sh
+cat > ./verify-input.json <<'JSON'
+{
+  "cwd": "/abs/path/to/project"
+}
+JSON
+
+tychonic run verifyOnlyWorkflow --input-file ./verify-input.json --wait
+```
+
 ## Config
 
 The default profile runs a multi-line command:

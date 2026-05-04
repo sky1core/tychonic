@@ -40,6 +40,26 @@ the review if tracked files change during the turn.
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
+## Minimal Run
+
+```sh
+tychonic workflows install ./examples/workflows/architectBuilderKiroQaWorkflow
+tychonic runtime up
+```
+
+In another terminal:
+
+```sh
+cat > ./architect-builder-kiro-qa-input.json <<'JSON'
+{
+  "cwd": "/abs/path/to/project",
+  "goal": "Implement the requested change and let Kiro perform QA review."
+}
+JSON
+
+tychonic run architectBuilderKiroQaWorkflow --input-file ./architect-builder-kiro-qa-input.json --wait
+```
+
 ## Trade-Off
 
 Kiro owns the review judgment, so review quality depends on Kiro. The

@@ -11,8 +11,8 @@
 // This bundle composes per-TYPE activities the way pipelineWorkflow does
 // and owns its own auto-continue loop bookkeeping. The workflow returns
 // once it reaches a Tychonic terminal status (succeeded / waiting_user /
-// failed); recovery is sent via `tychonic signal` from a separate process
-// when the user wants async signal-driven follow-ups.
+// failed); terminal waiting_user recovery is a fresh run with adjusted input
+// or config.
 
 import { proxyActivities } from "@temporalio/workflow";
 import { createTychonicRunState } from "tychonic/workflow";
@@ -74,17 +74,13 @@ npm test`,
  * Input shape:
  *   {
  *     cwd: string,
- *     goal?: string,
- *     autoContinue?: boolean,
- *     maxIterations?: number
+ *     goal?: string
  *   }
  * Host-injected: profile?: TychonicConfig
  */
 const SIMPLE_WORKFLOW_INPUT_FIELDS = new Set([
   "cwd",
   "goal",
-  "autoContinue",
-  "maxIterations",
   "profile"
 ]);
 
@@ -185,9 +181,9 @@ async function runMainPipeline(input, runState, publishRun) {
     run = updateRun(applyResult(run, reviewRes));
     run = updateRun(appendReviewFindingsAndInbox(run, reviewRes));
 
-    if (input.autoContinue || profile?.policies?.loop?.auto_continue) {
+    if (profile?.policies?.loop?.auto_continue) {
       const maxIter = normalizeMaxIterations(
-        input.maxIterations ?? profile?.policies?.loop?.max_review_iterations
+        profile?.policies?.loop?.max_review_iterations
       );
       run = await runAutoContinueLoop({
         input,
