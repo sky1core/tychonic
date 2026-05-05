@@ -84,7 +84,7 @@ export async function checkpointWorkflow(input) {
     await ctx.verify("integration");
   }
 
-  return ctx.finish("checkpointWorkflow completed");
+  return ctx.finish();
 }
 
 function structuredReviewPrompt(scope, goal) {

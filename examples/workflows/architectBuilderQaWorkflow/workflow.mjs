@@ -121,7 +121,12 @@ export async function architectBuilderQaWorkflow(input) {
     );
     if (qa.halted) return ctx.finish(qa.summary);
 
-    if (ctx.isInteractive() || qa.passed) {
+    if (ctx.isInteractive()) {
+      if (!qa.passed) return ctx.finish(qa.summary ?? "qa did not pass");
+      break;
+    }
+
+    if (qa.passed) {
       break;
     }
     if (reviewIteration >= maxReviewIterations) {
@@ -135,7 +140,7 @@ export async function architectBuilderQaWorkflow(input) {
     );
   }
 
-  return ctx.finish("architectBuilderQaWorkflow completed");
+  return ctx.finish();
 }
 
 function withQaFeedback(basePrompt, feedbacks) {

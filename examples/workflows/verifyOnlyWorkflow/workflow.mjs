@@ -46,5 +46,5 @@ export async function verifyOnlyWorkflow(input) {
   await ctx.start();
   ctx.apply(await act.collectGitFactsActivity({ run: ctx.run(), cwd: input.cwd }));
   await ctx.verify("verify");
-  return ctx.finish("verifyOnlyWorkflow completed");
+  return ctx.finish();
 }

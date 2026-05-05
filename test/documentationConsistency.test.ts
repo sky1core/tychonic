@@ -21,4 +21,17 @@ describe("documentation consistency", () => {
     expect(spec).toContain("The wait payload does not include the full raw run result.");
     expect(spec).not.toContain("`result` carries the full run result");
   });
+
+  it("does not document success-worded ctx.finish summaries", async () => {
+    const docs = [
+      "docs/plugin-workflows.md",
+      "skills/tychonic-cli/workflow-module-contract.md"
+    ];
+    const successFinishPattern =
+      /ctx\.finish\(\s*(?:"[^"]*(?:completed|finished|succeeded|success)|`[^`]*(?:completed|finished|succeeded|success))/;
+
+    for (const doc of docs) {
+      await expect(readFile(doc, "utf8"), doc).resolves.not.toMatch(successFinishPattern);
+    }
+  });
 });

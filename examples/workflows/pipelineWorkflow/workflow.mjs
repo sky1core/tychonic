@@ -96,9 +96,7 @@ export async function pipelineWorkflow(input) {
   const security = await ctx.verify("security");
   if (!security.passed) return ctx.finish("stage security failed");
 
-  return ctx.finish(
-    `pipeline_7stage finished: ${ctx.run().states.map((state) => `${state.name}=${state.status}`).join(", ")}`
-  );
+  return ctx.finish();
 }
 
 function gateReviewStage(result, stateName) {

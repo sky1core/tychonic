@@ -62,7 +62,7 @@ export async function myWorkflow(input) {
     "review",
     "Review the worker result and return the structured review payload."
   );
-  return ctx.finish("myWorkflow completed");
+  return ctx.finish();
 }
 ```
 
@@ -160,7 +160,7 @@ await ctx.createWorktree();
 await ctx.work("work", input.goal ?? "");
 await ctx.verify("verify");
 await ctx.review("review", "Review the worker result.");
-return ctx.finish("myWorkflow completed");
+return ctx.finish();
 ```
 
 Use `createTychonicRunState` directly only when a workflow needs custom

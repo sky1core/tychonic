@@ -46,7 +46,7 @@ export async function tychonicSelfCheckWorkflow(input) {
   await ctx.start();
   ctx.apply(await collectGitFactsActivity({ run: ctx.run(), cwd }));
   await ctx.verify("bootstrap");
-  return ctx.finish("tychonicSelfCheckWorkflow completed");
+  return ctx.finish();
 }
 
 function rejectUnknownInputFields(input) {

@@ -119,7 +119,7 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
   );
   if (!repair.passed) return ctx.finish("kiro repair failed");
 
-  await ctx.review(
+  const finalQa = await ctx.review(
     "final_qa",
     input.finalQaPrompt ?? finalQaPrompt({
       cwd: input.cwd,
@@ -127,8 +127,9 @@ export async function architectBuilderKiroRepairQaWorkflow(input) {
       worktreePath: ctx.worktreePath()
     })
   );
+  if (!finalQa.passed) return ctx.finish(finalQa.summary ?? "final_qa did not pass");
 
-  return ctx.finish("architectBuilderKiroRepairQaWorkflow completed");
+  return ctx.finish();
 }
 
 function architectPrompt(goal) {

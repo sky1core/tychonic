@@ -81,7 +81,7 @@ export async function architectBuilderKiroQaWorkflow(input) {
   );
   if (!builder.passed) return ctx.finish("builder failed");
 
-  await ctx.review(
+  const qa = await ctx.review(
     "qa",
     input.qaPrompt ?? qaPrompt({
       cwd: input.cwd,
@@ -89,8 +89,9 @@ export async function architectBuilderKiroQaWorkflow(input) {
       worktreePath: ctx.worktreePath()
     })
   );
+  if (!qa.passed) return ctx.finish(qa.summary ?? "qa did not pass");
 
-  return ctx.finish("architectBuilderKiroQaWorkflow completed");
+  return ctx.finish();
 }
 
 function architectPrompt(goal) {

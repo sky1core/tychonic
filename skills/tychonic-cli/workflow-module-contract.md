@@ -185,7 +185,7 @@ export async function myWorkflow(input) {
   await ctx.createWorktree();
   await ctx.work("work", input.goal ?? "");
   await ctx.review("review", "Review the worker result.");
-  return ctx.finish("myWorkflow completed");
+  return ctx.finish();
 }
 ```
 
