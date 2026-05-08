@@ -55,8 +55,10 @@ configured attempt limit, or requires explicit user intervention.
 ## Configuration Principle
 
 Configuration has exactly two top-level groups: named `states.<name>`
-blocks and named `policies.<name>` blocks. Each block is self-contained and
-carries every setting it needs.
+blocks and named workflow-owned policy values under `policies.<name>`.
+Each state block is self-contained and carries every setting it needs. The
+host treats each policy value as opaque data; the workflow that consumes a
+policy defines and validates that value's shape.
 
 Do not force one global model or one model per agent. Each state config block
 declares its own agent selection and its own settings. Settings that the

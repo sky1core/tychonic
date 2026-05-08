@@ -40,7 +40,7 @@ const ADAPTER_EXECUTION_FIELDS = [
 export const activityTypeContracts = {
   verify: {
     required: ["command"],
-    allowed: ["command", "timeout"]
+    allowed: ["command", "resume", "timeout"]
   },
   work: {
     requiredOneOf: [["command", "agent"]],
@@ -54,6 +54,7 @@ export const activityTypeContracts = {
       "command",
       "model",
       "reasoning_effort",
+      "resume",
       "timeout",
       ...ADAPTER_EXECUTION_FIELDS
     ]
@@ -96,10 +97,10 @@ type ActivityBlockField =
  * - `reasoning_effort` is an optional built-in adapter setting for agents
  *   whose CLI exposes a reasoning/effort surface.
  * - `agent` and `command` are mutually exclusive execution selectors
- * - `resume` is a non-negative integer workflow-readable budget for built-in
- *   work-agent states. `0` or an absent value disables in-session resume by
- *   convention. Verbatim commands own their own continuation behavior and do
- *   not receive host resume semantics.
+ * - `resume` is a non-negative integer workflow-readable budget. `0` or an
+ *   absent value disables in-session resume by convention. The schema does
+ *   not infer behavior from TYPE, NAME, `agent`, or `command`; workflow code
+ *   decides whether that number matters for its own loop.
  */
 const SandboxSchema = z.enum(["read-only", "workspace-write", "danger-full-access"]);
 const ApprovalSchema = z.enum(["never", "on-request", "on-failure", "untrusted"]);
@@ -124,13 +125,11 @@ export const StateConfigBlockSchema = z
   .superRefine(validateActivityBlock);
 
 /**
- * `policies` is an opaque map of workflow-author-defined policy blocks.
- * The host schema validates the outer contract: named policy blocks keyed by
- * the same NAME grammar as states, each block being an object. Each workflow
- * bundle validates the keys it consumes at workflow start. Cross-field rules
- * and unknown-key checks live in the bundle that owns the policy.
+ * `policies` is an opaque map of workflow-author-defined policy values.
+ * The host schema validates only the outer shape; each workflow bundle
+ * validates the keys and value shapes it consumes at workflow start.
  */
-export const PoliciesSchema = z.record(ActivityNameSchema, z.record(z.string().min(1), z.unknown()));
+export const PoliciesSchema = z.record(z.string(), z.unknown());
 
 export const TychonicConfigSchema = z
   .object({
@@ -394,14 +393,6 @@ function validateAgentSettings(block: ActivityBlock, ctx: z.RefinementCtx): void
 }
 
 function validateAdapterExecutionSettings(block: ActivityBlock, ctx: z.RefinementCtx): void {
-  if (block.resume !== undefined && (block.type !== "work" || block.agent === undefined)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "states.<name>.resume is only valid on work states that select a built-in agent",
-      path: ["resume"]
-    });
-  }
-
   for (const key of ADAPTER_EXECUTION_FIELDS) {
     if (block[key] !== undefined && block.agent === undefined) {
       ctx.addIssue({

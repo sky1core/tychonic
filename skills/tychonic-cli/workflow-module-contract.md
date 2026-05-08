@@ -54,7 +54,7 @@ resolver state during install.
   conditions are obvious. Use `tychonic/workflow` helpers for repeated
   run-record bookkeeping; do not copy activity-result merge/finalize/standard
   interaction plumbing into every bundle.
-- Config declares named state blocks and workflow-owned policies.
+- Config declares named state blocks and workflow-owned policy values.
 - Activities execute one state invocation at a time.
 - State NAME is workflow-defined and product-facing.
 - Activity TYPE selects the activity contract.
@@ -123,6 +123,11 @@ Automated repair belongs in an explicit work state, not inside review.
 `resume` is a numeric budget a workflow may read when it explicitly chooses to
 continue a recorded session. Omit it unless the workflow needs same-session
 continuation.
+
+`policies.<name>` entries are workflow-owned values. The host requires the
+top-level `policies` value to be an object, but it does not require each policy
+value to be an object or to use the state NAME grammar. A workflow that consumes
+a policy validates that policy value's shape.
 
 ## Activities
 

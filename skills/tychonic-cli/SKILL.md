@@ -18,7 +18,7 @@ verification.
 - Workflow modules should stay simple: use `tychonic/workflow` helpers for
   repeated run-record bookkeeping, but keep ordering and branching explicit.
 - Config declares named `states.<name>` blocks and workflow-owned
-  `policies.<name>` blocks. It is not a workflow graph.
+  `policies.<name>` values. It is not a workflow graph.
 
 Do not read `.tychonic/runs` as product state. Use CLI commands backed by
 Temporal.
@@ -199,6 +199,11 @@ Do not add `resume`, permission, sandbox, timeout, trust, or policy knobs just
 because the schema accepts them. Those are orchestration controls, not the same
 category as model/reasoning agent settings; use orchestration controls only
 when the workflow behavior needs that control.
+
+`policies.<name>` entries are workflow-owned values. The host requires the
+top-level `policies` value to be an object, but it does not require each policy
+value to be an object or to use the state NAME grammar. The workflow that
+consumes a policy validates that policy value's shape.
 
 Allowed state-block fields are `type`, `agent`, `normalizer`, `command`,
 `model`, `reasoning_effort`, `resume`, `timeout`, `sandbox`, `approval`,

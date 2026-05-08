@@ -149,8 +149,9 @@ copy arbitrary host `node_modules`, create symlinks, or rewrite resolver paths.
 
 ## Policies And Signals
 
-`policies.*` is workflow-owned data. The host schema validates only the outer
-profile shape; each workflow validates the policy keys it consumes.
+`policies.*` is workflow-owned data. The top-level `policies` value must be an
+object, but each `policies.<name>` value is opaque to the host. Each workflow
+validates the policy keys and value shapes it consumes.
 
 Custom signal names, query names, payloads, and recovery behavior are also part
 of the workflow bundle contract. Document them in that bundle's README.

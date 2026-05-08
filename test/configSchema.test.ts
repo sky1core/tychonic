@@ -47,6 +47,8 @@ describe("activity-centric config schema", () => {
       version: "tychonic.config.v1",
       policies: {
         bogus_key: { foo: 1 },
+        "policy key with spaces": "workflow-owned scalar",
+        array_policy: ["workflow-owned", "array"],
         loop: {
           auto_continue: false,
           max_resume_iterations: 9,
@@ -56,6 +58,8 @@ describe("activity-centric config schema", () => {
     });
     expect(config.policies).toEqual({
       bogus_key: { foo: 1 },
+      "policy key with spaces": "workflow-owned scalar",
+      array_policy: ["workflow-owned", "array"],
       loop: {
         auto_continue: false,
         max_resume_iterations: 9,
@@ -361,19 +365,18 @@ describe("schema tighten", () => {
     }
   });
 
-  it("rejects resume on a command block", () => {
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        states: {
-          work: {
-            type: "work",
-            command: "node worker.js",
-            resume: 3
-          }
+  it("accepts resume on a non-conventional command state name as workflow-readable data", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        build_phase: {
+          type: "work",
+          command: "node worker.js",
+          resume: 3
         }
-      })
-    ).toThrow(/resume is only valid on work states that select a built-in agent/);
+      }
+    });
+    expect(config.states?.build_phase?.resume).toBe(3);
   });
 
   it("rejects resume blocks that set both command and agent", () => {
@@ -392,19 +395,18 @@ describe("schema tighten", () => {
     ).toThrow(/must set only one execution selector: agent or command/);
   });
 
-  it("rejects resume on deterministic command activity blocks", () => {
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        states: {
-          verify: {
-            type: "verify",
-            command: "npm run verify:worker",
-            resume: 2
-          }
+  it("accepts resume on non-conventional deterministic command state names", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        deterministic_gate: {
+          type: "verify",
+          command: "npm run verify:worker",
+          resume: 2
         }
-      })
-    ).toThrow(/resume is not allowed for type verify/);
+      }
+    });
+    expect(config.states?.deterministic_gate?.resume).toBe(2);
   });
 
   it("accepts resume: 0 (disables in-session resume) on adapter blocks", () => {
@@ -461,37 +463,25 @@ describe("schema tighten", () => {
     ).toThrow(/requires one of: command, agent/);
   });
 
-  it("rejects resume on review states", () => {
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        states: {
-          review: {
-            type: "review",
-            agent: "claude",
-            resume: 1
-          }
+  it("accepts resume on non-conventional review state names as workflow-readable data", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        judgement_phase: {
+          type: "review",
+          agent: "claude",
+          resume: 1
         }
-      })
-    ).toThrow(/resume is not allowed for type review/);
+      }
+    });
+    expect(config.states?.judgement_phase?.resume).toBe(1);
   });
 
-  it("rejects invalid policy names and non-object policy blocks", () => {
+  it("rejects a non-object policies top-level value", () => {
     expect(() =>
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
-        policies: {
-          " ": { max_review_iterations: 1 }
-        }
-      })
-    ).toThrow();
-
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        policies: {
-          loop: "auto"
-        }
+        policies: "auto"
       })
     ).toThrow();
   });

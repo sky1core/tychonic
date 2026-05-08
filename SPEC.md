@@ -88,12 +88,13 @@ Allowed configuration content:
 - state config blocks keyed by state NAME (`states.<name>`), each
   carrying a `type` field that binds the state to an activity
   function and the settings that TYPE requires
-- named policies (`policies.<name>`) for workflow-level orchestration
-  knobs. The host config schema treats `policies` as an opaque object
-  keyed by string; each workflow bundle defines, validates, and
-  consumes the policy keys it cares about. Common bundle-defined keys
-  include `policies.loop`, `policies.integration`, and
-  `policies.interaction`.
+- named policy values (`policies.<name>`) for workflow-level orchestration
+  knobs. The top-level `policies` value must be an object. The host config
+  schema treats each `policies.<name>` entry as an opaque workflow-owned
+  value keyed by string; each workflow bundle defines, validates, and
+  consumes the policy keys and value shapes it cares about. Common
+  bundle-defined keys include `policies.loop`, `policies.integration`,
+  and `policies.interaction`.
 
 Ordering, branching, loops, fan-out, joins, retry, and
 multi-activity aggregation belong in Temporal workflow code. If a
@@ -325,7 +326,7 @@ execution path.
 
 A bundle's `workflow.mjs` must export a `defaultProfile` object shaped like
 a `TychonicConfig` (`version: "tychonic.config.v1"`) that declares the
-`states.<name>` and `policies.<name>` blocks the workflow depends on:
+`states.<name>` blocks and `policies.<name>` values the workflow depends on:
 
 ```js
 export const defaultProfile = {
@@ -396,13 +397,15 @@ Configuration has exactly two top-level groups. No others.
   state to an activity TYPE, the settings that TYPE requires, and any agent
   fields it needs (`agent`, `resume`, `command`, `sandbox`, `approval`,
   `permission_mode`, `trust_all_tools`, `timeout`).
-- `policies.<name>` — workflow-level orchestration policies that are not
-  per-state. The host config schema treats `policies` as an opaque
-  object with string keys; each workflow bundle defines, validates, and
-  consumes the policy keys it cares about. The example bundles under
+- `policies.<name>` — workflow-level orchestration policy values that are not
+  per-state. The top-level `policies` value must be an object. The host config
+  schema treats its entries as opaque workflow-owned values keyed by string; it
+  does not require policy values to be objects or to follow the state NAME
+  grammar. Each workflow bundle defines, validates, and consumes the policy
+  keys and value shapes it cares about. The example bundles under
   `examples/workflows/` use `policies.loop`, `policies.integration`,
-  and `policies.interaction`; their
-  shapes are documented in those bundles' READMEs.
+  and `policies.interaction`; their shapes are documented in those bundles'
+  READMEs.
 
 There is no `agents.<name>` top-level, no `commands.<name>` top-level, no
 `activity_timeouts.<name>` top-level, no `work` / `review` slot blocks, no
@@ -439,7 +442,7 @@ profile to workflow code. When raw workflow input is supplied, it must be a
 JSON object so the reserved handoff can be attached without changing the
 payload's category. Pulling the state and policy contract into the workflow
 code itself keeps the contract single-sourced: a workflow author declares
-state names, types, and policy blocks once, in one place, and the runtime
+state names, types, and policy values once, in one place, and the runtime
 reads exactly that.
 
 Workflow run input is a stable task-shaped public contract for every installed
@@ -940,8 +943,8 @@ The checkpoint example uses only `policies.integration.position`:
 
 A workflow that uses this policy reads `profile.policies.integration.position`
 and routes its own integration state NAME to `runVerifyActivity` accordingly.
-Other workflows may define a different `policies.integration` shape, but they
-must document and validate the keys they consume.
+Other workflows may define a different `policies.integration` value shape, but
+they must document and validate the keys they consume.
 
 ## Runtime
 

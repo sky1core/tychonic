@@ -71,39 +71,62 @@ export const configContractChecks: readonly ContractCheck[] = [
   },
   {
     area: "config",
-    name: "rejects command work states with resume",
+    name: "accepts resume as workflow-readable data on any state type",
+    run() {
+      expectAccept("state resume budget", () =>
+        TychonicConfigSchema.parse({
+          version: "tychonic.config.v1",
+          states: {
+            build_phase: {
+              type: "work",
+              command: "node worker.js",
+              resume: 1
+            },
+            deterministic_gate: {
+              type: "verify",
+              command: "npm test",
+              resume: 2
+            },
+            judgement_phase: {
+              type: "review",
+              agent: "claude",
+              resume: 3
+            }
+          }
+        })
+      );
+    }
+  },
+  {
+    area: "config",
+    name: "accepts opaque workflow policy values",
+    run() {
+      expectAccept("opaque policy values", () =>
+        TychonicConfigSchema.parse({
+          version: "tychonic.config.v1",
+          policies: {
+            loop: { max_review_iterations: 2 },
+            "custom policy": "workflow-owned scalar",
+            list_policy: ["workflow-owned", "array"]
+          }
+        })
+      );
+    }
+  },
+  {
+    area: "config",
+    name: "rejects negative resume",
     run() {
       expectReject(
-        "command work resume",
+        "negative resume",
         () =>
           TychonicConfigSchema.parse({
             version: "tychonic.config.v1",
             states: {
               work: {
                 type: "work",
-                command: "node worker.js",
-                resume: 1
-              }
-            }
-          }),
-        /resume is only valid on work states that select a built-in agent/
-      );
-    }
-  },
-  {
-    area: "config",
-    name: "rejects review states with resume",
-    run() {
-      expectReject(
-        "review resume",
-        () =>
-          TychonicConfigSchema.parse({
-            version: "tychonic.config.v1",
-            states: {
-              review: {
-                type: "review",
                 agent: "claude",
-                resume: 1
+                resume: -1
               }
             }
           }),
@@ -113,35 +136,16 @@ export const configContractChecks: readonly ContractCheck[] = [
   },
   {
     area: "config",
-    name: "rejects blank policy names",
+    name: "rejects non-object policies top-level",
     run() {
       expectReject(
-        "blank policy name",
+        "non-object policies",
         () =>
           TychonicConfigSchema.parse({
             version: "tychonic.config.v1",
-            policies: {
-              "": { max_review_iterations: 1 }
-            }
+            policies: "auto"
           }),
-        /Invalid key/
-      );
-    }
-  },
-  {
-    area: "config",
-    name: "rejects non-object policy blocks",
-    run() {
-      expectReject(
-        "non-object policy block",
-        () =>
-          TychonicConfigSchema.parse({
-            version: "tychonic.config.v1",
-            policies: {
-              loop: "auto"
-            }
-          }),
-        /expected (record|object)/i
+        /policies|expected (record|object)/i
       );
     }
   }
