@@ -187,6 +187,12 @@ Workflow JSON input is task data only. Do not put config under `profile`;
 Tychonic reserves that field for the effective profile it passes into workflow
 code.
 
+Workflow run input uses one stable task-shaped public contract: `cwd` plus
+`goal`. Workflow prompts are built into the bundle. When extra per-state prompt
+instructions are needed, use `promptAdditions.<stateName>`; keys must match the
+workflow's state NAMEs. Do not use top-level prompt fields or agent names as
+input keys.
+
 Recommended profile pattern:
 
 ```yaml
@@ -248,7 +254,8 @@ and fails the review if tracked files change during the review turn.
 - `architectBuilderKiroRepairQaWorkflow`: Kiro performs a pre-review repair
   pass before final structured QA.
 
-Read each bundle's `README.md` before changing its input or config shape.
+Read each bundle's `README.md` before changing its config shape or
+`promptAdditions` state keys.
 
 ## Agent Skill
 

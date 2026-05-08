@@ -161,6 +161,14 @@ The author / user split is part of usability: workflow authors own
 specific to their task. Users must not be required to re-state values the
 author already pinned.
 
+Workflow run input must not make callers memorize workflow-internal prompt
+field names. Public input stays task-shaped (`cwd`, `goal`) for every installed
+workflow. Prompt text is built into workflow code by default. If a workflow
+exposes per-state extra prompt instructions, the only accepted shape is the
+additive map `promptAdditions.<stateName>`; keys must match promptable state
+NAMEs in the effective profile. Top-level prompt fields and agent-named input
+keys are forbidden.
+
 ## Public Surface Principle
 
 Public docs and package files should contain only product behavior, installation
@@ -482,8 +490,8 @@ or similarly concrete values. They do not select which agent or command runs.
 Execution selection belongs to the state config block. If a state runs a
 built-in agent, the state block declares `agent`. If it runs a literal command,
 the state block declares `command`. Workflow call sites must not reopen that
-choice through alternate fields, wrapper objects, fallbacks, or override
-channels.
+choice through alternate fields, wrapper objects, substitute execution paths,
+or override channels.
 
 When two values differ by category, split them at the type and name level.
 Do not rely on prose comments to explain that one property inside a bucket is

@@ -34,11 +34,11 @@ the review if tracked files change during the turn.
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
 | `goal` | no | Goal threaded into architect and builder prompts. |
-| `architectPrompt` | no | Prompt override for `architect`. |
-| `builderPrompt` | no | Prompt override for `builder`. |
-| `qaPrompt` | no | Prompt override for Kiro QA. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to built-in prompts for `architect`, `builder`, or `qa`. |
 
-Unknown fields are rejected. `cwd` must be a git repository.
+Unknown fields are rejected. `promptAdditions` keys must match one of the
+promptable state NAMEs listed above; agent names are not valid prompt keys.
+`cwd` must be a git repository.
 
 ## Minimal Run
 

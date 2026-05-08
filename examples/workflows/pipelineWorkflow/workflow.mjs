@@ -40,10 +40,9 @@ const PIPELINE_WORKFLOW_INPUT_FIELDS = new Set([
   "cwd",
   "profile",
   "goal",
-  "prompt",
-  "reviewPrompt",
-  "reviewPrompt2"
+  "promptAdditions"
 ]);
+const PROMPT_ADDITION_STATES = new Set(["work", "review_1", "review_2"]);
 
 function rejectUnknownInputFields(input) {
   if (!input || typeof input !== "object") return;
@@ -52,6 +51,7 @@ function rejectUnknownInputFields(input) {
       throw new Error(`unsupported input field: ${field}`);
     }
   }
+  validatePromptAdditions(input, PROMPT_ADDITION_STATES);
 }
 
 export async function pipelineWorkflow(input) {
@@ -66,7 +66,10 @@ export async function pipelineWorkflow(input) {
   await ctx.createWorktree();
   ctx.apply(await act.collectGitFactsActivity({ run: ctx.run(), cwd: input.cwd }));
 
-  const work = await ctx.work("work", input.prompt ?? input.goal ?? "");
+  const work = await ctx.work(
+    "work",
+    withPromptAddition(input.goal ?? "", input, "work")
+  );
   if (!work.passed) return ctx.finish("stage 1 work failed");
 
   for (const stateName of ["static", "unit"]) {
@@ -76,7 +79,7 @@ export async function pipelineWorkflow(input) {
 
   const review1 = await ctx.review(
     "review_1",
-    input.reviewPrompt ?? structuredReviewPrompt("work stages 1-3")
+    withPromptAddition(structuredReviewPrompt("work stages 1-3"), input, "review_1")
   );
   const review1Gate = gateReviewStage(review1, "review_1");
   if (review1Gate.item) ctx.addInboxItem(review1Gate.item);
@@ -87,7 +90,11 @@ export async function pipelineWorkflow(input) {
 
   const review2 = await ctx.review(
     "review_2",
-    input.reviewPrompt2 ?? structuredReviewPrompt("integration and prior review follow-up")
+    withPromptAddition(
+      structuredReviewPrompt("integration and prior review follow-up"),
+      input,
+      "review_2"
+    )
   );
   const review2Gate = gateReviewStage(review2, "review_2");
   if (review2Gate.item) ctx.addInboxItem(review2Gate.item);
@@ -126,6 +133,34 @@ function reviewTriageInboxItem(state, detail) {
     action: { kind: "triage", reason: detail },
     created_at: state.finished_at ?? state.started_at ?? new Date().toISOString()
   };
+}
+
+function validatePromptAdditions(input, allowedStates) {
+  const additions = input.promptAdditions;
+  if (additions === undefined) return;
+  if (!additions || typeof additions !== "object" || Array.isArray(additions)) {
+    throw new Error("promptAdditions must be an object keyed by state name");
+  }
+  for (const stateName of Object.keys(additions)) {
+    if (!allowedStates.has(stateName)) {
+      throw new Error(`unsupported promptAdditions state: ${stateName}`);
+    }
+    if (
+      input.profile?.states &&
+      !Object.prototype.hasOwnProperty.call(input.profile.states, stateName)
+    ) {
+      throw new Error(`promptAdditions.${stateName} does not match a configured state`);
+    }
+    if (typeof additions[stateName] !== "string" || additions[stateName].trim() === "") {
+      throw new Error(`promptAdditions.${stateName} must be a non-empty string`);
+    }
+  }
+}
+
+function withPromptAddition(basePrompt, input, stateName) {
+  const addition = input.promptAdditions?.[stateName];
+  if (addition === undefined) return basePrompt;
+  return `${basePrompt}\n\n[additional ${stateName} instructions]\n${addition}\n[/additional ${stateName} instructions]`;
 }
 
 function structuredReviewPrompt(scope) {

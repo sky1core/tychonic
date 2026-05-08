@@ -98,6 +98,13 @@ or agent runs. Execution selection belongs to `profile.states.<name>.agent` or
 the primary reviewer must also declare
 `profile.states.<name>.normalizer` as `claude` or `codex`.
 
+Workflow run input should stay task-shaped (`cwd`, `goal`) for every installed
+workflow. Workflow prompts are bundle-owned defaults. If a workflow accepts
+per-state extra instructions, use one additive map,
+`promptAdditions.<stateName>`, and reject keys that do not match promptable
+state NAMEs in the effective profile. Do not expose top-level prompt fields or
+agent-named input keys.
+
 Agent settings belong in the state config block next to `agent`. Pin `model`
 for the primary `agent` when a state's quality, latency, or cost profile
 matters; omission intentionally delegates to the selected CLI's default or
@@ -148,7 +155,8 @@ profile shape; each workflow validates the policy keys it consumes.
 Custom signal names, query names, payloads, and recovery behavior are also part
 of the workflow bundle contract. Document them in that bundle's README.
 
-For ordinary workflow modules, use `createTychonicWorkflowContext`. It wraps
+For workflow modules that use shared run bookkeeping, use
+`createTychonicWorkflowContext`. It wraps
 start/worktree/work/verify/review/finalize bookkeeping and standard status
 snapshots while the workflow still calls each state by NAME:
 

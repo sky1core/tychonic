@@ -36,7 +36,7 @@ describe("kiroAdapter", () => {
     expect(command).toContain('...(model ? ["--model", model] : [])');
   });
 
-  it("session/prompt uses Kiro 2.1.1's prompt field before content fallback", () => {
+  it("session/prompt uses Kiro 2.1.1's prompt field before content compatibility path", () => {
     const { command } = kiroAdapter.runNew(BASE);
     const promptIndex = command.indexOf('request("session/prompt", { sessionId, prompt: content })');
     const contentIndex = command.indexOf('request("session/prompt", { sessionId, content })');

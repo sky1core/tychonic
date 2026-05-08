@@ -442,6 +442,18 @@ code itself keeps the contract single-sourced: a workflow author declares
 state names, types, and policy blocks once, in one place, and the runtime
 reads exactly that.
 
+Workflow run input is a stable task-shaped public contract for every installed
+workflow: `cwd` plus `goal` is the default surface. Workflow prompts are built
+into the workflow code. If a workflow exposes extra per-state prompt
+instructions, they must be additive and use one uniform shape:
+`promptAdditions.<stateName>`. The `<stateName>` key must match a promptable
+state NAME declared by that workflow and present in the effective
+`profile.states`. Workflows must reject unknown `promptAdditions` keys and
+non-string addition values. They must not expose top-level prompt fields such
+as `architectPrompt`, `builderPrompt`, or agent-named fields such as
+`kiroFixPrompt`; those names leak internal workflow implementation into the
+public invocation contract.
+
 Two consequences follow and must both hold:
 
 - Absent fields stay absent. Agent settings whose valid values are owned by

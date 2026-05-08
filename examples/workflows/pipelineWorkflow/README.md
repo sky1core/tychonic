@@ -25,12 +25,11 @@ appear more than once without adding new activity kinds.
 | Field | Required | Purpose |
 |---|---|---|
 | `cwd` | yes | Git repository used for facts and the isolated worker worktree. |
-| `goal` | no | Worker goal; used when `prompt` is omitted. |
-| `prompt` | no | Worker prompt. |
-| `reviewPrompt` | no | Prompt for `review_1`. |
-| `reviewPrompt2` | no | Prompt for `review_2`. |
+| `goal` | no | Worker goal threaded into the built-in `work` prompt. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to built-in prompts for `work`, `review_1`, or `review_2`. |
 
-Unknown fields are rejected. `cwd` must be a git repository.
+Unknown fields are rejected. `promptAdditions` keys must match one of the
+promptable state NAMEs listed above. `cwd` must be a git repository.
 
 ## Minimal Run
 

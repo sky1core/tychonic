@@ -15,7 +15,7 @@ export interface EffectiveBundleConfig {
  * Load the bundle's `defaultProfile` export from its `workflow.mjs` and
  * validate it through `TychonicConfigSchema`. This is the only path
  * product code uses to read a bundle's configuration. No merge, no
- * fallback, no discovery.
+ * alternate lookup, no discovery.
  */
 export async function loadBundleDefaultProfile(bundleDir: string): Promise<TychonicConfig> {
   const workflowPath = join(bundleDir, "workflow.mjs");

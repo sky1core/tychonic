@@ -206,8 +206,8 @@ describe("kiro QA workflow control flow", () => {
       "createWorktree",
       "work:architect",
       "work:builder",
-      "work:kiro_pre_review",
-      "work:kiro_fix",
+      "work:pre_review",
+      "work:repair",
       "review:final_qa",
       "finish:final qa failed"
     ]);

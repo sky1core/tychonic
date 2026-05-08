@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { stoppedWorkflowMessage } from "../src/cli/waitMessages.js";
 
@@ -32,6 +32,42 @@ describe("documentation consistency", () => {
 
     for (const doc of docs) {
       await expect(readFile(doc, "utf8"), doc).resolves.not.toMatch(successFinishPattern);
+    }
+  });
+
+  it("keeps retired per-workflow prompt input fields out of public examples", async () => {
+    const retiredFields = [
+      "architectPrompt",
+      "builderPrompt",
+      "qaPrompt",
+      "kiroPreReviewPrompt",
+      "kiroFixPrompt",
+      "finalQaPrompt",
+      "reviewPrompt",
+      "reviewPrompt2"
+    ];
+    const exampleDirs = await readdir("examples/workflows", { withFileTypes: true });
+    const publicExampleFiles = exampleDirs
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => [
+        `examples/workflows/${entry.name}/README.md`,
+        `examples/workflows/${entry.name}/workflow.mjs`
+      ]);
+    const files = [
+      "README.md",
+      "README.ko.md",
+      "docs/plugin-workflows.md",
+      "skills/tychonic-cli/SKILL.md",
+      "skills/tychonic-cli/workflow-module-contract.md",
+      "scripts/tychonic-bootstrap-check.mjs",
+      ...publicExampleFiles
+    ];
+
+    for (const file of files) {
+      const text = await readFile(file, "utf8");
+      for (const field of retiredFields) {
+        expect(text, `${file} must not expose ${field}`).not.toContain(field);
+      }
     }
   });
 });

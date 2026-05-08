@@ -32,6 +32,13 @@ activities. Operators pass workflow input as a JSON object and replace config
 with `tychonic run --config <file>`, not by putting `profile` in workflow JSON
 input.
 
+Workflow run input should stay task-shaped (`cwd`, `goal`) for every installed
+workflow. Workflow prompts are bundle-owned defaults. If a workflow accepts
+per-state extra prompt instructions, use the additive map
+`promptAdditions.<stateName>`. Reject keys that do not match promptable state
+NAMEs in the effective profile. Do not expose top-level prompt fields or
+agent-named input keys.
+
 The bundle may include `README.md`, `package.json`, lockfiles, relative modules
 imported by `workflow.mjs`, assets, and `node_modules`. Tychonic provides
 `@temporalio/workflow` and `tychonic/workflow` while bundling workflow code. If
@@ -160,9 +167,9 @@ Temporal workflow code is deterministic.
 A workflow may register custom signal/query names it owns. Document each name,
 payload shape, and recovery behavior in the bundle README.
 
-Use `createTychonicWorkflowContext` from `tychonic/workflow` for ordinary
-workflow modules that need start/worktree/work/review/finalize bookkeeping plus
-standard status snapshots:
+Use `createTychonicWorkflowContext` from `tychonic/workflow` for workflow
+modules that need start/worktree/work/review/finalize bookkeeping plus standard
+status snapshots:
 
 ```js
 import { proxyActivities } from "@temporalio/workflow";

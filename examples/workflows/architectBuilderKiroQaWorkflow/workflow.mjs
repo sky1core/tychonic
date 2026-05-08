@@ -40,10 +40,9 @@ const INPUT_FIELDS = new Set([
   "cwd",
   "profile",
   "goal",
-  "architectPrompt",
-  "builderPrompt",
-  "qaPrompt"
+  "promptAdditions"
 ]);
+const PROMPT_ADDITION_STATES = new Set(["architect", "builder", "qa"]);
 
 function rejectUnknownInputFields(input) {
   if (!input || typeof input !== "object") return;
@@ -52,6 +51,7 @@ function rejectUnknownInputFields(input) {
       throw new Error(`unsupported input field: ${field}`);
     }
   }
+  validatePromptAdditions(input, PROMPT_ADDITION_STATES);
 }
 
 export async function architectBuilderKiroQaWorkflow(input) {
@@ -67,34 +67,70 @@ export async function architectBuilderKiroQaWorkflow(input) {
 
   const architect = await ctx.work(
     "architect",
-    input.architectPrompt ?? architectPrompt(input.goal ?? "")
+    withPromptAddition(architectStageInstructions(input.goal ?? ""), input, "architect")
   );
   if (!architect.passed) return ctx.finish("architect failed");
 
   const builder = await ctx.work(
     "builder",
-    input.builderPrompt ?? builderPrompt({
-      cwd: input.cwd,
-      runId: ctx.run().id,
-      worktreePath: ctx.worktreePath()
-    })
+    withPromptAddition(
+      builderStageInstructions({
+        cwd: input.cwd,
+        runId: ctx.run().id,
+        worktreePath: ctx.worktreePath()
+      }),
+      input,
+      "builder"
+    )
   );
   if (!builder.passed) return ctx.finish("builder failed");
 
   const qa = await ctx.review(
     "qa",
-    input.qaPrompt ?? qaPrompt({
-      cwd: input.cwd,
-      runId: ctx.run().id,
-      worktreePath: ctx.worktreePath()
-    })
+    withPromptAddition(
+      qaStageInstructions({
+        cwd: input.cwd,
+        runId: ctx.run().id,
+        worktreePath: ctx.worktreePath()
+      }),
+      input,
+      "qa"
+    )
   );
   if (!qa.passed) return ctx.finish(qa.summary ?? "qa did not pass");
 
   return ctx.finish();
 }
 
-function architectPrompt(goal) {
+function validatePromptAdditions(input, allowedStates) {
+  const additions = input.promptAdditions;
+  if (additions === undefined) return;
+  if (!additions || typeof additions !== "object" || Array.isArray(additions)) {
+    throw new Error("promptAdditions must be an object keyed by state name");
+  }
+  for (const stateName of Object.keys(additions)) {
+    if (!allowedStates.has(stateName)) {
+      throw new Error(`unsupported promptAdditions state: ${stateName}`);
+    }
+    if (
+      input.profile?.states &&
+      !Object.prototype.hasOwnProperty.call(input.profile.states, stateName)
+    ) {
+      throw new Error(`promptAdditions.${stateName} does not match a configured state`);
+    }
+    if (typeof additions[stateName] !== "string" || additions[stateName].trim() === "") {
+      throw new Error(`promptAdditions.${stateName} must be a non-empty string`);
+    }
+  }
+}
+
+function withPromptAddition(basePrompt, input, stateName) {
+  const addition = input.promptAdditions?.[stateName];
+  if (addition === undefined) return basePrompt;
+  return `${basePrompt}\n\n[additional ${stateName} instructions]\n${addition}\n[/additional ${stateName} instructions]`;
+}
+
+function architectStageInstructions(goal) {
   return [
     "You are the architect stage.",
     "",
@@ -105,7 +141,7 @@ function architectPrompt(goal) {
   ].join("\n");
 }
 
-function builderPrompt({ cwd, runId, worktreePath }) {
+function builderStageInstructions({ cwd, runId, worktreePath }) {
   return [
     "You are the builder stage. Implement the architect output for this run.",
     "",
@@ -116,7 +152,7 @@ function builderPrompt({ cwd, runId, worktreePath }) {
   ].join("\n");
 }
 
-function qaPrompt({ cwd, runId, worktreePath }) {
+function qaStageInstructions({ cwd, runId, worktreePath }) {
   return [
     "You are the Kiro QA reviewer for this run.",
     `Check the builder output in ${worktreePath}.`,

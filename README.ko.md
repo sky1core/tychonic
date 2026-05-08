@@ -187,6 +187,12 @@ workflow JSON input은 task data입니다. config를 `profile`에 넣지 마십�
 `profile`은 Tychonic이 effective profile을 workflow code에 넘기기 위해 예약한
 field입니다.
 
+workflow run input은 하나의 안정적인 task-shaped public contract를 씁니다:
+`cwd`와 `goal`입니다. prompt 본문은 workflow bundle에 내장됩니다. state별
+추가 지시가 꼭 필요할 때만 `promptAdditions.<stateName>`을 쓰십시오. key는
+workflow의 state NAME과 일치해야 합니다. top-level prompt field나 agent 이름을
+input key로 쓰지 마십시오.
+
 권장 profile pattern:
 
 ```yaml
@@ -248,7 +254,8 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 - `architectBuilderKiroQaWorkflow`: Kiro가 QA review를 수행하고 normalizer가 verdict를 구조화
 - `architectBuilderKiroRepairQaWorkflow`: Kiro가 pre-review repair를 수행한 뒤 최종 QA로 넘기는 pattern
 
-input이나 config shape를 바꾸기 전에 각 bundle의 `README.md`를 읽으십시오.
+config shape나 `promptAdditions` state key를 바꾸기 전에 각 bundle의
+`README.md`를 읽으십시오.
 
 ## Agent Skill
 

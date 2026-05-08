@@ -11,7 +11,7 @@ const CLI_PATH = join(process.cwd(), "dist", "cli", "main.js");
 
 /**
  * CLI-level tests verify that the `--instance` global option, the
- * `TYCHONIC_INSTANCE` env fallback, and the launchd gating all wire
+ * `TYCHONIC_INSTANCE` env instance path, and the launchd gating all wire
  * through to behavior visible from the command line.
  *
  * These tests drive the built CLI (`dist/cli/main.js`) via a child

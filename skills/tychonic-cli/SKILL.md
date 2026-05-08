@@ -54,7 +54,7 @@ hide the failure.
 
 ## Running Workflows
 
-Ordinary agent path:
+Agent-backed workflow path:
 
 ```sh
 tychonic workflows validate ./examples/workflows/<name>
@@ -77,7 +77,7 @@ tychonic run <workflow-name> --input-file ./input.json
 ```
 
 This returns `workflowId` and `runId`; pass `workflowId` to `tychonic wait`.
-Treat `workflowId` as the ordinary handle for `wait`, `status`, `inbox`,
+Treat `workflowId` as the primary handle for `wait`, `status`, `inbox`,
 `artifacts`, `logs`, and `sessions`. Use `runId` only when the command asks for
 one or you must disambiguate a specific Temporal execution.
 
@@ -128,11 +128,13 @@ Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
 it returns the evidence needed to decide the next operator action.
 
 `tychonic run` prints a JSON object. Do not require the operator to inspect
-Temporal UI/API for ordinary monitoring.
+Temporal UI/API for routine monitoring.
 
-Each workflow owns its own input shape, policy keys, artifacts, inbox items,
-signals, and recovery flow. Read the bundle README before configuring or
-operating that workflow.
+Workflow run input uses the stable task-shaped surface documented by the
+bundle: `cwd` and `goal`, with optional `promptAdditions.<stateName>` only when
+the workflow exposes extra state instructions. The workflow owns policy keys,
+artifacts, inbox items, signals, and recovery flow. Read the bundle README
+before configuring or operating that workflow.
 
 ## Bundle Config
 
@@ -289,7 +291,7 @@ trust, Kiro can stop on tool approval instead of completing the workflow.
 `TYCHONIC_AGENT_PATH` prepends directories to the agent CLI lookup path. Use it
 when a smoke test or local setup needs Tychonic to find agent binaries outside
 the normal `PATH`, for example a temporary stub directory or a locally installed
-CLI. It is not workflow config and ordinary workflow input should not mention
+CLI. It is not workflow config and workflow run input should not mention
 it.
 
 Built-in review adapters ask the model for the semantic payload:

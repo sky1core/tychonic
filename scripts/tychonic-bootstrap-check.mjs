@@ -77,30 +77,40 @@ async function runLiveExampleWorkflows(scope) {
   const inputs = {
     verifyOnlyWorkflow: { cwd: target },
     simpleWorkflow: { cwd: target, goal: prompt },
-    pipelineWorkflow: { cwd: target, goal: prompt, prompt, reviewPrompt: review, reviewPrompt2: review },
+    pipelineWorkflow: {
+      cwd: target,
+      goal: prompt,
+      promptAdditions: { review_1: review, review_2: review }
+    },
     checkpointWorkflow: { cwd: target, goal: review },
     architectBuilderQaWorkflow: {
       cwd: target,
       goal: prompt,
-      architectPrompt: "Produce a concise implementation plan for the already-passing JavaScript fixture. Do not edit files.",
-      builderPrompt: prompt,
-      qaPrompt: review
+      promptAdditions: {
+        architect: "Produce a concise implementation plan for the already-passing JavaScript fixture. Do not edit files.",
+        builder: prompt,
+        qa: review
+      }
     },
     architectBuilderKiroQaWorkflow: {
       cwd: target,
       goal: prompt,
-      architectPrompt: "Produce a concise implementation plan for the already-passing JavaScript fixture. Do not edit files.",
-      builderPrompt: prompt,
-      qaPrompt: review
+      promptAdditions: {
+        architect: "Produce a concise implementation plan for the already-passing JavaScript fixture. Do not edit files.",
+        builder: prompt,
+        qa: review
+      }
     },
     architectBuilderKiroRepairQaWorkflow: {
       cwd: target,
       goal: prompt,
-      architectPrompt: "Produce a concise implementation plan for the already-passing JavaScript fixture. Do not edit files.",
-      builderPrompt: prompt,
-      kiroPreReviewPrompt: "Inspect the worktree and write concise prose feedback for this bootstrap mechanics check.",
-      kiroFixPrompt: "Apply only necessary fixes from the pre-review. If no fix is needed, report that in the final output only.",
-      finalQaPrompt: review
+      promptAdditions: {
+        architect: "Produce a concise implementation plan for the already-passing JavaScript fixture. Do not edit files.",
+        builder: prompt,
+        pre_review: "Inspect the worktree and write concise prose feedback for this bootstrap mechanics check.",
+        repair: "Apply only necessary fixes from the pre-review. If no fix is needed, report that in the final output only.",
+        final_qa: review
+      }
     }
   };
   for (const [name, input] of Object.entries(inputs)) {

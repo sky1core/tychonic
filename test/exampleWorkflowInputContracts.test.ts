@@ -48,6 +48,43 @@ describe("example workflow input contracts", () => {
     ).rejects.toThrow(/unsupported input field: verifyCommand/);
   });
 
+  it("rejects retired top-level prompt override fields", async () => {
+    await expect(
+      architectBuilderKiroRepairQaWorkflow({
+        cwd: "/tmp/tychonic-test",
+        kiroPreReviewPrompt: "inspect"
+      })
+    ).rejects.toThrow(/unsupported input field: kiroPreReviewPrompt/);
+  });
+
+  it("rejects prompt additions that are not keyed by an allowed state NAME", async () => {
+    await expect(
+      architectBuilderQaWorkflow({
+        cwd: "/tmp/tychonic-test",
+        promptAdditions: { kiroPreReview: "inspect" }
+      })
+    ).rejects.toThrow(/unsupported promptAdditions state: kiroPreReview/);
+  });
+
+  it("rejects prompt additions that do not match the configured state NAMEs", async () => {
+    await expect(
+      architectBuilderQaWorkflow({
+        cwd: "/tmp/tychonic-test",
+        profile: { states: { architect: {}, builder: {} } },
+        promptAdditions: { qa: "review carefully" }
+      })
+    ).rejects.toThrow(/promptAdditions\.qa does not match a configured state/);
+  });
+
+  it("rejects non-string prompt addition values", async () => {
+    await expect(
+      pipelineWorkflow({
+        cwd: "/tmp/tychonic-test",
+        promptAdditions: { review_1: ["review"] }
+      })
+    ).rejects.toThrow(/promptAdditions\.review_1 must be a non-empty string/);
+  });
+
   it("verifyOnlyWorkflow rejects undocumented input fields", async () => {
     await expect(
       verifyOnlyWorkflow({ cwd: "/tmp/tychonic-test", command: "npm test" })

@@ -1,7 +1,7 @@
 # architectBuilderKiroRepairQaWorkflow
 
-`architectBuilderKiroRepairQaWorkflow` runs architect → builder → Kiro
-pre-review → Kiro repair → final QA. Kiro gets a cheap prose-review and repair
+`architectBuilderKiroRepairQaWorkflow` runs architect → builder → pre-review →
+repair → final QA. Kiro gets a cheap prose-review and repair
 slot before a structured final reviewer makes the pass/fail decision.
 
 ## Purpose
@@ -22,14 +22,14 @@ to models available in your installed CLIs.
 |---|---|---|
 | `architect` | `work` | Produce the implementation plan. |
 | `builder` | `work` | Implement the plan in the isolated worktree. |
-| `kiro_pre_review` | `work` | Kiro inspects the result and writes prose guidance; this is not the structured QA gate. |
-| `kiro_fix` | `work` | Kiro applies targeted repairs from the pre-review. |
+| `pre_review` | `work` | Kiro inspects the result and writes prose guidance; this is not the structured QA gate. |
+| `repair` | `work` | Kiro applies targeted repairs from the pre-review. |
 | `final_qa` | `review` | Return the structured pass/fail review verdict. |
 
-`kiro_pre_review` and `kiro_fix` use `trust_all_tools: true` because Kiro ACP
+`pre_review` and `repair` use `trust_all_tools: true` because Kiro ACP
 needs tool trust for non-interactive file inspection and edits. These are
 `work` states, not the final structured QA gate; the actual repair step is
-explicitly named as `kiro_fix`.
+explicitly named as `repair`.
 
 ## Input
 
@@ -37,13 +37,11 @@ explicitly named as `kiro_fix`.
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
 | `goal` | no | Goal threaded into architect and builder prompts. |
-| `architectPrompt` | no | Prompt override for `architect`. |
-| `builderPrompt` | no | Prompt override for `builder`. |
-| `kiroPreReviewPrompt` | no | Prompt override for Kiro pre-review. |
-| `kiroFixPrompt` | no | Prompt override for Kiro repair. |
-| `finalQaPrompt` | no | Prompt override for final QA. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to built-in prompts for `architect`, `builder`, `pre_review`, `repair`, or `final_qa`. |
 
-Unknown fields are rejected. `cwd` must be a git repository.
+Unknown fields are rejected. `promptAdditions` keys must match one of the
+promptable state NAMEs listed above; agent names are not valid prompt keys.
+`cwd` must be a git repository.
 
 ## Minimal Run
 

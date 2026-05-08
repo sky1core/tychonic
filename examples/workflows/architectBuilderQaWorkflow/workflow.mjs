@@ -58,10 +58,9 @@ const ARCHITECT_BUILDER_QA_INPUT_FIELDS = new Set([
   "cwd",
   "profile",
   "goal",
-  "architectPrompt",
-  "builderPrompt",
-  "qaPrompt"
+  "promptAdditions"
 ]);
+const PROMPT_ADDITION_STATES = new Set(["architect", "builder", "qa"]);
 
 function rejectUnknownInputFields(input) {
   if (!input || typeof input !== "object") return;
@@ -70,6 +69,7 @@ function rejectUnknownInputFields(input) {
       throw new Error(`unsupported input field: ${field}`);
     }
   }
+  validatePromptAdditions(input, PROMPT_ADDITION_STATES);
 }
 
 export async function architectBuilderQaWorkflow(input) {
@@ -88,7 +88,7 @@ export async function architectBuilderQaWorkflow(input) {
 
   const architect = await ctx.work(
     "architect",
-    input.architectPrompt ?? architectPrompt(input.goal ?? "")
+    withPromptAddition(architectStageInstructions(input.goal ?? ""), input, "architect")
   );
   if (!architect.passed) return ctx.finish(architect.summary ?? "architect failed");
 
@@ -103,10 +103,14 @@ export async function architectBuilderQaWorkflow(input) {
     const builder = await ctx.work(
       "builder",
       withQaFeedback(
-        input.builderPrompt ?? builderPrompt({
-          runId: ctx.run().id,
-          worktreePath: ctx.worktreePath()
-        }),
+        withPromptAddition(
+          builderStageInstructions({
+            runId: ctx.run().id,
+            worktreePath: ctx.worktreePath()
+          }),
+          input,
+          "builder"
+        ),
         qaFeedbacks
       )
     );
@@ -114,10 +118,14 @@ export async function architectBuilderQaWorkflow(input) {
 
     const qa = await ctx.review(
       "qa",
-      input.qaPrompt ?? qaPrompt({
-        runId: ctx.run().id,
-        worktreePath: ctx.worktreePath()
-      })
+      withPromptAddition(
+        qaStageInstructions({
+          runId: ctx.run().id,
+          worktreePath: ctx.worktreePath()
+        }),
+        input,
+        "qa"
+      )
     );
     if (qa.halted) return ctx.finish(qa.summary);
 
@@ -150,6 +158,34 @@ function withQaFeedback(basePrompt, feedbacks) {
     .join("\n")}\n[/qa findings]`;
 }
 
+function validatePromptAdditions(input, allowedStates) {
+  const additions = input.promptAdditions;
+  if (additions === undefined) return;
+  if (!additions || typeof additions !== "object" || Array.isArray(additions)) {
+    throw new Error("promptAdditions must be an object keyed by state name");
+  }
+  for (const stateName of Object.keys(additions)) {
+    if (!allowedStates.has(stateName)) {
+      throw new Error(`unsupported promptAdditions state: ${stateName}`);
+    }
+    if (
+      input.profile?.states &&
+      !Object.prototype.hasOwnProperty.call(input.profile.states, stateName)
+    ) {
+      throw new Error(`promptAdditions.${stateName} does not match a configured state`);
+    }
+    if (typeof additions[stateName] !== "string" || additions[stateName].trim() === "") {
+      throw new Error(`promptAdditions.${stateName} must be a non-empty string`);
+    }
+  }
+}
+
+function withPromptAddition(basePrompt, input, stateName) {
+  const addition = input.promptAdditions?.[stateName];
+  if (addition === undefined) return basePrompt;
+  return `${basePrompt}\n\n[additional ${stateName} instructions]\n${addition}\n[/additional ${stateName} instructions]`;
+}
+
 function reviewCapInboxItem() {
   return {
     id: "inbox_review_cap",
@@ -163,7 +199,7 @@ function reviewCapInboxItem() {
   };
 }
 
-function architectPrompt(goal) {
+function architectStageInstructions(goal) {
   return [
     "You are the architect stage of a three-stage delegated-work pipeline.",
     "",
@@ -177,7 +213,7 @@ function architectPrompt(goal) {
   ].join("\n");
 }
 
-function builderPrompt({ runId, worktreePath }) {
+function builderStageInstructions({ runId, worktreePath }) {
   return [
     "You are the builder stage. Implement the design produced by the",
     "architect stage of this run.",
@@ -193,7 +229,7 @@ function builderPrompt({ runId, worktreePath }) {
   ].join("\n");
 }
 
-function qaPrompt({ runId, worktreePath }) {
+function qaStageInstructions({ runId, worktreePath }) {
   return [
     "You are the QA reviewer for this three-stage run.",
     `Check the builder output in ${worktreePath} against the architect`,

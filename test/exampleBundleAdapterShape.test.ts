@@ -204,13 +204,13 @@ describe("Kiro-oriented example profiles", () => {
 
   it("keeps Kiro repair as prose work before a structured final QA gate", () => {
     const states = (architectKiroRepairQaDefault as any).states;
-    expect(states?.kiro_pre_review).toMatchObject({
+    expect(states?.pre_review).toMatchObject({
       type: "work",
       agent: "kiro",
       model: "claude-sonnet-4.5",
       trust_all_tools: true
     });
-    expect(states?.kiro_fix).toMatchObject({
+    expect(states?.repair).toMatchObject({
       type: "work",
       agent: "kiro",
       model: "claude-sonnet-4.5",
