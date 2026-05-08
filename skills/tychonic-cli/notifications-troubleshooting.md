@@ -61,7 +61,7 @@ matches the helper response or the user's environment.
 ## When everything looks enabled but the banner still doesn't appear
 
 `UNUserNotificationCenter.add` returning success means macOS accepted
-delivery, not that the banner was drawn. Macos suppresses the visible
+delivery, not that the banner was drawn. macOS suppresses the visible
 banner (while still placing the notification in Notification Center) in
 several cases the helper cannot read:
 

@@ -22,14 +22,18 @@ export const defaultProfile = {
     integration: { type: "verify", command: "npm run integration", timeout: "45m" },
     semantic_review: {
       type: "review",
-      agent: "codex",
-      approval: "never",
+      agent: "claude",
+      model: "claude-opus-4-7",
+      reasoning_effort: "max",
+      permission_mode: "plan",
       timeout: "20m"
     },
     test_review: {
       type: "review",
-      agent: "claude",
-      permission_mode: "plan",
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh",
+      approval: "never",
       timeout: "20m"
     }
   },

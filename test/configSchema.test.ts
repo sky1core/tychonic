@@ -219,7 +219,7 @@ describe("activity-centric config schema", () => {
         review: {
           type: "review",
           agent: "kiro",
-          model: "claude-sonnet-4.5",
+          model: "claude-opus-4.6",
           normalizer: "codex"
         }
       }
@@ -229,7 +229,7 @@ describe("activity-centric config schema", () => {
       reasoning_effort: "xhigh"
     });
     expect(config.states?.review).toMatchObject({
-      model: "claude-sonnet-4.5"
+      model: "claude-opus-4.6"
     });
   });
 

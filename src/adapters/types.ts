@@ -94,9 +94,12 @@ export interface AdapterCommand {
  *
  * `sessionId` is set when the CLI exposed a stable id we can use
  * for adapter-owned resume. `undefined` means this session is non-resumable.
+ * `reportedModel` is set when the CLI reports the concrete model that handled
+ * the request. Callers compare it with explicit state config when present.
  */
 export interface AdapterRunResult {
   sessionId?: string;
+  reportedModel?: string;
 }
 
 /**

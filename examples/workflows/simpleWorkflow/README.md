@@ -23,8 +23,8 @@ tychonic workflows install ./examples/workflows/simpleWorkflow
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```
 
-The bundled default profile uses Claude for `work` and `review`. Its `verify`
-state runs:
+The bundled default profile uses Claude for `work` and Codex `gpt-5.5` with
+`reasoning_effort: xhigh` for the final `review`. Its `verify` state runs:
 
 ```sh
 npm run typecheck

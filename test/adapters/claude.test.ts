@@ -133,12 +133,14 @@ describe("claudeAdapter", () => {
         type: "system",
         subtype: "init",
         session_id: "11111111-2222-3333-4444-555555555555",
+        model: "claude-opus-4-7",
         cwd: "/tmp/wt"
       }),
       JSON.stringify({ type: "assistant", message: { role: "assistant" } })
     ].join("\n");
     expect(claudeAdapter.parseResult(stdout, "", 0)).toEqual({
-      sessionId: "11111111-2222-3333-4444-555555555555"
+      sessionId: "11111111-2222-3333-4444-555555555555",
+      reportedModel: "claude-opus-4-7"
     });
   });
 

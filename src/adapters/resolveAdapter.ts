@@ -36,6 +36,7 @@ export interface AdapterDispatch {
   adapter: AgentAdapter;
   agentName: BuiltInAgentName;
   command: string;
+  requestedModel?: string;
 }
 
 export interface VerbatimDispatch {
@@ -84,7 +85,8 @@ export function resolveCommand(input: ResolveCommandInput): ResolvedCommand | un
       kind: "adapter",
       adapter,
       agentName: builtIn,
-      command: out.command
+      command: out.command,
+      ...(block.model !== undefined ? { requestedModel: block.model } : {})
     };
   }
 
@@ -122,7 +124,8 @@ export function resolveResumeCommand(input: ResolveResumeInput): AdapterDispatch
     kind: "adapter",
     adapter,
     agentName: builtIn,
-    command: out.command
+    command: out.command,
+    ...(block.model !== undefined ? { requestedModel: block.model } : {})
   };
 }
 

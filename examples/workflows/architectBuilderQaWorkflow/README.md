@@ -11,13 +11,17 @@ another agent builds, and QA reviews. The bundled default runs in auto mode
 with a bounded builder/QA loop. Switch `policies.interaction.mode` to
 `interactive` when an operator should approve each stage.
 
+The default profile uses Claude `claude-opus-4-7` with `reasoning_effort: max`
+for architecture, Kiro `claude-opus-4.6` for building, and Codex `gpt-5.5` with
+`reasoning_effort: xhigh` for final QA.
+
 ## States
 
 | State | TYPE | Role |
 |---|---|---|
 | `architect` | `work` | Produce the implementation plan. |
-| `builder` | `work` | Implement the plan in the isolated worktree. |
-| `qa` | `review` | Return the structured pass/fail review verdict. |
+| `builder` | `work` | Kiro implements the plan in the isolated worktree. |
+| `qa` | `review` | Codex returns the structured pass/fail review verdict. |
 
 ## Input
 

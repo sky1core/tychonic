@@ -69,11 +69,14 @@ vi.mock("tychonic/workflow", () => ({
 const { architectBuilderQaWorkflow } = await import(
   "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs"
 );
-const { architectBuilderKiroQaWorkflow } = await import(
-  "../examples/workflows/architectBuilderKiroQaWorkflow/workflow.mjs"
+const { architectBuilderFinalQaWorkflow } = await import(
+  "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs"
 );
-const { architectBuilderKiroRepairQaWorkflow } = await import(
-  "../examples/workflows/architectBuilderKiroRepairQaWorkflow/workflow.mjs"
+const { architectBuilderFirstReviewQaWorkflow } = await import(
+  "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs"
+);
+const { architectBuilderReviewRepairQaWorkflow } = await import(
+  "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs"
 );
 const { tychonicSelfCheckWorkflow } = await import(
   "../tools/workflows/tychonicSelfCheckWorkflow/workflow.mjs"
@@ -151,7 +154,7 @@ describe("architectBuilderQaWorkflow control flow", () => {
   });
 });
 
-describe("kiro QA workflow control flow", () => {
+describe("agent-pinned QA workflow control flow", () => {
   beforeEach(() => {
     harness.calls = [];
     harness.interactive = false;
@@ -160,14 +163,14 @@ describe("kiro QA workflow control flow", () => {
     harness.reviewResults = [];
   });
 
-  it("does not report completion when Kiro QA fails", async () => {
+  it("does not report completion when final QA fails", async () => {
     harness.workResults = [
       { halted: false, passed: true },
       { halted: false, passed: true }
     ];
     harness.reviewResults = [{ halted: false, passed: false, summary: "qa failed" }];
 
-    await architectBuilderKiroQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+    await architectBuilderFinalQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
 
     expect(harness.calls).toEqual([
       "start",
@@ -179,19 +182,76 @@ describe("kiro QA workflow control flow", () => {
     ]);
   });
 
-  it("finishes Kiro QA without a forced success summary when QA passes", async () => {
+  it("finishes final QA without a forced success summary when QA passes", async () => {
     harness.workResults = [
       { halted: false, passed: true },
       { halted: false, passed: true }
     ];
     harness.reviewResults = [{ halted: false, passed: true }];
 
-    await architectBuilderKiroQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+    await architectBuilderFinalQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
 
     expect(harness.calls).toContain("finish:");
   });
 
-  it("does not report completion when final QA fails after Kiro repair", async () => {
+  it("stops before Codex final QA when first_review fails", async () => {
+    harness.workResults = [
+      { halted: false, passed: true },
+      { halted: false, passed: true }
+    ];
+    harness.reviewResults = [{ halted: false, passed: false, summary: "first review failed" }];
+
+    await architectBuilderFirstReviewQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+
+    expect(harness.calls).toEqual([
+      "start",
+      "createWorktree",
+      "work:architect",
+      "work:builder",
+      "review:first_review",
+      "finish:first review failed"
+    ]);
+  });
+
+  it("does not report completion when Codex final QA fails after first_review passes", async () => {
+    harness.workResults = [
+      { halted: false, passed: true },
+      { halted: false, passed: true }
+    ];
+    harness.reviewResults = [
+      { halted: false, passed: true },
+      { halted: false, passed: false, summary: "final qa failed" }
+    ];
+
+    await architectBuilderFirstReviewQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+
+    expect(harness.calls).toEqual([
+      "start",
+      "createWorktree",
+      "work:architect",
+      "work:builder",
+      "review:first_review",
+      "review:final_qa",
+      "finish:final qa failed"
+    ]);
+  });
+
+  it("finishes without a forced success summary after first_review and final_qa pass", async () => {
+    harness.workResults = [
+      { halted: false, passed: true },
+      { halted: false, passed: true }
+    ];
+    harness.reviewResults = [
+      { halted: false, passed: true },
+      { halted: false, passed: true }
+    ];
+
+    await architectBuilderFirstReviewQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+
+    expect(harness.calls).toContain("finish:");
+  });
+
+  it("does not report completion when final QA fails after review repair", async () => {
     harness.workResults = [
       { halted: false, passed: true },
       { halted: false, passed: true },
@@ -200,7 +260,7 @@ describe("kiro QA workflow control flow", () => {
     ];
     harness.reviewResults = [{ halted: false, passed: false, summary: "final qa failed" }];
 
-    await architectBuilderKiroRepairQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+    await architectBuilderReviewRepairQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
 
     expect(harness.calls).toEqual([
       "start",
@@ -214,7 +274,7 @@ describe("kiro QA workflow control flow", () => {
     ]);
   });
 
-  it("finishes Kiro repair without a forced success summary when final QA passes", async () => {
+  it("finishes review repair without a forced success summary when final QA passes", async () => {
     harness.workResults = [
       { halted: false, passed: true },
       { halted: false, passed: true },
@@ -223,7 +283,7 @@ describe("kiro QA workflow control flow", () => {
     ];
     harness.reviewResults = [{ halted: false, passed: true }];
 
-    await architectBuilderKiroRepairQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+    await architectBuilderReviewRepairQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
 
     expect(harness.calls).toContain("finish:");
   });
@@ -275,8 +335,9 @@ describe("single-pass workflow completion summaries", () => {
   it("does not pass success-worded summaries to workflow finalization", async () => {
     const workflowFiles = [
       "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs",
-      "../examples/workflows/architectBuilderKiroQaWorkflow/workflow.mjs",
-      "../examples/workflows/architectBuilderKiroRepairQaWorkflow/workflow.mjs",
+      "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs",
+      "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs",
+      "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs",
       "../examples/workflows/checkpointWorkflow/workflow.mjs",
       "../examples/workflows/pipelineWorkflow/workflow.mjs",
       "../examples/workflows/verifyOnlyWorkflow/workflow.mjs",

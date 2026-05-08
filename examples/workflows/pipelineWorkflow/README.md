@@ -20,6 +20,10 @@ appear more than once without adding new activity kinds.
 - `review_2` — `review`
 - `security` — `verify`
 
+The default profile uses Kiro `claude-opus-4.6` for `work`, Claude
+`claude-opus-4-7` with `reasoning_effort: max` for `review_1`, and Codex
+`gpt-5.5` with `reasoning_effort: xhigh` for the final `review_2`.
+
 ## Input
 
 | Field | Required | Purpose |

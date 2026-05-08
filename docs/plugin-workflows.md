@@ -36,14 +36,14 @@ const act = proxyActivities({
 export const defaultProfile = {
   version: "tychonic.config.v1",
   states: {
-    work: { type: "work", agent: "codex" },
+    work: { type: "work", agent: "kiro", model: "claude-opus-4.6", trust_all_tools: true },
     verify: {
       type: "verify",
       command: `npm run typecheck
 npm run build
 npm test`
     },
-    review: { type: "review", agent: "claude" }
+    review: { type: "review", agent: "codex", model: "gpt-5.5", reasoning_effort: "xhigh" }
   }
 };
 
@@ -110,7 +110,9 @@ for the primary `agent` when a state's quality, latency, or cost profile
 matters; omission intentionally delegates to the selected CLI's default or
 auto-selection behavior. Use `reasoning_effort` only for agents that support
 it, and set it on Claude/Codex states whose quality depends on reasoning
-depth. Do not pass those values through activity runtime inputs. Do not add
+depth. Do not pass those values through activity runtime inputs. When a CLI
+reports the concrete selected model, Tychonic fails the activity if that report
+differs from an exact versioned model string in state config. Do not add
 separate normalizer model fields; Tychonic owns the lightweight model flag for
 the normalizer. Kiro states may set `model`, but not
 `reasoning_effort`; the installed Kiro CLI ACP surface exposes no stable
@@ -210,5 +212,6 @@ one.
 - [examples/workflows/verifyOnlyWorkflow](../examples/workflows/verifyOnlyWorkflow): minimal no-agent verify example
 - [examples/workflows/pipelineWorkflow](../examples/workflows/pipelineWorkflow): multi-stage example
 - [examples/workflows/architectBuilderQaWorkflow](../examples/workflows/architectBuilderQaWorkflow): default architect/builder/QA example
-- [examples/workflows/architectBuilderKiroQaWorkflow](../examples/workflows/architectBuilderKiroQaWorkflow): Kiro review with normalizer
-- [examples/workflows/architectBuilderKiroRepairQaWorkflow](../examples/workflows/architectBuilderKiroRepairQaWorkflow): Kiro pre-review and repair before final QA
+- [examples/workflows/architectBuilderFinalQaWorkflow](../examples/workflows/architectBuilderFinalQaWorkflow): Kiro-assisted build with Codex final QA
+- [examples/workflows/architectBuilderFirstReviewQaWorkflow](../examples/workflows/architectBuilderFirstReviewQaWorkflow): Kiro build and first normalized review before Codex final QA
+- [examples/workflows/architectBuilderReviewRepairQaWorkflow](../examples/workflows/architectBuilderReviewRepairQaWorkflow): Kiro build, pre-review, and repair before Codex final QA

@@ -1,5 +1,5 @@
-// architectBuilderKiroQaWorkflow — architect/build pipeline with Kiro as the
-// primary QA reviewer and a lightweight structured-output normalizer.
+// architectBuilderFinalQaWorkflow — Claude plans, Kiro builds, Codex performs
+// the final structured QA gate.
 
 import { proxyActivities } from "@temporalio/workflow";
 import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
@@ -16,20 +16,24 @@ export const defaultProfile = {
     architect: {
       type: "work",
       agent: "claude",
+      model: "claude-opus-4-7",
+      reasoning_effort: "max",
       permission_mode: "plan"
     },
     builder: {
       type: "work",
-      agent: "codex",
+      agent: "kiro",
+      model: "claude-opus-4.6",
+      trust_all_tools: true,
       sandbox: "workspace-write",
       approval: "never"
     },
     qa: {
       type: "review",
-      agent: "kiro",
-      model: "claude-sonnet-4.5",
-      normalizer: "codex",
-      trust_all_tools: true,
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh",
+      approval: "never",
       timeout: "30m"
     }
   },
@@ -38,11 +42,11 @@ export const defaultProfile = {
 
 const PROMPT_ADDITION_STATES = ["architect", "builder", "qa"];
 
-export async function architectBuilderKiroQaWorkflow(input) {
+export async function architectBuilderFinalQaWorkflow(input) {
   validateTaskWorkflowInput(input, { promptAdditionStates: PROMPT_ADDITION_STATES });
   const ctx = createTychonicWorkflowContext({
     input,
-    template: "architect_builder_kiro_qa",
+    template: "architect_builder_final_qa",
     activities: act
   });
 
@@ -116,11 +120,11 @@ function builderStageInstructions({ cwd, runId, worktreePath }) {
 
 function qaStageInstructions({ cwd, runId, worktreePath }) {
   return [
-    "You are the Kiro QA reviewer for this run.",
+    "You are the final Codex QA reviewer for this run.",
     `Check the builder output in ${worktreePath}.`,
     `Use artifacts under ${cwd}/.tychonic/runs/${runId}/artifacts/ as context.`,
     "",
     "Report concrete correctness issues, regressions, missing tests, and risky assumptions.",
-    "The normalizer will structure your review; do not invent pass/fail criteria beyond the work."
+    "Return the structured pass/fail review verdict for this workflow."
   ].join("\n");
 }

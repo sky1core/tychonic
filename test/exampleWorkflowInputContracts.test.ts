@@ -6,10 +6,13 @@ import { checkpointWorkflow } from "../examples/workflows/checkpointWorkflow/wor
 import { architectBuilderQaWorkflow } from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { architectBuilderKiroQaWorkflow } from "../examples/workflows/architectBuilderKiroQaWorkflow/workflow.mjs";
+import { architectBuilderFinalQaWorkflow } from "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { architectBuilderKiroRepairQaWorkflow } from "../examples/workflows/architectBuilderKiroRepairQaWorkflow/workflow.mjs";
+import { architectBuilderFirstReviewQaWorkflow } from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { architectBuilderReviewRepairQaWorkflow } from "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { pipelineWorkflow } from "../examples/workflows/pipelineWorkflow/workflow.mjs";
@@ -36,15 +39,21 @@ describe("example workflow input contracts", () => {
     ).rejects.toThrow(/unsupported input field: runId/);
   });
 
-  it("architectBuilderKiroQaWorkflow rejects undocumented input fields", async () => {
+  it("architectBuilderFinalQaWorkflow rejects undocumented input fields", async () => {
     await expect(
-      architectBuilderKiroQaWorkflow({ cwd: "/tmp/tychonic-test", reviewer: "kiro" })
+      architectBuilderFinalQaWorkflow({ cwd: "/tmp/tychonic-test", reviewer: "kiro" })
     ).rejects.toThrow(/unsupported input field: reviewer/);
   });
 
-  it("architectBuilderKiroRepairQaWorkflow rejects undocumented input fields", async () => {
+  it("architectBuilderFirstReviewQaWorkflow rejects undocumented input fields", async () => {
     await expect(
-      architectBuilderKiroRepairQaWorkflow({ cwd: "/tmp/tychonic-test", repairAgent: "kiro" })
+      architectBuilderFirstReviewQaWorkflow({ cwd: "/tmp/tychonic-test", reviewerAgent: "kiro" })
+    ).rejects.toThrow(/unsupported input field: reviewerAgent/);
+  });
+
+  it("architectBuilderReviewRepairQaWorkflow rejects undocumented input fields", async () => {
+    await expect(
+      architectBuilderReviewRepairQaWorkflow({ cwd: "/tmp/tychonic-test", repairAgent: "kiro" })
     ).rejects.toThrow(/unsupported input field: repairAgent/);
   });
 
@@ -56,7 +65,7 @@ describe("example workflow input contracts", () => {
 
   it("rejects retired top-level prompt override fields", async () => {
     await expect(
-      architectBuilderKiroRepairQaWorkflow({
+      architectBuilderReviewRepairQaWorkflow({
         cwd: "/tmp/tychonic-test",
         kiroPreReviewPrompt: "inspect"
       })

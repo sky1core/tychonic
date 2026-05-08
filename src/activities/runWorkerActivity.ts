@@ -66,7 +66,7 @@ export async function runWorkerActivity(input: RunWorkerActivityInput): Promise<
       prompt,
       role: "work"
     });
-    return runWorkerActivityBody({
+    const result = await runWorkerActivityBody({
       input,
       expectedType: "work",
       resources,
@@ -79,6 +79,7 @@ export async function runWorkerActivity(input: RunWorkerActivityInput): Promise<
       resumeSessionId: resumeSession.id,
       attemptKind: "resume_work"
     });
+    return applyParsedAdapterSession(result, resumeDispatch);
   }
 
   return runFreshWorkerActivity({

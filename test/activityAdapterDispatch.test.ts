@@ -115,6 +115,58 @@ describe("runWorkerActivity adapter dispatch", () => {
     );
   });
 
+  it("fails a Claude worker when the reported model differs from the requested model", async () => {
+    await writeClaudeModelReportingStubBinary(join(stubBinDir, "claude"), "claude-opus-4-5");
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-mismatch-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-mismatch-wt-"));
+
+    const result = await runWorkerActivity({
+      stateName: WORK_NAME,
+      run: baseRun("disp_worker_model_mismatch"),
+      cwd,
+      profile: workProfile({
+        agent: "claude",
+        model: "claude-opus-4-7"
+      }),
+      worktreePath,
+      prompt: "do work"
+    });
+
+    expect(result.delta.activityAttempts?.[0]?.command).toContain("--model 'claude-opus-4-7'");
+    expect(result.delta.states?.[0]?.status).toBe("failed");
+    expect(result.delta.states?.[0]?.reason).toContain(
+      "reported model 'claude-opus-4-5' but state config requested model 'claude-opus-4-7'"
+    );
+    if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
+    expect(result.workerOutcome.status).toBe("failed");
+    expect(result.workerOutcome.agentSessions[0]?.id).toBe("stub-session-id");
+    expect(result.workerOutcome.agentSessions[0]?.status).toBe("failed");
+  });
+
+  it("does not reject Claude alias model names when the CLI reports a concrete version", async () => {
+    await writeClaudeModelReportingStubBinary(join(stubBinDir, "claude"), "claude-opus-4-7");
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-alias-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-alias-wt-"));
+
+    const result = await runWorkerActivity({
+      stateName: WORK_NAME,
+      run: baseRun("disp_worker_model_alias"),
+      cwd,
+      profile: workProfile({
+        agent: "claude",
+        model: "opus"
+      }),
+      worktreePath,
+      prompt: "do work"
+    });
+
+    expect(result.delta.activityAttempts?.[0]?.command).toContain("--model 'opus'");
+    expect(result.delta.states?.[0]?.status).toBe("succeeded");
+    if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
+    expect(result.workerOutcome.agentSessions[0]?.id).toBe("stub-session-id");
+    expect(result.workerOutcome.agentSessions[0]?.status).toBe("succeeded");
+  });
+
   it("rejects an unvalidated non-built-in agent before command resolution", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-missing-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-missing-wt-"));
@@ -258,6 +310,32 @@ describe("runReviewActivity adapter dispatch", () => {
       summary: "structured review passed",
       findings: []
     });
+  });
+
+  it("fails a Claude review when the reported model differs from the requested model", async () => {
+    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"), "claude-opus-4-5");
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-model-mismatch-"));
+
+    const result = await runReviewActivity({
+      stateName: REVIEW_NAME,
+      run: baseRun("disp_review_model_mismatch"),
+      cwd,
+      profile: reviewProfile({
+        agent: "claude",
+        model: "claude-opus-4-7"
+      }),
+      prompt: "review please"
+    });
+
+    expect(result.delta.activityAttempts?.[0]?.command).toContain("--model 'claude-opus-4-7'");
+    expect(result.delta.states?.[0]?.status).toBe("failed");
+    expect(result.delta.states?.[0]?.reason).toContain(
+      "reported model 'claude-opus-4-5' but state config requested model 'claude-opus-4-7'"
+    );
+    expect(result.reviewOutcome?.kind).toBe("command_failed");
+    if (result.reviewOutcome?.kind !== "command_failed") throw new Error("expected command_failed outcome");
+    expect(result.reviewOutcome.reviewerSessionId).toBe("structured-session-id");
+    expect(result.reviewOutcome.agentSessions[0]?.status).toBe("failed");
   });
 
   it("block.agent built-in (codex) parses semantic agent_message JSON through the review activity path", async () => {
@@ -567,12 +645,29 @@ async function writeStubBinary(path: string): Promise<void> {
   await chmod(path, 0o755);
 }
 
-async function writeClaudeStructuredReviewStubBinary(path: string): Promise<void> {
+async function writeClaudeModelReportingStubBinary(path: string, reportedModel: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
   const systemEvent = JSON.stringify({
     type: "system",
     subtype: "init",
-    session_id: "structured-session-id"
+    session_id: "stub-session-id",
+    model: reportedModel
+  });
+  await writeFile(
+    path,
+    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", systemEvent, "JSON"].join("\n"),
+    "utf8"
+  );
+  await chmod(path, 0o755);
+}
+
+async function writeClaudeStructuredReviewStubBinary(path: string, reportedModel?: string): Promise<void> {
+  await mkdir(join(path, ".."), { recursive: true });
+  const systemEvent = JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: "structured-session-id",
+    ...(reportedModel !== undefined ? { model: reportedModel } : {})
   });
   const resultEvent = JSON.stringify({
     type: "result",

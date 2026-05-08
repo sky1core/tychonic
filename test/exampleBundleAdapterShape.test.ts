@@ -31,16 +31,22 @@ import { defaultProfile as architectDefault } from "../examples/workflows/archit
 import * as architectWorkflowModule from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { defaultProfile as architectKiroQaDefault } from "../examples/workflows/architectBuilderKiroQaWorkflow/workflow.mjs";
+import { defaultProfile as architectFinalQaDefault } from "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import * as architectKiroQaWorkflowModule from "../examples/workflows/architectBuilderKiroQaWorkflow/workflow.mjs";
+import * as architectFinalQaWorkflowModule from "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { defaultProfile as architectKiroRepairQaDefault } from "../examples/workflows/architectBuilderKiroRepairQaWorkflow/workflow.mjs";
+import { defaultProfile as architectFirstReviewQaDefault } from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import * as architectKiroRepairQaWorkflowModule from "../examples/workflows/architectBuilderKiroRepairQaWorkflow/workflow.mjs";
+import * as architectBuilderFirstReviewQaWorkflowModule from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { defaultProfile as architectReviewRepairQaDefault } from "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import * as architectReviewRepairQaWorkflowModule from "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { defaultProfile as verifyOnlyDefault } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
@@ -66,14 +72,19 @@ const BUNDLES: readonly Bundle[] = [
   { name: "pipelineWorkflow", profile: pipelineDefault, module: pipelineWorkflowModule },
   { name: "architectBuilderQaWorkflow", profile: architectDefault, module: architectWorkflowModule },
   {
-    name: "architectBuilderKiroQaWorkflow",
-    profile: architectKiroQaDefault,
-    module: architectKiroQaWorkflowModule
+    name: "architectBuilderFinalQaWorkflow",
+    profile: architectFinalQaDefault,
+    module: architectFinalQaWorkflowModule
   },
   {
-    name: "architectBuilderKiroRepairQaWorkflow",
-    profile: architectKiroRepairQaDefault,
-    module: architectKiroRepairQaWorkflowModule
+    name: "architectBuilderFirstReviewQaWorkflow",
+    profile: architectFirstReviewQaDefault,
+    module: architectBuilderFirstReviewQaWorkflowModule
+  },
+  {
+    name: "architectBuilderReviewRepairQaWorkflow",
+    profile: architectReviewRepairQaDefault,
+    module: architectReviewRepairQaWorkflowModule
   },
   { name: "verifyOnlyWorkflow", profile: verifyOnlyDefault, module: verifyOnlyWorkflowModule }
 ];
@@ -179,6 +190,71 @@ describe("simpleWorkflow defaultProfile.states.work.resume", () => {
   });
 });
 
+describe("example bundle recommended agent profile style", () => {
+  it("uses Codex gpt-5.5 xhigh for final structured review gates", () => {
+    const finalReviewStates: Array<[string, any]> = [
+      ["simpleWorkflow.review", (simpleDefault as any).states?.review],
+      ["checkpointWorkflow.test_review", (checkpointDefault as any).states?.test_review],
+      ["pipelineWorkflow.review_2", (pipelineDefault as any).states?.review_2],
+      ["architectBuilderQaWorkflow.qa", (architectDefault as any).states?.qa],
+      ["architectBuilderFinalQaWorkflow.qa", (architectFinalQaDefault as any).states?.qa],
+      [
+        "architectBuilderFirstReviewQaWorkflow.final_qa",
+        (architectFirstReviewQaDefault as any).states?.final_qa
+      ],
+      ["architectBuilderReviewRepairQaWorkflow.final_qa", (architectReviewRepairQaDefault as any).states?.final_qa]
+    ];
+
+    for (const [name, block] of finalReviewStates) {
+      expect(block, name).toMatchObject({
+        type: "review",
+        agent: "codex",
+        model: "gpt-5.5",
+        reasoning_effort: "xhigh"
+      });
+    }
+  });
+
+  it("uses Claude Opus Max for architect/planning review states and Kiro Opus for middle work", () => {
+    for (const [name, block] of [
+      ["architectBuilderQaWorkflow.architect", (architectDefault as any).states?.architect],
+      ["architectBuilderFinalQaWorkflow.architect", (architectFinalQaDefault as any).states?.architect],
+      [
+        "architectBuilderFirstReviewQaWorkflow.architect",
+        (architectFirstReviewQaDefault as any).states?.architect
+      ],
+      ["architectBuilderReviewRepairQaWorkflow.architect", (architectReviewRepairQaDefault as any).states?.architect],
+      ["checkpointWorkflow.semantic_review", (checkpointDefault as any).states?.semantic_review],
+      ["pipelineWorkflow.review_1", (pipelineDefault as any).states?.review_1]
+    ] as Array<[string, any]>) {
+      expect(block, name).toMatchObject({
+        agent: "claude",
+        model: "claude-opus-4-7",
+        reasoning_effort: "max"
+      });
+    }
+
+    for (const [name, block] of [
+      ["architectBuilderQaWorkflow.builder", (architectDefault as any).states?.builder],
+      ["architectBuilderFinalQaWorkflow.builder", (architectFinalQaDefault as any).states?.builder],
+      [
+        "architectBuilderFirstReviewQaWorkflow.builder",
+        (architectFirstReviewQaDefault as any).states?.builder
+      ],
+      ["architectBuilderReviewRepairQaWorkflow.builder", (architectReviewRepairQaDefault as any).states?.builder],
+      ["architectBuilderReviewRepairQaWorkflow.pre_review", (architectReviewRepairQaDefault as any).states?.pre_review],
+      ["architectBuilderReviewRepairQaWorkflow.repair", (architectReviewRepairQaDefault as any).states?.repair],
+      ["pipelineWorkflow.work", (pipelineDefault as any).states?.work]
+    ] as Array<[string, any]>) {
+      expect(block, name).toMatchObject({
+        type: "work",
+        agent: "kiro",
+        model: "claude-opus-4.6"
+      });
+    }
+  });
+});
+
 describe("simpleWorkflow defaultProfile.states.verify.command", () => {
   it("uses generic npm verification scripts, not this repo's example validator", () => {
     const verify = (simpleDefault as any).states?.verify;
@@ -190,37 +266,62 @@ describe("simpleWorkflow defaultProfile.states.verify.command", () => {
   });
 });
 
-describe("Kiro-oriented example profiles", () => {
-  it("uses Kiro as the primary QA reviewer with a normalizer in the normalized QA variant", () => {
-    const qa = (architectKiroQaDefault as any).states?.qa;
-    expect(qa).toMatchObject({
-      type: "review",
+describe("agent-pinned example profiles", () => {
+  it("uses Kiro as the builder and Codex as final QA in the Kiro-assisted QA variant", () => {
+    const builder = (architectFinalQaDefault as any).states?.builder;
+    const qa = (architectFinalQaDefault as any).states?.qa;
+    expect(builder).toMatchObject({
+      type: "work",
       agent: "kiro",
-      model: "claude-sonnet-4.5",
-      normalizer: "codex",
+      model: "claude-opus-4.6",
       trust_all_tools: true
     });
+    expect(qa).toMatchObject({
+      type: "review",
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh"
+    });
+    expect(qa?.normalizer).toBeUndefined();
   });
 
-  it("keeps Kiro repair as prose work before a structured final QA gate", () => {
-    const states = (architectKiroRepairQaDefault as any).states;
+  it("keeps review repair as prose work before a structured final QA gate", () => {
+    const states = (architectReviewRepairQaDefault as any).states;
     expect(states?.pre_review).toMatchObject({
       type: "work",
       agent: "kiro",
-      model: "claude-sonnet-4.5",
+      model: "claude-opus-4.6",
       trust_all_tools: true
     });
     expect(states?.repair).toMatchObject({
       type: "work",
       agent: "kiro",
-      model: "claude-sonnet-4.5",
+      model: "claude-opus-4.6",
       trust_all_tools: true
     });
     expect(states?.final_qa).toMatchObject({
       type: "review",
-      agent: "claude",
-      model: "opus",
-      reasoning_effort: "max"
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh"
+    });
+    expect(states?.final_qa?.normalizer).toBeUndefined();
+  });
+
+  it("uses Kiro plus Claude normalizer for first structured review before Codex final QA", () => {
+    const states = (architectFirstReviewQaDefault as any).states;
+    expect(states?.first_review).toMatchObject({
+      type: "review",
+      agent: "kiro",
+      model: "claude-opus-4.6",
+      normalizer: "claude",
+      trust_all_tools: true
+    });
+    expect(states?.final_qa).toMatchObject({
+      type: "review",
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh"
     });
     expect(states?.final_qa?.normalizer).toBeUndefined();
   });

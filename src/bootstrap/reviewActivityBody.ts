@@ -8,6 +8,7 @@ import {
 } from "../catalog/types.js";
 import type { TychonicConfig } from "../catalog/types.js";
 import { getAgentAdapter } from "../adapters/index.js";
+import { reportedModelMismatchMessage } from "../adapters/modelSelection.js";
 import type { AdapterDispatch } from "../adapters/resolveAdapter.js";
 import type { BuiltInAgentName } from "../adapters/types.js";
 import type {
@@ -184,11 +185,12 @@ export async function runReviewActivityBody(
   state.artifact_ids.push(outputArtifact.id);
 
   const syntheticSessionId = `${run.id}_${nextId("session")}`;
-  const parsedSessionId = reviewOptions.adapterDispatch?.adapter.parseResult(
+  const parsedAdapterResult = reviewOptions.adapterDispatch?.adapter.parseResult(
     result.output,
     "",
     result.exitCode ?? 0
-  ).sessionId;
+  );
+  const parsedSessionId = parsedAdapterResult?.sessionId;
   const session: AgentSessionRecord = {
     id: parsedSessionId ?? syntheticSessionId,
     agent: reviewOptions.agent,
@@ -207,6 +209,32 @@ export async function runReviewActivityBody(
   };
   attempt.agent_session_id = session.id;
   const agentSessions: AgentSessionRecord[] = [session];
+
+  const modelMismatch = reportedModelMismatchMessage({
+    agentName: reviewOptions.adapterDispatch?.agentName ?? reviewOptions.agent,
+    requestedModel: reviewOptions.adapterDispatch?.requestedModel,
+    reportedModel: parsedAdapterResult?.reportedModel
+  });
+  if (result.status === "succeeded" && modelMismatch !== undefined) {
+    attempt.status = "failed";
+    attempt.reason = modelMismatch;
+    attempt.error = modelMismatch;
+    state.status = "failed";
+    state.reason = modelMismatch;
+    state.finished_at = now().toISOString();
+    session.status = "failed";
+    const outcome: ReviewActivityOutcome = {
+      kind: "command_failed",
+      status: "failed",
+      reviewerSessionId: session.id,
+      artifacts,
+      agentSessions
+    };
+    return {
+      delta: { states: [state], activityAttempts: [attempt] },
+      reviewOutcome: outcome
+    };
+  }
 
   if (result.status !== "succeeded") {
     state.status = result.status;
@@ -430,7 +458,7 @@ async function runReviewNormalizer(input: {
     });
     artifacts.push(promptArtifact);
 
-    const result = await withPeriodicProgress(input.heartbeat, async () =>
+    let result = await withPeriodicProgress(input.heartbeat, async () =>
       await runCommand({
         command,
         cwd: normalizerCwd,
@@ -440,6 +468,19 @@ async function runReviewNormalizer(input: {
         onProgress: input.heartbeat
       })
     );
+    const parsedAdapterResult = adapter.parseResult(result.output, "", result.exitCode ?? 0);
+    const modelMismatch = reportedModelMismatchMessage({
+      agentName: input.normalizerAgent,
+      requestedModel: NORMALIZER_MODEL_BY_AGENT[input.normalizerAgent],
+      reportedModel: parsedAdapterResult.reportedModel
+    });
+    if (result.status === "succeeded" && modelMismatch !== undefined) {
+      result = {
+        ...result,
+        status: "failed",
+        output: `${result.output}\n${modelMismatch}\n`
+      };
+    }
 
     const outputArtifact = await writeReviewArtifact({
       store: input.store,
@@ -454,7 +495,7 @@ async function runReviewNormalizer(input: {
     });
     artifacts.push(outputArtifact);
 
-    const parsedSessionId = adapter.parseResult(result.output, "", result.exitCode ?? 0).sessionId;
+    const parsedSessionId = parsedAdapterResult.sessionId;
     const session = parsedSessionId
       ? {
           id: parsedSessionId,

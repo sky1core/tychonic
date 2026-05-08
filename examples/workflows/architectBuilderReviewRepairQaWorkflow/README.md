@@ -1,30 +1,31 @@
-# architectBuilderKiroRepairQaWorkflow
+# architectBuilderReviewRepairQaWorkflow
 
-`architectBuilderKiroRepairQaWorkflow` runs architect → builder → pre-review →
-repair → final QA. Kiro gets a cheap prose-review and repair
-slot before a structured final reviewer makes the pass/fail decision.
+`architectBuilderReviewRepairQaWorkflow` runs architect → builder → pre-review →
+repair → final QA. Claude plans, Kiro handles the implementation and repair
+middle, and Codex makes the final structured pass/fail decision.
 
 ## Purpose
 
-Use this when Kiro should absorb obvious review/fix work before the final
-structured reviewer runs. The goal is to reduce final review loop pressure by
-letting Kiro catch and fix clear issues first, while preserving a final
-structured QA gate with Claude or Codex.
+Use this when Kiro should absorb implementation and obvious review/fix work
+before the final structured reviewer runs. The goal is to reduce final review
+loop pressure by letting Kiro catch and fix clear issues first, while preserving
+a final structured QA gate with Codex.
 
-The default profile demonstrates per-state model selection: Kiro pre-review
-uses `claude-sonnet-4.5`, Kiro repair uses `claude-sonnet-4.5`, and final Claude
-QA uses `opus` with `reasoning_effort: max`. Adjust those values
-to models available in your installed CLIs.
+The default profile demonstrates per-state model selection: architect uses
+Claude `claude-opus-4-7` with `reasoning_effort: max`, builder/pre-review/repair
+use Kiro `claude-opus-4.6`, and final QA uses Codex `gpt-5.5` with
+`reasoning_effort: xhigh`. Adjust those values to models available in your
+installed CLIs.
 
 ## States
 
 | State | TYPE | Role |
 |---|---|---|
 | `architect` | `work` | Produce the implementation plan. |
-| `builder` | `work` | Implement the plan in the isolated worktree. |
+| `builder` | `work` | Kiro implements the plan in the isolated worktree. |
 | `pre_review` | `work` | Kiro inspects the result and writes prose guidance; this is not the structured QA gate. |
 | `repair` | `work` | Kiro applies targeted repairs from the pre-review. |
-| `final_qa` | `review` | Return the structured pass/fail review verdict. |
+| `final_qa` | `review` | Codex returns the structured pass/fail review verdict. |
 
 `pre_review` and `repair` use `trust_all_tools: true` because Kiro ACP
 needs tool trust for non-interactive file inspection and edits. These are
@@ -46,21 +47,21 @@ promptable state NAMEs listed above; agent names are not valid prompt keys.
 ## Minimal Run
 
 ```sh
-tychonic workflows install ./examples/workflows/architectBuilderKiroRepairQaWorkflow
+tychonic workflows install ./examples/workflows/architectBuilderReviewRepairQaWorkflow
 tychonic runtime up
 ```
 
 In another terminal:
 
 ```sh
-cat > ./architect-builder-kiro-repair-qa-input.json <<'JSON'
+cat > ./architect-builder-review-repair-qa-input.json <<'JSON'
 {
   "cwd": "/abs/path/to/project",
   "goal": "Implement the requested change, let Kiro pre-review/repair, then run final QA."
 }
 JSON
 
-tychonic run architectBuilderKiroRepairQaWorkflow --input-file ./architect-builder-kiro-repair-qa-input.json --wait
+tychonic run architectBuilderReviewRepairQaWorkflow --input-file ./architect-builder-review-repair-qa-input.json --wait
 ```
 
 ## Trade-Off

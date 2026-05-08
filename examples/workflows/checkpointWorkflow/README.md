@@ -17,6 +17,10 @@ before review, after semantic review, or as the final gate.
 - `semantic_review` — `review`
 - `test_review` — `review`
 
+The default profile uses Claude `claude-opus-4-7` with `reasoning_effort: max`
+for `semantic_review` and Codex `gpt-5.5` with `reasoning_effort: xhigh` for the
+final `test_review`.
+
 ## Input
 
 | Field | Required | Purpose |

@@ -1,4 +1,4 @@
-// architectBuilderKiroRepairQaWorkflow — Kiro pre-review and repair before a
+// architectBuilderReviewRepairQaWorkflow — Kiro pre-review and repair before a
 // structured final QA gate.
 
 import { proxyActivities } from "@temporalio/workflow";
@@ -16,25 +16,29 @@ export const defaultProfile = {
     architect: {
       type: "work",
       agent: "claude",
+      model: "claude-opus-4-7",
+      reasoning_effort: "max",
       permission_mode: "plan"
     },
     builder: {
       type: "work",
-      agent: "codex",
+      agent: "kiro",
+      model: "claude-opus-4.6",
+      trust_all_tools: true,
       sandbox: "workspace-write",
       approval: "never"
     },
     pre_review: {
       type: "work",
       agent: "kiro",
-      model: "claude-sonnet-4.5",
+      model: "claude-opus-4.6",
       trust_all_tools: true,
       timeout: "30m"
     },
     repair: {
       type: "work",
       agent: "kiro",
-      model: "claude-sonnet-4.5",
+      model: "claude-opus-4.6",
       trust_all_tools: true,
       sandbox: "workspace-write",
       approval: "never",
@@ -42,10 +46,10 @@ export const defaultProfile = {
     },
     final_qa: {
       type: "review",
-      agent: "claude",
-      model: "opus",
-      reasoning_effort: "max",
-      permission_mode: "plan",
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh",
+      approval: "never",
       timeout: "30m"
     }
   },
@@ -54,11 +58,11 @@ export const defaultProfile = {
 
 const PROMPT_ADDITION_STATES = ["architect", "builder", "pre_review", "repair", "final_qa"];
 
-export async function architectBuilderKiroRepairQaWorkflow(input) {
+export async function architectBuilderReviewRepairQaWorkflow(input) {
   validateTaskWorkflowInput(input, { promptAdditionStates: PROMPT_ADDITION_STATES });
   const ctx = createTychonicWorkflowContext({
     input,
-    template: "architect_builder_kiro_repair_qa",
+    template: "architect_builder_review_repair_qa",
     activities: act
   });
 

@@ -60,8 +60,10 @@ npm test`,
     },
     review: {
       type: "review",
-      agent: "claude",
-      permission_mode: "plan",
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh",
+      approval: "never",
       timeout: "20m"
     }
   },

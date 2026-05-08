@@ -30,21 +30,27 @@ export const defaultProfile = {
     architect: {
       type: "work",
       agent: "claude",
+      model: "claude-opus-4-7",
+      reasoning_effort: "max",
       timeout: "30m",
       permission_mode: "plan"
     },
     builder: {
       type: "work",
-      agent: "codex",
+      agent: "kiro",
+      model: "claude-opus-4.6",
       resume: 2,
       timeout: "60m",
+      trust_all_tools: true,
       sandbox: "workspace-write",
       approval: "never"
     },
     qa: {
       type: "review",
-      agent: "claude",
-      permission_mode: "plan",
+      agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh",
+      approval: "never",
       timeout: "30m"
     }
   },

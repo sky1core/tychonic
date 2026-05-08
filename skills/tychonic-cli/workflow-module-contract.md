@@ -96,11 +96,15 @@ successful smoke in this environment. For example, a Claude state may set
 exact versioned name. Do not reuse Kiro model ids or stale versioned strings
 for Claude states. Before pinning or documenting a Claude exact versioned
 name, verify it with a small `claude -p --model <name>` smoke; Tychonic only
-passes the string through.
+passes the string through. During execution, if a CLI reports the concrete
+selected model and it differs from an exact versioned model string in state
+config, Tychonic fails the activity instead of accepting a silent model
+change. Claude aliases such as `opus` are not exact-match asserted because the
+CLI resolves them to concrete model names internally.
 
 High-model examples should use `model: gpt-5.5` for `codex`,
 `model: gemini-3.1-pro-preview` for `gemini`, and
-`model: claude-sonnet-4.5` for `kiro` when those exact strings
+`model: claude-opus-4.6` for `kiro` when those exact strings
 are available in the installed CLIs. High reasoning examples should use
 `reasoning_effort: max` for `claude` and `reasoning_effort: xhigh` for
 `codex`; `gemini` and `kiro` do not expose a supported reasoning

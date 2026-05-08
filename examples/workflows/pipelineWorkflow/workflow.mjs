@@ -15,20 +15,27 @@ export const defaultProfile = {
   states: {
     work: {
       type: "work",
-      agent: "claude",
-      permission_mode: "acceptEdits"
+      agent: "kiro",
+      model: "claude-opus-4.6",
+      trust_all_tools: true,
+      sandbox: "workspace-write",
+      approval: "never"
     },
     static: { type: "verify", command: "npm run lint" },
     unit: { type: "verify", command: "npm test" },
     review_1: {
       type: "review",
       agent: "claude",
+      model: "claude-opus-4-7",
+      reasoning_effort: "max",
       permission_mode: "plan"
     },
     integration: { type: "verify", command: "npm run test:integration" },
     review_2: {
       type: "review",
       agent: "codex",
+      model: "gpt-5.5",
+      reasoning_effort: "xhigh",
       approval: "never"
     },
     security: { type: "verify", command: "./scripts/security-gate.sh" }

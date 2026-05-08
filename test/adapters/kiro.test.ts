@@ -30,9 +30,9 @@ describe("kiroAdapter", () => {
   it("runNew passes an explicit model setting to the ACP process", () => {
     const { command } = kiroAdapter.runNew({
       ...BASE,
-      model: "claude-sonnet-4.5"
+      model: "claude-opus-4.6"
     });
-    expect(command).toContain("'claude-sonnet-4.5'");
+    expect(command).toContain("'claude-opus-4.6'");
     expect(command).toContain('...(model ? ["--model", model] : [])');
   });
 

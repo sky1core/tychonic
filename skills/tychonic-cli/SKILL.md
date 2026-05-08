@@ -172,22 +172,31 @@ Recommended state profile shape:
 ```yaml
 version: tychonic.config.v1
 states:
-  work:
+  architect:
     type: work
-    agent: codex
-    model: gpt-5.5
-    reasoning_effort: xhigh
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+  builder:
+    type: work
+    agent: kiro
+    model: claude-opus-4.6
+    trust_all_tools: true
+    sandbox: workspace-write
+    approval: never
   verify:
     type: verify
     command: |
       npm run typecheck
       npm run build
       npm test
-  review:
+  qa:
     type: review
-    agent: claude
-    model: opus
-    reasoning_effort: max
+    agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
+    approval: never
 ```
 
 For repeatable workflows, pin `model` on agent states instead of relying on a
@@ -245,7 +254,11 @@ review:
 Do not copy Kiro model ids or stale versioned strings into Claude states.
 Do not rely on memory or `--help` text alone when pinning or documenting a
 Claude exact versioned name; run a small `claude -p --model <name>` smoke first.
-Tychonic only passes the string through.
+Tychonic passes the string through. During execution, if a CLI reports the
+concrete selected model and it differs from an exact versioned model string in
+state config, Tychonic fails the activity instead of accepting a silent model
+change. Claude aliases such as `opus` are not exact-match asserted because the
+CLI resolves them to concrete model names internally.
 
 High-model examples by agent:
 
@@ -264,7 +277,7 @@ gemini_work:
 kiro_work:
   type: work
   agent: kiro
-  model: claude-sonnet-4.5
+  model: claude-opus-4.6
   trust_all_tools: true
 ```
 

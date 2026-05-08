@@ -208,26 +208,38 @@ Recommended profile pattern:
 ```yaml
 version: tychonic.config.v1
 states:
-  work:
+  architect:
     type: work
-    agent: codex
-    model: gpt-5.5
-    reasoning_effort: xhigh
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+  builder:
+    type: work
+    agent: kiro
+    model: claude-opus-4.6
+    trust_all_tools: true
+    sandbox: workspace-write
+    approval: never
   verify:
     type: verify
     command: |
       npm run typecheck
       npm run build
       npm test
-  review:
+  qa:
     type: review
-    agent: claude
-    model: opus
-    reasoning_effort: max
+    agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
+    approval: never
 ```
 
 `model` is recommended for repeatable agent states. `reasoning_effort` is
 recommended for Claude/Codex states whose quality depends on reasoning depth.
+For exact versioned Claude model names, Tychonic compares the CLI-reported
+model with the configured string and fails the activity on mismatch; aliases
+such as `opus` are passed through without exact-match assertion.
 Other knobs such as `resume`, permissions, sandbox, timeout, trust, and policy
 settings should appear only when the workflow behavior needs them.
 
@@ -258,11 +270,12 @@ and fails the review if tracked files change during the review turn.
 - `simpleWorkflow`: one work state, one verify state, one review state.
 - `pipelineWorkflow`: longer one-pass pipeline with repeated `review` states.
 - `checkpointWorkflow`: fixed deterministic gates plus two structured reviews.
-- `architectBuilderQaWorkflow`: standard architect/build/QA pattern.
-- `architectBuilderKiroQaWorkflow`: Kiro performs QA review, then a normalizer
-  structures the verdict.
-- `architectBuilderKiroRepairQaWorkflow`: Kiro performs a pre-review repair
-  pass before final structured QA.
+- `architectBuilderQaWorkflow`: Claude plans, Kiro builds, Codex performs final QA.
+- `architectBuilderFinalQaWorkflow`: Kiro-assisted build with Codex final QA.
+- `architectBuilderFirstReviewQaWorkflow`: Claude plans, Kiro builds and runs the
+  first normalized review, then Codex performs final QA.
+- `architectBuilderReviewRepairQaWorkflow`: Kiro builds, pre-reviews, and repairs
+  before Codex final QA.
 
 Read each bundle's `README.md` before changing its config shape or
 `promptAdditions` state keys.

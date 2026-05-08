@@ -6,7 +6,7 @@
  * - `--model <model>` / `--effort <level>` are included only when the
  *   state config declares `model` / `reasoning_effort`.
  * - `--output-format stream-json --verbose` — emits JSONL events; the
- *   first `system.init` event contains `session_id` (UUID).
+ *   first `system.init` event contains `session_id` (UUID) and `model`.
  * - `--permission-mode <mode>`   — choices include `acceptEdits`,
  *   `plan`, `bypassPermissions`. Worker → `acceptEdits`, reviewer →
  *   `plan`. `--continue` is intentionally not used (it picks the most
@@ -118,19 +118,19 @@ export const claudeAdapter: AgentAdapter = {
   },
 
   /**
-   * Claude's `stream-json` output is a JSONL stream where the first event
-   * is `{"type":"system","subtype":"init","session_id":"<uuid>", ... }`.
-   * We scan the first ~16 lines for that event; also accepting a top-level
-   * `session_id` field on any line covers minor format drift between versions.
+   * Claude's `stream-json` output is a JSONL stream where the init event
+   * carries the stable session id and reported model. We scan the first
+   * ~64 lines and also accept a top-level `session_id` field on any line
+   * for minor format drift between versions.
    */
   parseResult(stdout: string, _stderr: string, _exitCode: number): AdapterRunResult {
-    const sessionId = extractSessionId(stdout);
-    return sessionId === undefined ? {} : { sessionId };
+    return extractInitFields(stdout);
   }
 };
 
-function extractSessionId(stdout: string): string | undefined {
+function extractInitFields(stdout: string): AdapterRunResult {
   const lines = stdout.split(/\r?\n/, 64);
+  const result: AdapterRunResult = {};
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.length === 0 || !trimmed.startsWith("{")) {
@@ -146,9 +146,21 @@ function extractSessionId(stdout: string): string | undefined {
       continue;
     }
     const obj = parsed as Record<string, unknown>;
-    if (typeof obj.session_id === "string" && obj.session_id.length > 0) {
-      return obj.session_id;
+    if (result.sessionId === undefined && typeof obj.session_id === "string" && obj.session_id.length > 0) {
+      result.sessionId = obj.session_id;
+    }
+    if (
+      result.reportedModel === undefined &&
+      obj.type === "system" &&
+      obj.subtype === "init" &&
+      typeof obj.model === "string" &&
+      obj.model.length > 0
+    ) {
+      result.reportedModel = obj.model;
+    }
+    if (result.sessionId !== undefined && result.reportedModel !== undefined) {
+      return result;
     }
   }
-  return undefined;
+  return result;
 }

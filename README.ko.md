@@ -207,27 +207,39 @@ npm run check:contracts
 ```yaml
 version: tychonic.config.v1
 states:
-  work:
+  architect:
     type: work
-    agent: codex
-    model: gpt-5.5
-    reasoning_effort: xhigh
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+  builder:
+    type: work
+    agent: kiro
+    model: claude-opus-4.6
+    trust_all_tools: true
+    sandbox: workspace-write
+    approval: never
   verify:
     type: verify
     command: |
       npm run typecheck
       npm run build
       npm test
-  review:
+  qa:
     type: review
-    agent: claude
-    model: opus
-    reasoning_effort: max
+    agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
+    approval: never
 ```
 
 재현 가능한 agent state에는 `model`을 지정하는 것을 권장합니다.
 Claude/Codex state에서 품질이 reasoning 깊이에 좌우된다면 `reasoning_effort`도
-권장 설정입니다. `resume`, permission, sandbox, timeout, trust, policy 같은
+권장 설정입니다. Claude exact versioned model 이름은 CLI가 보고한 model과
+설정 문자열이 다르면 activity를 실패 처리합니다. `opus` 같은 alias는 CLI가
+내부에서 concrete model로 해석하므로 exact-match 검사 대상이 아닙니다.
+`resume`, permission, sandbox, timeout, trust, policy 같은
 orchestration knob는 workflow 동작에 실제로 필요할 때만 사용합니다.
 
 built-in adapter는 `agent: "<name>"`으로 선택합니다. `command`는 custom CLI,
@@ -259,9 +271,10 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 - `simpleWorkflow`: work, verify, review를 한 번씩 실행하는 기본 workflow
 - `pipelineWorkflow`: 여러 stage와 반복된 `review` state를 보여주는 one-pass pipeline
 - `checkpointWorkflow`: 고정 deterministic gate와 두 structured review를 실행하는 workflow
-- `architectBuilderQaWorkflow`: architect / build / QA 표준 pattern
-- `architectBuilderKiroQaWorkflow`: Kiro가 QA review를 수행하고 normalizer가 verdict를 구조화
-- `architectBuilderKiroRepairQaWorkflow`: Kiro가 pre-review repair를 수행한 뒤 최종 QA로 넘기는 pattern
+- `architectBuilderQaWorkflow`: Claude가 설계하고 Kiro가 build, Codex가 final QA 수행
+- `architectBuilderFinalQaWorkflow`: Kiro-assisted build 뒤 Codex final QA 수행
+- `architectBuilderFirstReviewQaWorkflow`: Claude가 설계하고 Kiro가 build와 1차 normalized review를 수행한 뒤 Codex final QA 수행
+- `architectBuilderReviewRepairQaWorkflow`: Kiro가 build, pre-review, repair를 수행한 뒤 Codex final QA로 넘기는 pattern
 
 config shape나 `promptAdditions` state key를 바꾸기 전에 각 bundle의
 `README.md`를 읽으십시오.

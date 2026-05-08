@@ -566,10 +566,10 @@ states:
     model: opus
     reasoning_effort: max
     permission_mode: plan
-  kiro_review:
+  first_review:
     type: review
     agent: kiro
-    model: claude-sonnet-4.5
+    model: claude-opus-4.6
     normalizer: codex
   verify:
     type: verify
@@ -600,6 +600,11 @@ Rules:
   profile matters. Omitting `model` explicitly delegates model choice to the
   selected external CLI's default or auto-selection behavior. Tychonic passes
   the string through and does not maintain the vendor model list.
+  When a built-in CLI reports the concrete model that handled the request,
+  Tychonic compares that report with exact versioned model strings it sent
+  from state config and fails the activity on mismatch. Claude versionless
+  aliases such as `opus` are pass-through aliases, so they are not exact-match
+  asserted against the concrete model the CLI resolves internally.
 - `reasoning_effort` is valid only with `agent` when that CLI exposes a
   reasoning/effort surface. Current built-in support is `claude` and `codex`.
   Workflow authors should set it on Claude/Codex states whose quality depends
