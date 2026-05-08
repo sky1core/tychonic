@@ -1,6 +1,6 @@
 {
   "name": "tychonic",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "macOS-local AI work operations manager built on Temporal",
   "license": "MIT",
   "type": "module",
