@@ -90,7 +90,7 @@ export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}):
  * a file was placed there by `tychonic service install` (the workflow
  * bundle packaged with tychonic) or by `tychonic workflows install`
  * (an operator-supplied bundle) makes no difference at load time. The
- * worker does not re-seed, repair, or fall back — if the modules
+ * worker does not re-seed, repair, or choose an alternate source — if the modules
  * directory is empty, workflow work cannot run and the error message
  * points the operator at the install commands.
  */

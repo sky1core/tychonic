@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { FINDING_SEVERITIES } from "../domain/types.js";
 
 export const ReviewFindingSchema = z.object({
-  severity: z.enum(["critical", "high", "medium", "low"]),
+  severity: z.enum(FINDING_SEVERITIES),
   title: z.string().min(1),
   detail: z.string().min(1),
   target: z.string().min(1).optional(),
@@ -14,7 +15,7 @@ export const ReviewFindingSchema = z.object({
     (value) => (value === "" ? undefined : value),
     z.string().min(1).optional()
   )
-});
+}).strict();
 
 export const ReviewResultSchema = z
   .object({
@@ -23,6 +24,7 @@ export const ReviewResultSchema = z
     summary: z.string().min(1),
     findings: z.array(ReviewFindingSchema)
   })
+  .strict()
   .superRefine((value, context) => {
     if (value.status === "pass" && value.findings.length !== 0) {
       context.addIssue({

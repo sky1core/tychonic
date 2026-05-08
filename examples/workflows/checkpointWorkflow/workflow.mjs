@@ -5,7 +5,7 @@
 // use the `verify` TYPE; their state NAMEs carry workflow-specific meaning.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
 import { validateIntegrationPolicy } from "./integrationPolicy.mjs";
 
 const act = proxyActivities({
@@ -36,19 +36,8 @@ export const defaultProfile = {
   policies: { integration: { position: "final_gate" } }
 };
 
-const CHECKPOINT_WORKFLOW_INPUT_FIELDS = new Set(["cwd", "profile", "goal"]);
-
-function rejectUnknownInputFields(input) {
-  if (!input || typeof input !== "object") return;
-  for (const field of Object.keys(input)) {
-    if (!CHECKPOINT_WORKFLOW_INPUT_FIELDS.has(field)) {
-      throw new Error(`unsupported input field: ${field}`);
-    }
-  }
-}
-
 export async function checkpointWorkflow(input) {
-  rejectUnknownInputFields(input);
+  validateTaskWorkflowInput(input);
   validateIntegrationPolicy(input.profile?.policies);
 
   const ctx = createTychonicWorkflowContext({

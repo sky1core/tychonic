@@ -30,8 +30,7 @@ export const ActivityTypeSchema = z.enum([
 
 export type ActivityType = z.infer<typeof ActivityTypeSchema>;
 
-const ORCHESTRATION_FIELDS = [
-  "resume",
+const ADAPTER_EXECUTION_FIELDS = [
   "sandbox",
   "approval",
   "permission_mode",
@@ -41,11 +40,11 @@ const ORCHESTRATION_FIELDS = [
 export const activityTypeContracts = {
   verify: {
     required: ["command"],
-    allowed: ["command", "timeout", ...ORCHESTRATION_FIELDS]
+    allowed: ["command", "timeout"]
   },
   work: {
     requiredOneOf: [["command", "agent"]],
-    allowed: ["agent", "command", "model", "reasoning_effort", "timeout", ...ORCHESTRATION_FIELDS]
+    allowed: ["agent", "command", "model", "reasoning_effort", "resume", "timeout", ...ADAPTER_EXECUTION_FIELDS]
   },
   review: {
     requiredOneOf: [["command", "agent"]],
@@ -56,7 +55,7 @@ export const activityTypeContracts = {
       "model",
       "reasoning_effort",
       "timeout",
-      ...ORCHESTRATION_FIELDS
+      ...ADAPTER_EXECUTION_FIELDS
     ]
   }
 } as const satisfies Record<
@@ -97,10 +96,10 @@ type ActivityBlockField =
  * - `reasoning_effort` is an optional built-in adapter setting for agents
  *   whose CLI exposes a reasoning/effort surface.
  * - `agent` and `command` are mutually exclusive execution selectors
- * - `resume` is a non-negative integer workflow-readable budget. `0` or
- *   an absent value disables in-session resume by convention. The schema
- *   does not infer behavior from TYPE, NAME, `agent`, or `command`; workflow
- *   code decides whether that number matters for its own loop.
+ * - `resume` is a non-negative integer workflow-readable budget for built-in
+ *   work-agent states. `0` or an absent value disables in-session resume by
+ *   convention. Verbatim commands own their own continuation behavior and do
+ *   not receive host resume semantics.
  */
 const SandboxSchema = z.enum(["read-only", "workspace-write", "danger-full-access"]);
 const ApprovalSchema = z.enum(["never", "on-request", "on-failure", "untrusted"]);
@@ -126,12 +125,12 @@ export const StateConfigBlockSchema = z
 
 /**
  * `policies` is an opaque map of workflow-author-defined policy blocks.
- * The host schema validates only the outer shape (object with string
- * keys); each workflow bundle validates the keys it consumes at workflow
- * start. Cross-field rules and unknown-key checks live in the bundle
- * that owns the policy.
+ * The host schema validates the outer contract: named policy blocks keyed by
+ * the same NAME grammar as states, each block being an object. Each workflow
+ * bundle validates the keys it consumes at workflow start. Cross-field rules
+ * and unknown-key checks live in the bundle that owns the policy.
  */
-export const PoliciesSchema = z.record(z.string(), z.unknown());
+export const PoliciesSchema = z.record(ActivityNameSchema, z.record(z.string().min(1), z.unknown()));
 
 export const TychonicConfigSchema = z
   .object({
@@ -286,6 +285,7 @@ function validateActivityBlock(block: ActivityBlock, ctx: z.RefinementCtx): void
   validateSingleExecutionSelector(block, ctx);
   validateReviewerCapableAgent(block, ctx);
   validateAgentSettings(block, ctx);
+  validateAdapterExecutionSettings(block, ctx);
 }
 
 /**
@@ -388,6 +388,26 @@ function validateAgentSettings(block: ActivityBlock, ctx: z.RefinementCtx): void
           `agent ${block.agent} does not support states.<name>.reasoning_effort; ` +
           "supported agents are claude and codex",
         path: ["reasoning_effort"]
+      });
+    }
+  }
+}
+
+function validateAdapterExecutionSettings(block: ActivityBlock, ctx: z.RefinementCtx): void {
+  if (block.resume !== undefined && (block.type !== "work" || block.agent === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "states.<name>.resume is only valid on work states that select a built-in agent",
+      path: ["resume"]
+    });
+  }
+
+  for (const key of ADAPTER_EXECUTION_FIELDS) {
+    if (block[key] !== undefined && block.agent === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `states.<name>.${key} is only valid with agent, not command`,
+        path: [key]
       });
     }
   }

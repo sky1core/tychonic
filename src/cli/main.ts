@@ -83,7 +83,7 @@ program.addHelpText(
 program.addOption(
   new Option(
     "--instance <name>",
-    "isolated dev instance name; derives state dir, Temporal API port, and task queue from <name>. Falls back to $TYCHONIC_INSTANCE when omitted. Unset targets the operational paths."
+    "isolated dev instance name; derives state dir, Temporal API port, and task queue from <name>. Uses $TYCHONIC_INSTANCE when omitted. Unset targets the operational paths."
   ).hideHelp()
 );
 

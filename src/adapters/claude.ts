@@ -27,6 +27,7 @@ import type {
   AdapterRunResult,
   AgentAdapter
 } from "./types.js";
+import { FINDING_SEVERITIES } from "../domain/types.js";
 import { shellQuote } from "./shell.js";
 
 const BIN = "claude";
@@ -35,7 +36,7 @@ const REVIEW_FINDING_JSON_SCHEMA = {
   description: "One actionable problem. Do not use findings for evidence, confirmations, or passing notes.",
   additionalProperties: false,
   properties: {
-    severity: { enum: ["critical", "high", "medium", "low"], description: "Severity of the problem." },
+    severity: { enum: FINDING_SEVERITIES, description: "Severity of the problem." },
     title: { type: "string", minLength: 1, description: "Short problem title." },
     detail: { type: "string", minLength: 1, description: "Actionable explanation of the problem." },
     target: { type: "string", minLength: 1, description: "File, state, or session target when known." },
@@ -119,9 +120,8 @@ export const claudeAdapter: AgentAdapter = {
   /**
    * Claude's `stream-json` output is a JSONL stream where the first event
    * is `{"type":"system","subtype":"init","session_id":"<uuid>", ... }`.
-   * We scan the first ~16 lines for that event; falling back to a top-level
-   * `session_id` field on any line covers minor format drift between
-   * versions.
+   * We scan the first ~16 lines for that event; also accepting a top-level
+   * `session_id` field on any line covers minor format drift between versions.
    */
   parseResult(stdout: string, _stderr: string, _exitCode: number): AdapterRunResult {
     const sessionId = extractSessionId(stdout);

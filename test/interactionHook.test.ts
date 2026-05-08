@@ -272,7 +272,27 @@ describe("interactionHook", () => {
         {
           kind: "invalid",
           state: "<invalid>",
-          reason: "modify payload patch must be an object"
+          reason: "modify payload patch must be a StateRecordPatch object"
+        }
+      ]);
+      dispatchSignal(harness, interactionApproveStateSignalName, { state: "work" } satisfies InteractionApproveStatePayload);
+      await expect(pending).resolves.toEqual({ kind: "approve" });
+    });
+
+    it("keeps a modify payload with extra patch keys from satisfying the approval gate", async () => {
+      registerInteractionSignals();
+      setInteractionPolicy({ mode: "interactive" });
+      const pending = waitForStateApproval("work");
+      dispatchSignal(harness, interactionModifyStateSignalName, {
+        state: "work",
+        patch: { status: "failed", summary: "typo" }
+      });
+      await flushMicrotasks();
+      expect(drainStraySignals()).toMatchObject([
+        {
+          kind: "invalid",
+          state: "<invalid>",
+          reason: "modify payload patch.summary is not allowed"
         }
       ]);
       dispatchSignal(harness, interactionApproveStateSignalName, { state: "work" } satisfies InteractionApproveStatePayload);

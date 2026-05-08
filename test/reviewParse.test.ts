@@ -33,6 +33,14 @@ describe("parseReviewOutput — raw JSON", () => {
     expect(parseReviewOutput(`noise line\n${failReview}\ntrailing noise`)).toBeUndefined();
   });
 
+  it("rejects JSONL streams on the command/wire-only parser", () => {
+    const stream = [
+      failReview,
+      `{"schema_version":"tychonic.review.v1","status":"pass","summary":"ok","findings":[]}`
+    ].join("\n");
+    expect(parseReviewOutput(stream)).toBeUndefined();
+  });
+
   it("rejects pass result with non-empty findings", () => {
     const bad = `{"schema_version":"tychonic.review.v1","status":"pass","summary":"ok","findings":[{"severity":"low","title":"t","detail":"d","target":"x"}]}`;
     expect(parseReviewOutput(bad)).toBeUndefined();
@@ -51,6 +59,14 @@ describe("parseReviewOutput — raw JSON", () => {
   it("rejects raw semantic payload without schema_version", () => {
     const semanticOnly = `{"status":"pass","summary":"ok","findings":[]}`;
     expect(parseReviewOutput(semanticOnly)).toBeUndefined();
+  });
+
+  it("rejects unknown review wire fields instead of stripping them", () => {
+    const extraTopLevel = `{"schema_version":"tychonic.review.v1","status":"pass","summary":"ok","findings":[],"verdict":"approve"}`;
+    const extraFinding = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"bad","findings":[{"severity":"low","title":"t","detail":"d","extra":"x"}]}`;
+
+    expect(parseReviewOutput(extraTopLevel)).toBeUndefined();
+    expect(parseReviewOutput(extraFinding)).toBeUndefined();
   });
 
   it("rejects built-in adapter envelopes on the command/wire-only parser", () => {
@@ -164,7 +180,7 @@ describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () =>
     expect(parsed?.status).toBe("pass");
   });
 
-  it("uses a final semantic payload line after a malformed codex tool event", () => {
+  it("rejects a bare semantic payload line after a malformed codex tool event", () => {
     const semanticPass = `{"status":"pass","summary":"last message file","findings":[]}`;
     const stream = [
       `{"type":"thread.started","thread_id":"t"}`,
@@ -172,10 +188,7 @@ describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () =>
       `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","aggregated_output":"unterminated`,
       semanticPass
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
-    expect(parsed?.schema_version).toBe("tychonic.review.v1");
-    expect(parsed?.status).toBe("pass");
-    expect(parsed?.summary).toBe("last message file");
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
 });

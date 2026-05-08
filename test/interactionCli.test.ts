@@ -81,6 +81,17 @@ describe("tychonic approve / reject / modify", () => {
     expect(result.stderr + result.stdout).toMatch(/patch\.status must be terminal/);
   });
 
+  it("modify fails when no patch field is supplied", async () => {
+    const result = await runCli([
+      "modify",
+      "wf_id",
+      "--state",
+      "work"
+    ]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr + result.stdout).toMatch(/must set at least one field/);
+  });
+
   it("modify fails when --patch-file JSON is malformed", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tychonic-cli-modify-bad-"));
     const file = join(dir, "bad.json");
@@ -95,6 +106,22 @@ describe("tychonic approve / reject / modify", () => {
     ]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr + result.stdout).toMatch(/contains invalid JSON/);
+  });
+
+  it("modify fails when --patch-file contains unknown patch keys", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tychonic-cli-modify-extra-"));
+    const file = join(dir, "extra.json");
+    await writeFile(file, JSON.stringify({ status: "failed", summary: "typo" }), "utf8");
+    const result = await runCli([
+      "modify",
+      "wf_id",
+      "--state",
+      "work",
+      "--patch-file",
+      file
+    ]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr + result.stdout).toMatch(/summary is not allowed/);
   });
 
   it.each([

@@ -7,24 +7,47 @@ export type WorkflowRunStatus =
   | "succeeded"
   | "cancelled";
 
-export type WorkflowStateStatus =
-  | "pending"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "skipped"
-  | "blocked"
-  | "timed_out";
+export const WORKFLOW_STATE_STATUSES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+  "blocked",
+  "timed_out"
+] as const;
 
-export type FindingStatus =
-  | "new"
-  | "confirmed"
-  | "auto_fix_candidate"
-  | "needs_decision"
-  | "deferred"
-  | "accepted"
-  | "rejected"
-  | "fixed";
+export type WorkflowStateStatus = (typeof WORKFLOW_STATE_STATUSES)[number];
+
+export const TERMINAL_WORKFLOW_STATE_STATUSES = [
+  "succeeded",
+  "failed",
+  "skipped",
+  "blocked",
+  "timed_out"
+] as const satisfies readonly WorkflowStateStatus[];
+
+export const FINDING_STATUSES = [
+  "new",
+  "confirmed",
+  "auto_fix_candidate",
+  "needs_decision",
+  "deferred",
+  "accepted",
+  "rejected",
+  "fixed"
+] as const;
+
+export type FindingStatus = (typeof FINDING_STATUSES)[number];
+
+export const FINDING_SEVERITIES = [
+  "critical",
+  "high",
+  "medium",
+  "low"
+] as const;
+
+export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
 
 export type AttemptKind =
   | "classify_diff"
@@ -90,7 +113,7 @@ export interface AgentSessionRecord {
 export interface FindingRecord {
   id: string;
   status: FindingStatus;
-  severity: "critical" | "high" | "medium" | "low";
+  severity: FindingSeverity;
   title: string;
   detail: string;
   target?: string;

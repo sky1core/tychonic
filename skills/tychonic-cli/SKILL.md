@@ -136,6 +136,17 @@ the workflow exposes extra state instructions. The workflow owns policy keys,
 artifacts, inbox items, signals, and recovery flow. Read the bundle README
 before configuring or operating that workflow.
 
+Before running a workflow from a changed checkout, run the contract gate:
+
+```sh
+npm run check:contracts
+```
+
+This is a pre-run contract check for config, workflow input, review parsing,
+and interaction signal surfaces. It calls the production validators and parsers;
+it does not replace runtime evidence from the actual workflow run. If it fails,
+fix the contract failure before starting the workflow.
+
 ## Bundle Config
 
 The installed bundle's `defaultProfile` is the default config source.
@@ -291,7 +302,7 @@ trust, Kiro can stop on tool approval instead of completing the workflow.
 `TYCHONIC_AGENT_PATH` prepends directories to the agent CLI lookup path. Use it
 when a smoke test or local setup needs Tychonic to find agent binaries outside
 the normal `PATH`, for example a temporary stub directory or a locally installed
-CLI. It is not workflow config and workflow run input should not mention
+CLI. It is not workflow config and workflow run input must not mention
 it.
 
 Built-in review adapters ask the model for the semantic payload:

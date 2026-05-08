@@ -54,7 +54,6 @@ export type InteractionSignalPayload =
 export interface ActivityCallFieldsByType {
   work: {
     prompt?: string;
-    goal?: string;
     worktreePath?: string;
     sessionId?: string;
   };

@@ -39,8 +39,8 @@ and findings, publishing status snapshots, finalizing runs, and standard
 interaction-gate plumbing — belongs in reusable `tychonic/workflow` helpers,
 not copy-pasted into every workflow module.
 
-Tychonic core ships **zero first-party workflows**. The host package contains
-no built-in workflow modules. Workflows are user-supplied bundles installed via
+Tychonic core contains **zero workflow modules**. Workflows are user-supplied
+bundles installed via
 `tychonic workflows install`. Reference example bundles live under
 `examples/workflows/` and are explicitly opt-in installs, not host defaults.
 

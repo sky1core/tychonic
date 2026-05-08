@@ -27,6 +27,11 @@ import {
   type InteractionRejectStatePayload,
   type StateRecordPatch
 } from "../temporal/types.js";
+import {
+  parseInteractionApprovePayload,
+  parseInteractionModifyPayload,
+  parseInteractionRejectPayload
+} from "../interaction/payloads.js";
 import { applyModifyStateDecision } from "./runMerge.js";
 
 export type ApprovalDecision =
@@ -155,15 +160,15 @@ export function registerInteractionSignals(): void {
   const modifySignal = harness.defineSignal<[InteractionModifyStatePayload]>(interactionModifyStateSignalName);
 
   harness.setHandler(approveSignal, (payload: unknown) => {
-    const parsed = parseApprovePayload(payload);
+    const parsed = parseInteractionApprovePayload(payload);
     signalQueue.push(parsed.ok ? { kind: "approve", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
   });
   harness.setHandler(rejectSignal, (payload: unknown) => {
-    const parsed = parseRejectPayload(payload);
+    const parsed = parseInteractionRejectPayload(payload);
     signalQueue.push(parsed.ok ? { kind: "reject", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
   });
   harness.setHandler(modifySignal, (payload: unknown) => {
-    const parsed = parseModifyPayload(payload);
+    const parsed = parseInteractionModifyPayload(payload);
     signalQueue.push(parsed.ok ? { kind: "modify", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
   });
 
@@ -203,11 +208,10 @@ export function effectiveInteractionMode(): "auto" | "interactive" {
 }
 
 /**
- * Resolve the reject cap for the current policy. Falls back to the
- * documented default of 5 when mode is interactive and the policy did
- * not set a cap explicitly. Auto mode callers must not consult this
- * value; the function returns `Infinity` in that case to make
- * accidental use inert.
+ * Resolve the reject cap for the current policy. Interactive mode uses the
+ * documented default of 5 when the policy did not set a cap explicitly. Auto
+ * mode callers must not consult this value; the function returns `Infinity`
+ * in that case to make accidental use inert.
  */
 export function resolveRejectCap(): number {
   if (policyCache.mode !== "interactive") {
@@ -389,52 +393,6 @@ export function isRejectCapReached(
   return (counts.get(stateName) ?? 0) >= cap;
 }
 
-type ParsedPayload<T> = { ok: true; payload: T } | { ok: false; reason: string };
-
-function parseApprovePayload(payload: unknown): ParsedPayload<InteractionApproveStatePayload> {
-  const state = payloadState(payload);
-  if (!state) {
-    return { ok: false, reason: "approve payload state must be a non-empty string" };
-  }
-  return { ok: true, payload: { state } };
-}
-
-function parseRejectPayload(payload: unknown): ParsedPayload<InteractionRejectStatePayload> {
-  const state = payloadState(payload);
-  if (!state) {
-    return { ok: false, reason: "reject payload state must be a non-empty string" };
-  }
-  const feedback = objectField(payload, "feedback");
-  if (typeof feedback !== "string" || feedback.length === 0) {
-    return { ok: false, reason: "reject payload feedback must be a non-empty string" };
-  }
-  return { ok: true, payload: { state, feedback } };
-}
-
-function parseModifyPayload(payload: unknown): ParsedPayload<InteractionModifyStatePayload> {
-  const state = payloadState(payload);
-  if (!state) {
-    return { ok: false, reason: "modify payload state must be a non-empty string" };
-  }
-  const patch = objectField(payload, "patch");
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
-    return { ok: false, reason: "modify payload patch must be an object" };
-  }
-  return { ok: true, payload: { state, patch: patch as StateRecordPatch } };
-}
-
 function invalidSignal(payload: unknown, reason: string): QueuedInvalid {
   return { kind: "invalid", state: "<invalid>", payload, reason };
-}
-
-function payloadState(payload: unknown): string | undefined {
-  const state = objectField(payload, "state");
-  return typeof state === "string" && state.length > 0 ? state : undefined;
-}
-
-function objectField(payload: unknown, key: string): unknown {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return undefined;
-  }
-  return (payload as Record<string, unknown>)[key];
 }

@@ -12,8 +12,8 @@
  * `{ inheritProcessGroup: true }`, so the temporal child shares that pgid.
  * Reset therefore tries `kill(-pgid, sig)` first. Foreground instance
  * runtimes also write `runtime.pid` for `runtime stop`; those pids are not
- * necessarily process-group leaders, so reset falls back to direct pid
- * signaling when the group signal reports ESRCH.
+ * necessarily process-group leaders, so reset uses direct pid signaling
+ * when the group signal reports ESRCH.
  *
  * Belt-and-suspenders: reset additionally reads
  * `<state>/temporal/temporal.pid`, which `startTemporal` writes after
@@ -41,8 +41,8 @@ export interface KillAndRemoveInstanceOptions {
   stateDir: string;
   logDir: string;
   /**
-   * Maximum total wait time (ms) after SIGTERM before falling back to
-   * SIGKILL. Default 10_000ms per design.
+   * Maximum total wait time (ms) after SIGTERM before sending SIGKILL.
+   * Default 10_000ms per design.
    */
   waitForExitMs?: number;
   /** Poll interval (ms) while waiting for SIGTERM to take effect. */
@@ -206,7 +206,7 @@ export async function killAndRemoveInstance(
       // process-group signal reaches both the parent and its Temporal child.
       // Foreground instance runtimes also write runtime.pid for `runtime stop`,
       // but their pid is not necessarily a pgid. If the group signal reports
-      // ESRCH, fall back to direct parent signaling.
+      // ESRCH, use direct parent signaling.
       let parentSignalMode: "group" | "direct" | null = null;
       try {
         signalProcessGroup(pid, "SIGTERM");

@@ -1,19 +1,15 @@
 import { applyRunDelta } from "../domain/runDelta.js";
+import {
+  TERMINAL_WORKFLOW_STATE_STATUSES,
+  type WorkflowStateStatus
+} from "../domain/types.js";
 import type {
   DecisionInboxItemRecord,
   WorkflowRunRecord,
-  WorkflowStateRecord,
-  WorkflowStateStatus
+  WorkflowStateRecord
 } from "../domain/types.js";
+import { validateStateRecordPatch } from "../interaction/payloads.js";
 import type { ActivityResult, StateRecordPatch } from "../temporal/types.js";
-
-const TERMINAL_STATE_STATUSES: readonly WorkflowStateStatus[] = [
-  "succeeded",
-  "failed",
-  "skipped",
-  "blocked",
-  "timed_out"
-] as const;
 
 /**
  * Pure helpers workflow code uses to merge activity results into its local
@@ -173,6 +169,7 @@ export function applyModifyStateDecision(
   stateName: string,
   patch: StateRecordPatch
 ): WorkflowRunRecord {
+  validateStateRecordPatch(patch, "modifyState patch");
   let latestIndex = -1;
   for (let i = run.states.length - 1; i >= 0; i--) {
     const candidate = run.states[i];
@@ -189,9 +186,9 @@ export function applyModifyStateDecision(
   const original = run.states[latestIndex]!;
 
   const nextStatus: WorkflowStateStatus = patch.status ?? original.status;
-  if (!TERMINAL_STATE_STATUSES.includes(nextStatus)) {
+  if (!(TERMINAL_WORKFLOW_STATE_STATUSES as readonly WorkflowStateStatus[]).includes(nextStatus)) {
     throw new Error(
-      `modifyState resulting status must be terminal (one of ${TERMINAL_STATE_STATUSES.join(", ")}), got '${nextStatus}'`
+      `modifyState resulting status must be terminal (one of ${TERMINAL_WORKFLOW_STATE_STATUSES.join(", ")}), got '${nextStatus}'`
     );
   }
 

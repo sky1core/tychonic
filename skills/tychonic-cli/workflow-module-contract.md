@@ -32,7 +32,7 @@ activities. Operators pass workflow input as a JSON object and replace config
 with `tychonic run --config <file>`, not by putting `profile` in workflow JSON
 input.
 
-Workflow run input should stay task-shaped (`cwd`, `goal`) for every installed
+Workflow run input must stay task-shaped (`cwd`, `goal`) for every installed
 workflow. Workflow prompts are bundle-owned defaults. If a workflow accepts
 per-state extra prompt instructions, use the additive map
 `promptAdditions.<stateName>`. Reject keys that do not match promptable state
@@ -63,7 +63,7 @@ resolver state during install.
   Express those roles as state NAMEs.
 
 Do not encode workflow graph behavior in config. Do not add source-tree
-shortcuts or built-in workflow execution paths.
+shortcuts or alternate workflow execution paths.
 
 ## State Config
 

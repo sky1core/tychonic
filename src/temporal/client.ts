@@ -17,7 +17,8 @@ import {
   type InteractionRejectStatePayload,
   type StateRecordPatch
 } from "./types.js";
-import type { WorkflowStateRecord, WorkflowStateStatus } from "../domain/types.js";
+import { validateStateRecordPatch } from "../interaction/payloads.js";
+import type { WorkflowStateRecord } from "../domain/types.js";
 import type { WorkflowRunStatus } from "../domain/types.js";
 
 const RUNNING_WORKFLOW_QUERY_TIMEOUT_MS = 2_000;
@@ -339,18 +340,6 @@ export async function signalNamedWorkflow(
   };
 }
 
-/**
- * Terminal state statuses that an external `modifyState` payload may
- * carry. Matches the runMerge contract (`applyModifyStateDecision`).
- */
-const INTERACTION_MODIFY_TERMINAL_STATUSES: readonly WorkflowStateStatus[] = [
-  "succeeded",
-  "failed",
-  "skipped",
-  "blocked",
-  "timed_out"
-];
-
 export async function signalInteractionApproveState(
   options: SignalInteractionApproveStateOptions
 ): Promise<WorkflowSignalResult> {
@@ -395,7 +384,7 @@ export async function signalInteractionModifyState(
   options: SignalInteractionModifyStateOptions
 ): Promise<WorkflowSignalResult> {
   validateInteractionStateName(options.state, "modifyState");
-  validateInteractionModifyPayload(options.state, options.patch);
+  validateStateRecordPatch(options.patch, "modifyState patch");
   const config = normalizeTemporalConfig(options);
   const connection = await Connection.connect({ address: config.address });
   const client = new Client({ connection, namespace: config.namespace });
@@ -436,40 +425,6 @@ export async function queryInteractionPendingState(
 function validateInteractionStateName(state: unknown, signalLabel: string): void {
   if (typeof state !== "string" || state.length === 0) {
     throw new Error(`${signalLabel} 'state' must be a non-empty string`);
-  }
-}
-
-/**
- * SPEC §Interaction Signal Contract requires `modifyState` payloads to carry
- * a `StateRecordPatch` whose optional `status` is terminal. The workflow-side
- * patch application re-validates the same contract (defense in depth against
- * non-CLI callers), but client callers get a cleaner error here before the
- * signal is sent.
- */
-function validateInteractionModifyPayload(_state: string, patch: unknown): void {
-  if (!patch || typeof patch !== "object") {
-    throw new Error("modifyState patch must be a StateRecordPatch object");
-  }
-  const p = patch as Partial<StateRecordPatch>;
-  if (
-    p.status !== undefined &&
-    !INTERACTION_MODIFY_TERMINAL_STATUSES.includes(p.status as (typeof INTERACTION_MODIFY_TERMINAL_STATUSES)[number])
-  ) {
-    throw new Error(
-      `modifyState patch.status must be terminal (one of ${INTERACTION_MODIFY_TERMINAL_STATUSES.join(", ")}), got '${String(p.status)}'`
-    );
-  }
-  if (p.reason !== undefined && typeof p.reason !== "string") {
-    throw new Error("modifyState patch.reason must be a string");
-  }
-  if (p.note !== undefined && typeof p.note !== "string") {
-    throw new Error("modifyState patch.note must be a string");
-  }
-  if (p.artifacts !== undefined && !Array.isArray(p.artifacts)) {
-    throw new Error("modifyState patch.artifacts must be an array");
-  }
-  if (p.findings !== undefined && !Array.isArray(p.findings)) {
-    throw new Error("modifyState patch.findings must be an array");
   }
 }
 

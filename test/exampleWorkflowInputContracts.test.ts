@@ -18,6 +18,12 @@ import { pipelineWorkflow } from "../examples/workflows/pipelineWorkflow/workflo
 import { verifyOnlyWorkflow } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
 
 describe("example workflow input contracts", () => {
+  it("rejects task input without cwd before starting activities", async () => {
+    await expect(
+      checkpointWorkflow({ goal: "inspect" })
+    ).rejects.toThrow(/cwd must be a non-empty string/);
+  });
+
   it("checkpointWorkflow rejects undocumented input fields", async () => {
     await expect(
       checkpointWorkflow({ cwd: "/tmp/tychonic-test", autonomy: "review" })
@@ -76,6 +82,15 @@ describe("example workflow input contracts", () => {
     ).rejects.toThrow(/promptAdditions\.qa does not match a configured state/);
   });
 
+  it("rejects prompt additions when effective profile states are absent", async () => {
+    await expect(
+      architectBuilderQaWorkflow({
+        cwd: "/tmp/tychonic-test",
+        promptAdditions: { architect: "inspect first" }
+      })
+    ).rejects.toThrow(/promptAdditions requires effective profile\.states/);
+  });
+
   it("rejects non-string prompt addition values", async () => {
     await expect(
       pipelineWorkflow({
@@ -89,5 +104,11 @@ describe("example workflow input contracts", () => {
     await expect(
       verifyOnlyWorkflow({ cwd: "/tmp/tychonic-test", command: "npm test" })
     ).rejects.toThrow(/unsupported input field: command/);
+  });
+
+  it("verifyOnlyWorkflow rejects goal because that workflow exposes no task prompt", async () => {
+    await expect(
+      verifyOnlyWorkflow({ cwd: "/tmp/tychonic-test", goal: "run tests" })
+    ).rejects.toThrow(/unsupported input field: goal/);
   });
 });

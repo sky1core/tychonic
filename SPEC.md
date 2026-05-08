@@ -318,7 +318,7 @@ Tychonic ships **no** workflow bundles inside the host package. A fresh
 `tychonic service install` produces an empty workflow module registry. The
 operator installs whatever bundles the project needs — hand-authored, or
 the example bundles under `examples/workflows/` — through `tychonic
-workflows install <directory>`. There is no separate "built-in workflow"
+workflows install <directory>`. There is no separate host-shipped workflow
 execution path.
 
 ### Workflow-default profile
@@ -876,13 +876,13 @@ CLI sends them:
 `state` is always a non-empty state NAME. `reject.feedback` is a non-empty
 string.
 
-`StateRecordPatch` is an object with these optional fields:
+`StateRecordPatch` is an object with at least one meaningful field:
 
 - `status`: one of `succeeded`, `failed`, `skipped`, `blocked`, `timed_out`
-- `reason`: string
-- `note`: string
-- `artifacts`: `ArtifactRecord[]`
-- `findings`: `FindingRecord[]`
+- `reason`: non-empty string
+- `note`: non-empty string
+- `artifacts`: non-empty `ArtifactRecord[]`
+- `findings`: non-empty `FindingRecord[]`
 
 The CLI validates this payload before signaling. The standard interaction
 helper revalidates these payloads inside the workflow and treats malformed raw

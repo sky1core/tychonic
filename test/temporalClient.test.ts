@@ -1,5 +1,5 @@
 import { defaultDataConverter, toPayloads } from "@temporalio/common";
-import { Connection, type WorkflowExecutionDescription, type WorkflowExecutionInfo } from "@temporalio/client";
+import { type WorkflowExecutionDescription, type WorkflowExecutionInfo } from "@temporalio/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   signalInteractionApproveState,
@@ -181,19 +181,41 @@ describe("Interaction signal senders", () => {
     ).rejects.toThrow(/patch must be a StateRecordPatch object/);
   });
 
-  it("accepts an empty patch (no-op overlay is a valid signal)", async () => {
-    // The signal itself validates; actual delivery requires a connection.
-    // The mocked connection boundary keeps this unit test out of Temporal startup.
-    const connectSpy = vi.spyOn(Connection, "connect").mockRejectedValue(new Error("connection boundary reached"));
-
+  it("rejects an empty patch before connecting", async () => {
     await expect(
       signalInteractionModifyState({
         workflowId: "wf",
         state: "work",
         patch: {}
       })
-    ).rejects.toThrow(/connection boundary reached/);
-    expect(connectSpy).toHaveBeenCalledTimes(1);
+    ).rejects.toThrow(/must set at least one field/);
+  });
+
+  it("rejects unknown patch keys before connecting", async () => {
+    await expect(
+      signalInteractionModifyState({
+        workflowId: "wf",
+        state: "work",
+        patch: { status: "failed", summary: "typo" } as never
+      })
+    ).rejects.toThrow(/summary is not allowed/);
+  });
+
+  it("rejects no-op patch values before connecting", async () => {
+    await expect(
+      signalInteractionModifyState({
+        workflowId: "wf",
+        state: "work",
+        patch: { note: "" }
+      })
+    ).rejects.toThrow(/note must be a non-empty string/);
+    await expect(
+      signalInteractionModifyState({
+        workflowId: "wf",
+        state: "work",
+        patch: { artifacts: [] }
+      })
+    ).rejects.toThrow(/artifacts must contain at least one artifact/);
   });
 });
 

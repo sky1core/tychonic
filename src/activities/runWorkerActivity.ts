@@ -45,7 +45,7 @@ export async function runWorkerActivity(input: RunWorkerActivityInput): Promise<
   }
 
   const store = new RunArtifactStore(join(input.cwd, ".tychonic"));
-  const prompt = input.prompt ?? input.goal ?? "";
+  const prompt = input.prompt ?? "";
   const resumeSession = resolveExplicitResumeSession(input);
 
   const resources: WorkerActivityResources = {

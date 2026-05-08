@@ -131,7 +131,7 @@ describe("killAndRemoveInstance (SIGTERM succeeds)", () => {
     expect(directSignals).toEqual([]);
   });
 
-  it("falls back to direct parent signaling when the pid is not a process-group leader", async () => {
+  it("uses direct parent signaling when the pid is not a process-group leader", async () => {
     const groupSignals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
     const directSignals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
     let alive = true;

@@ -259,7 +259,18 @@ describe("applyModifyStateDecision", () => {
     run.states = [terminalState("state_f1", "review", "succeeded", "2026-01-01T00:00:00Z")];
     expect(() =>
       applyModifyStateDecision(run, "review", { status: "running" as never })
-    ).toThrowError(/resulting status must be terminal/);
+    ).toThrowError(/patch\.status must be terminal/);
+  });
+
+  it("throws when patch is empty or contains an unknown key", () => {
+    const run = baseRun("run_modify_patch_contract");
+    run.states = [terminalState("state_patch", "review", "succeeded", "2026-01-01T00:00:00Z")];
+    expect(() =>
+      applyModifyStateDecision(run, "review", {})
+    ).toThrowError(/must set at least one field/);
+    expect(() =>
+      applyModifyStateDecision(run, "review", { status: "failed", summary: "typo" } as never)
+    ).toThrowError(/summary is not allowed/);
   });
 
   it("appends a note to existing reason (separator format)", () => {

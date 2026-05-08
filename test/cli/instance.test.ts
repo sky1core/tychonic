@@ -72,7 +72,7 @@ describe("tychonic --instance global option", () => {
     expect(payload._meta).toEqual({ instance: "foo" });
   });
 
-  it("falls back to $TYCHONIC_INSTANCE when --instance is omitted", async () => {
+  it("uses $TYCHONIC_INSTANCE when --instance is omitted", async () => {
     const stateHome = await makeStateHome();
     const result = await runCli(["workflows", "list"], {
       env: { TYCHONIC_STATE_HOME: stateHome, TYCHONIC_INSTANCE: "bar" }

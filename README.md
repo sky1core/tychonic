@@ -21,7 +21,7 @@ checks, and review gates.
 - Spread work across agent CLIs and model accounts when that is useful for
   quality, cost, or token usage.
 
-Tychonic core ships no built-in workflows. Workflows are installed bundles.
+Tychonic core contains no workflow modules. Workflows are installed bundles.
 Reference examples live under `examples/workflows/` and are opt-in.
 
 ## Requirements
@@ -192,6 +192,16 @@ Workflow run input uses one stable task-shaped public contract: `cwd` plus
 instructions are needed, use `promptAdditions.<stateName>`; keys must match the
 workflow's state NAMEs. Do not use top-level prompt fields or agent names as
 input keys.
+
+Before running workflows from a changed checkout, run the contract gate:
+
+```sh
+npm run check:contracts
+```
+
+The gate calls the production config, workflow-input, review, and interaction
+validators. It is a pre-run contract check, not evidence that a specific
+workflow execution succeeded.
 
 Recommended profile pattern:
 

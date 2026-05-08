@@ -4,7 +4,7 @@
 // agent dependency.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -24,19 +24,8 @@ git diff --check`
   policies: {}
 };
 
-const VERIFY_ONLY_INPUT_FIELDS = new Set(["cwd", "profile"]);
-
-function rejectUnknownInputFields(input) {
-  if (!input || typeof input !== "object") return;
-  for (const field of Object.keys(input)) {
-    if (!VERIFY_ONLY_INPUT_FIELDS.has(field)) {
-      throw new Error(`unsupported input field: ${field}`);
-    }
-  }
-}
-
 export async function verifyOnlyWorkflow(input) {
-  rejectUnknownInputFields(input);
+  validateTaskWorkflowInput(input, { allowGoal: false });
   const ctx = createTychonicWorkflowContext({
     input,
     template: "verify_only",

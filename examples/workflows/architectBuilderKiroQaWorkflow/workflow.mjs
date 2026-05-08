@@ -2,7 +2,7 @@
 // primary QA reviewer and a lightweight structured-output normalizer.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -36,26 +36,10 @@ export const defaultProfile = {
   policies: {}
 };
 
-const INPUT_FIELDS = new Set([
-  "cwd",
-  "profile",
-  "goal",
-  "promptAdditions"
-]);
-const PROMPT_ADDITION_STATES = new Set(["architect", "builder", "qa"]);
-
-function rejectUnknownInputFields(input) {
-  if (!input || typeof input !== "object") return;
-  for (const field of Object.keys(input)) {
-    if (!INPUT_FIELDS.has(field)) {
-      throw new Error(`unsupported input field: ${field}`);
-    }
-  }
-  validatePromptAdditions(input, PROMPT_ADDITION_STATES);
-}
+const PROMPT_ADDITION_STATES = ["architect", "builder", "qa"];
 
 export async function architectBuilderKiroQaWorkflow(input) {
-  rejectUnknownInputFields(input);
+  validateTaskWorkflowInput(input, { promptAdditionStates: PROMPT_ADDITION_STATES });
   const ctx = createTychonicWorkflowContext({
     input,
     template: "architect_builder_kiro_qa",
@@ -100,28 +84,6 @@ export async function architectBuilderKiroQaWorkflow(input) {
   if (!qa.passed) return ctx.finish(qa.summary ?? "qa did not pass");
 
   return ctx.finish();
-}
-
-function validatePromptAdditions(input, allowedStates) {
-  const additions = input.promptAdditions;
-  if (additions === undefined) return;
-  if (!additions || typeof additions !== "object" || Array.isArray(additions)) {
-    throw new Error("promptAdditions must be an object keyed by state name");
-  }
-  for (const stateName of Object.keys(additions)) {
-    if (!allowedStates.has(stateName)) {
-      throw new Error(`unsupported promptAdditions state: ${stateName}`);
-    }
-    if (
-      input.profile?.states &&
-      !Object.prototype.hasOwnProperty.call(input.profile.states, stateName)
-    ) {
-      throw new Error(`promptAdditions.${stateName} does not match a configured state`);
-    }
-    if (typeof additions[stateName] !== "string" || additions[stateName].trim() === "") {
-      throw new Error(`promptAdditions.${stateName} must be a non-empty string`);
-    }
-  }
 }
 
 function withPromptAddition(basePrompt, input, stateName) {

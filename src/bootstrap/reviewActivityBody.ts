@@ -16,6 +16,7 @@ import type {
   ArtifactRecord,
   WorkflowStateRecord
 } from "../domain/types.js";
+import { FINDING_SEVERITIES } from "../domain/types.js";
 import { resolveCommand } from "../adapters/resolveAdapter.js";
 import { parseBuiltInReviewOutput, parseReviewOutput } from "../review/parse.js";
 import type { ReviewActivityOutcome } from "../review/outcome.js";
@@ -56,6 +57,9 @@ const NORMALIZER_MODEL_BY_AGENT: Record<Extract<BuiltInAgentName, "claude" | "co
   claude: "haiku",
   codex: "gpt-5.3-codex-spark"
 };
+
+const FINDING_SEVERITY_LIST = FINDING_SEVERITIES.join(", ");
+const FINDING_SEVERITY_SHAPE = FINDING_SEVERITIES.join("|");
 
 const execFileAsync = promisify(execFile);
 
@@ -482,14 +486,14 @@ function buildReviewNormalizerPrompt(input: {
     "Top-level keys are exactly: status, summary, findings.",
     "Do not add schema_version; the host owns that field.",
     "Each finding object requires exactly these required keys: severity, title, detail.",
-    "Finding severity must be one of: critical, high, medium, low.",
+    `Finding severity must be one of: ${FINDING_SEVERITY_LIST}.`,
     "Use the exact key detail for the finding explanation. Do not use details.",
     "Optional finding keys are target and target_session_id. Omit them unless the primary output provides them.",
     "Do not invent findings that are not present in the primary review output.",
     "If the primary output says the work passes, return status pass and findings [].",
     "If the primary output identifies concrete problems, return status fail and those findings.",
     "Shape:",
-    '{"status":"pass|fail","summary":"...","findings":[{"severity":"critical|high|medium|low","title":"...","detail":"..."}]}',
+    `{"status":"pass|fail","summary":"...","findings":[{"severity":"${FINDING_SEVERITY_SHAPE}","title":"...","detail":"..."}]}`,
     "",
     `Primary reviewer: ${input.primaryAgent}`,
     "",

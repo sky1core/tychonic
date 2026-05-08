@@ -22,6 +22,7 @@ vi.mock("@temporalio/workflow", () => ({
 }));
 
 vi.mock("tychonic/workflow", () => ({
+  validateTaskWorkflowInput: vi.fn(() => undefined),
   createTychonicWorkflowContext: vi.fn(() => ({
     start: async () => {
       harness.calls.push("start");

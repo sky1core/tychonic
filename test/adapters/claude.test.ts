@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { claudeAdapter } from "../../src/adapters/claude.js";
 import type { AdapterRunInput } from "../../src/adapters/types.js";
+import { FINDING_SEVERITIES } from "../../src/domain/types.js";
 
 const BASE: AdapterRunInput = {
   prompt: "do the thing",
@@ -63,7 +64,7 @@ describe("claudeAdapter", () => {
     expect(findingItems).toMatchObject({
       additionalProperties: false,
       properties: {
-        severity: { enum: ["critical", "high", "medium", "low"] },
+        severity: { enum: FINDING_SEVERITIES },
         title: { type: "string", minLength: 1 },
         detail: { type: "string", minLength: 1 },
         target: { type: "string", minLength: 1 },

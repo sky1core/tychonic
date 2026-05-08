@@ -2,7 +2,7 @@
 // of the same TYPE.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -36,26 +36,10 @@ export const defaultProfile = {
   policies: {}
 };
 
-const PIPELINE_WORKFLOW_INPUT_FIELDS = new Set([
-  "cwd",
-  "profile",
-  "goal",
-  "promptAdditions"
-]);
-const PROMPT_ADDITION_STATES = new Set(["work", "review_1", "review_2"]);
-
-function rejectUnknownInputFields(input) {
-  if (!input || typeof input !== "object") return;
-  for (const field of Object.keys(input)) {
-    if (!PIPELINE_WORKFLOW_INPUT_FIELDS.has(field)) {
-      throw new Error(`unsupported input field: ${field}`);
-    }
-  }
-  validatePromptAdditions(input, PROMPT_ADDITION_STATES);
-}
+const PROMPT_ADDITION_STATES = ["work", "review_1", "review_2"];
 
 export async function pipelineWorkflow(input) {
-  rejectUnknownInputFields(input);
+  validateTaskWorkflowInput(input, { promptAdditionStates: PROMPT_ADDITION_STATES });
   const ctx = createTychonicWorkflowContext({
     input,
     template: "pipeline_7stage",
@@ -133,28 +117,6 @@ function reviewTriageInboxItem(state, detail) {
     action: { kind: "triage", reason: detail },
     created_at: state.finished_at ?? state.started_at ?? new Date().toISOString()
   };
-}
-
-function validatePromptAdditions(input, allowedStates) {
-  const additions = input.promptAdditions;
-  if (additions === undefined) return;
-  if (!additions || typeof additions !== "object" || Array.isArray(additions)) {
-    throw new Error("promptAdditions must be an object keyed by state name");
-  }
-  for (const stateName of Object.keys(additions)) {
-    if (!allowedStates.has(stateName)) {
-      throw new Error(`unsupported promptAdditions state: ${stateName}`);
-    }
-    if (
-      input.profile?.states &&
-      !Object.prototype.hasOwnProperty.call(input.profile.states, stateName)
-    ) {
-      throw new Error(`promptAdditions.${stateName} does not match a configured state`);
-    }
-    if (typeof additions[stateName] !== "string" || additions[stateName].trim() === "") {
-      throw new Error(`promptAdditions.${stateName} must be a non-empty string`);
-    }
-  }
 }
 
 function withPromptAddition(basePrompt, input, stateName) {

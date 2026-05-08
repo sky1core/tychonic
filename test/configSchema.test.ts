@@ -84,7 +84,7 @@ describe("activity-centric config schema", () => {
     expect(activityTimeoutMs(config, "work", defaultActivityTimeoutMs("work"))).toBe(5 * 60 * 1000);
   });
 
-  it("accepts resumable work blocks that override the default timeout", () => {
+  it("accepts command work blocks that override the default timeout", () => {
     const config = TychonicConfigSchema.parse({
       version: "tychonic.config.v1",
       states: {
@@ -180,7 +180,7 @@ describe("activity-centric config schema", () => {
     ).toThrow(/must set only one execution selector: agent or command/);
   });
 
-  it("accepts Tychonic orchestration fields on state config blocks", () => {
+  it("accepts adapter execution fields on agent state config blocks", () => {
     const config = TychonicConfigSchema.parse({
       version: "tychonic.config.v1",
       states: {
@@ -230,7 +230,15 @@ describe("activity-centric config schema", () => {
   });
 
   it("rejects agent settings on command states", () => {
-    for (const field of ["model", "reasoning_effort"]) {
+    const invalidCommandAgentSettings: Array<[string, string | boolean]> = [
+      ["model", "whatever"],
+      ["reasoning_effort", "whatever"],
+      ["sandbox", "workspace-write"],
+      ["approval", "never"],
+      ["permission_mode", "plan"],
+      ["trust_all_tools", true]
+    ];
+    for (const [field, value] of invalidCommandAgentSettings) {
       expect(() =>
         TychonicConfigSchema.parse({
           version: "tychonic.config.v1",
@@ -238,7 +246,7 @@ describe("activity-centric config schema", () => {
             work: {
               type: "work",
               command: "node worker.js",
-              [field]: "whatever"
+              [field]: value
             }
           }
         })
@@ -353,18 +361,19 @@ describe("schema tighten", () => {
     }
   });
 
-  it("accepts resume on a command block", () => {
-    const config = TychonicConfigSchema.parse({
-      version: "tychonic.config.v1",
-      states: {
-        work: {
-          type: "work",
-          command: "node worker.js",
-          resume: 3
+  it("rejects resume on a command block", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: {
+            type: "work",
+            command: "node worker.js",
+            resume: 3
+          }
         }
-      }
-    });
-    expect(config.states?.work?.resume).toBe(3);
+      })
+    ).toThrow(/resume is only valid on work states that select a built-in agent/);
   });
 
   it("rejects resume blocks that set both command and agent", () => {
@@ -383,18 +392,19 @@ describe("schema tighten", () => {
     ).toThrow(/must set only one execution selector: agent or command/);
   });
 
-  it("accepts resume on deterministic command activity blocks", () => {
-    const config = TychonicConfigSchema.parse({
-      version: "tychonic.config.v1",
-      states: {
-        verify: {
-          type: "verify",
-          command: "npm run verify:worker",
-          resume: 2
+  it("rejects resume on deterministic command activity blocks", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          verify: {
+            type: "verify",
+            command: "npm run verify:worker",
+            resume: 2
+          }
         }
-      }
-    });
-    expect(config.states?.verify?.resume).toBe(2);
+      })
+    ).toThrow(/resume is not allowed for type verify/);
   });
 
   it("accepts resume: 0 (disables in-session resume) on adapter blocks", () => {
@@ -449,6 +459,41 @@ describe("schema tighten", () => {
         }
       })
     ).toThrow(/requires one of: command, agent/);
+  });
+
+  it("rejects resume on review states", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            agent: "claude",
+            resume: 1
+          }
+        }
+      })
+    ).toThrow(/resume is not allowed for type review/);
+  });
+
+  it("rejects invalid policy names and non-object policy blocks", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        policies: {
+          " ": { max_review_iterations: 1 }
+        }
+      })
+    ).toThrow();
+
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        policies: {
+          loop: "auto"
+        }
+      })
+    ).toThrow();
   });
 
 });

@@ -74,6 +74,13 @@ export interface TychonicWorkflowRuntimeInput {
   cwd: string;
   profile?: TychonicConfig;
   goal?: string;
+  promptAdditions?: Record<string, string>;
+}
+
+export interface TaskWorkflowInputContract {
+  allowGoal?: boolean;
+  promptAdditionStates?: readonly string[];
+  requireCwd?: boolean;
 }
 
 export interface TychonicWorkflowRuntimeActivities {
@@ -91,6 +98,53 @@ export interface TychonicWorkflowRuntimeActivities {
   runVerifyActivity?(input: Omit<ActivityInput<"verify">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
   runReviewActivity?(input: Omit<ActivityInput<"review">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
   finalizeRunActivity(input: { run: WorkflowRunRecord; summary?: string }): Promise<ActivityResult>;
+}
+
+export function validateTaskWorkflowInput(
+  input: unknown,
+  contract: TaskWorkflowInputContract = {}
+): asserts input is TychonicWorkflowRuntimeInput {
+  if (!isPlainObject(input)) {
+    throw new Error("workflow input must be an object");
+  }
+
+  const allowGoal = contract.allowGoal ?? true;
+  const requireCwd = contract.requireCwd ?? true;
+  const promptAdditionStates = contract.promptAdditionStates;
+  const allowedFields = new Set(["cwd", "profile"]);
+  if (allowGoal) {
+    allowedFields.add("goal");
+  }
+  if (promptAdditionStates !== undefined) {
+    allowedFields.add("promptAdditions");
+  }
+
+  for (const field of Object.keys(input)) {
+    if (!allowedFields.has(field)) {
+      throw new Error(`unsupported input field: ${field}`);
+    }
+  }
+
+  if (requireCwd && (typeof input.cwd !== "string" || input.cwd.trim() === "")) {
+    throw new Error("cwd must be a non-empty string");
+  }
+  if (input.cwd !== undefined && typeof input.cwd !== "string") {
+    throw new Error("cwd must be a non-empty string");
+  }
+  if (input.profile !== undefined && !isPlainObject(input.profile)) {
+    throw new Error("profile must be an object");
+  }
+  if (input.goal !== undefined) {
+    if (!allowGoal) {
+      throw new Error("unsupported input field: goal");
+    }
+    if (typeof input.goal !== "string" || input.goal.trim() === "") {
+      throw new Error("goal must be a non-empty string");
+    }
+  }
+  if (input.promptAdditions !== undefined) {
+    validatePromptAdditions(input, promptAdditionStates);
+  }
 }
 
 type TychonicAgentActivity = (input: {
@@ -359,6 +413,48 @@ export function createTychonicWorkflowContext(options: {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function validatePromptAdditions(
+  input: Record<string, unknown>,
+  allowedStateNames: readonly string[] | undefined
+): void {
+  if (allowedStateNames === undefined) {
+    throw new Error("unsupported input field: promptAdditions");
+  }
+  const additions = input.promptAdditions;
+  if (!isPlainObject(additions)) {
+    throw new Error("promptAdditions must be an object keyed by state name");
+  }
+  const allowedStates = new Set(allowedStateNames);
+  const profile = input.profile;
+  const states = isPlainObject(profile) && isPlainObject(profile.states)
+    ? profile.states
+    : undefined;
+
+  for (const stateName of Object.keys(additions)) {
+    if (!allowedStates.has(stateName)) {
+      throw new Error(`unsupported promptAdditions state: ${stateName}`);
+    }
+    const addition = additions[stateName];
+    if (typeof addition !== "string" || addition.trim() === "") {
+      throw new Error(`promptAdditions.${stateName} must be a non-empty string`);
+    }
+  }
+
+  if (states === undefined) {
+    throw new Error("promptAdditions requires effective profile.states");
+  }
+
+  for (const stateName of Object.keys(additions)) {
+    if (!Object.prototype.hasOwnProperty.call(states, stateName)) {
+      throw new Error(`promptAdditions.${stateName} does not match a configured state`);
+    }
+  }
 }
 
 function toWorkflowResult(

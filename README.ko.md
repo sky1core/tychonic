@@ -19,7 +19,7 @@ Codex, Claude Code, Gemini CLI, Kiro CLI, shell check, review gate를 묶는
 - state마다 agent, model, reasoning effort를 다르게 지정할 수 있습니다.
 - 품질, 비용, token 사용량에 맞춰 agent CLI와 model 계정을 나눠 쓸 수 있습니다.
 
-Tychonic core에는 built-in workflow가 없습니다. workflow는 설치형 bundle입니다.
+Tychonic core에는 workflow module이 없습니다. workflow는 설치형 bundle입니다.
 참고용 예제는 `examples/workflows/` 아래에 있으며 명시적으로 설치해서 사용합니다.
 
 ## 요구사항
@@ -192,6 +192,15 @@ workflow run input은 하나의 안정적인 task-shaped public contract를 씁�
 추가 지시가 꼭 필요할 때만 `promptAdditions.<stateName>`을 쓰십시오. key는
 workflow의 state NAME과 일치해야 합니다. top-level prompt field나 agent 이름을
 input key로 쓰지 마십시오.
+
+변경된 checkout에서 workflow를 실행하기 전에는 contract gate를 먼저 실행하십시오:
+
+```sh
+npm run check:contracts
+```
+
+이 gate는 production config, workflow input, review, interaction validator를
+호출합니다. 특정 workflow 실행이 성공했다는 증거를 대체하지는 않습니다.
 
 권장 profile pattern:
 

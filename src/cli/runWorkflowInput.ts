@@ -78,8 +78,8 @@ function workflowInputObjectError(): Error {
  *    `input.profile` value passed to the workflow.
  *  - If the user input carried a top-level `profile` field, fail with a clear
  *    user-error message. Raw input never owns the config carrier.
- *  - Without `configPath`, fall back to the bundle's `defaultProfile`
- *    auto-load through `applyDefaultProfileToRunInput`.
+ *  - Without `configPath`, use the bundle's `defaultProfile` auto-load
+ *    through `applyDefaultProfileToRunInput`.
  *
  * The `loadDefaultProfile` callback is invoked only on the no-config branch
  * and only when the bundle profile is actually needed — passing `--config`

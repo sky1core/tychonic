@@ -15,7 +15,7 @@
 // or config.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicRunState } from "tychonic/workflow";
+import { createTychonicRunState, validateTaskWorkflowInput } from "tychonic/workflow";
 import {
   applyResult,
   appendReviewFindingsAndInbox,
@@ -78,23 +78,8 @@ npm test`,
  *   }
  * Host-injected: profile?: TychonicConfig
  */
-const SIMPLE_WORKFLOW_INPUT_FIELDS = new Set([
-  "cwd",
-  "goal",
-  "profile"
-]);
-
-function rejectUnknownInputFields(input) {
-  if (!input || typeof input !== "object") return;
-  for (const field of Object.keys(input)) {
-    if (!SIMPLE_WORKFLOW_INPUT_FIELDS.has(field)) {
-      throw new Error(`unsupported input field: ${field}`);
-    }
-  }
-}
-
 export async function simpleWorkflow(input) {
-  rejectUnknownInputFields(input);
+  validateTaskWorkflowInput(input);
   validateLoopPolicy(input.profile?.policies);
   // Snapshot the effective profile at workflow start. The cap loop reads
   // caps from this snapshot, never from a re-read of the input — a mid-run
@@ -143,7 +128,7 @@ async function runMainPipeline(input, runState, publishRun) {
     ...(profile ? { profile } : {}),
     cwd: input.cwd,
     worktreePath,
-    ...(input.goal ? { goal: input.goal } : {})
+    prompt: input.goal ?? ""
   });
   run = updateRun(applyResult(run, workRes));
   const workSession = workRes.workerOutcome?.kind === "executed"

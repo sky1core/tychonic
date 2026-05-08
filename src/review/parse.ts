@@ -35,6 +35,9 @@ function collectReviewCandidates(output: string, options: ReviewCandidateOptions
   if (wholeObject !== undefined) {
     return [output, ...extractDocumentedEnvelopeCandidates(wholeObject, options)];
   }
+  if (!options.normalizeBuiltInEnvelopes) {
+    return [];
+  }
 
   const lines = output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
   if (lines.length === 1) {
@@ -59,9 +62,6 @@ function collectReviewCandidates(output: string, options: ReviewCandidateOptions
       candidates.push(line);
     }
 
-    if (options.normalizeBuiltInEnvelopes) {
-      candidates.push(...extractSemanticPayloadCandidates(parsed));
-    }
     candidates.push(...extractDocumentedEnvelopeCandidates(parsed, options));
   }
   return candidates;
@@ -123,13 +123,6 @@ function extractDocumentedEnvelopeCandidates(
   }
 
   return out;
-}
-
-function extractSemanticPayloadCandidates(value: Record<string, unknown>): string[] {
-  if (typeof value.status !== "string" || typeof value.summary !== "string" || !Array.isArray(value.findings)) {
-    return [];
-  }
-  return [JSON.stringify(normalizeBuiltInStructuredOutput(value))];
 }
 
 function normalizeBuiltInStructuredOutput(value: Record<string, unknown>): Record<string, unknown> {

@@ -7,7 +7,7 @@ A Tychonic workflow bundle is a directory that contains `workflow.mjs`.
 - `defaultProfile`, a `tychonic.config.v1` object for that workflow
 
 The bundle directory name must match the exported workflow function name. The
-host package ships no first-party workflows; operators install bundles with
+host package contains no workflow modules; operators install bundles with
 `tychonic workflows install`.
 
 At workflow start, Tychonic injects the effective config into the workflow
@@ -98,7 +98,7 @@ or agent runs. Execution selection belongs to `profile.states.<name>.agent` or
 the primary reviewer must also declare
 `profile.states.<name>.normalizer` as `claude` or `codex`.
 
-Workflow run input should stay task-shaped (`cwd`, `goal`) for every installed
+Workflow run input must stay task-shaped (`cwd`, `goal`) for every installed
 workflow. Workflow prompts are bundle-owned defaults. If a workflow accepts
 per-state extra instructions, use one additive map,
 `promptAdditions.<stateName>`, and reject keys that do not match promptable

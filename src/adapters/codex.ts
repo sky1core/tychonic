@@ -43,6 +43,7 @@ import type {
   AdapterSandbox,
   AgentAdapter
 } from "./types.js";
+import { FINDING_SEVERITIES } from "../domain/types.js";
 import { shellQuote } from "./shell.js";
 
 const BIN = "codex";
@@ -52,7 +53,7 @@ const REVIEW_FINDING_JSON_SCHEMA = {
   additionalProperties: false,
   required: ["severity", "title", "detail"],
   properties: {
-    severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
+    severity: { type: "string", enum: FINDING_SEVERITIES },
     title: { type: "string" },
     detail: { type: "string" }
   }

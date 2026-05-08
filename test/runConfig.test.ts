@@ -114,7 +114,7 @@ describe("tychonic run --config resolution", () => {
     expect((resolved.input as { profile: TychonicConfig }).profile).toEqual(CONFIG_PROFILE);
   });
 
-  it("falls back to the bundle defaultProfile when --config is omitted and input has no profile", async () => {
+  it("uses the bundle defaultProfile when --config is omitted and input has no profile", async () => {
     const resolved = await applyConfigOrDefaultProfileToRunInput({
       rawInput: { hasInput: true, input: { cwd: "/tmp/x" } },
       loadDefaultProfile: async () => BUNDLE_DEFAULT_PROFILE

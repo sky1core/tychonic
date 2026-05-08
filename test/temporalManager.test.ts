@@ -187,8 +187,8 @@ describe("TemporalManager", () => {
 
     await manager.start();
     // The dep is invoked with the default `{}` so the start helper
-    // sees the absence of `inheritProcessGroup` and falls back to the
-    // daemon-style `detached: true` spawn.
+    // sees the absence of `inheritProcessGroup` and uses the daemon-style
+    // `detached: true` spawn.
     expect(receivedOpts).toEqual({});
   });
 
