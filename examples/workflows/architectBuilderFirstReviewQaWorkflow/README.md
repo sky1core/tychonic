@@ -10,10 +10,16 @@ Use this when the workflow should maximize Kiro work before spending Codex final
 QA time. Kiro handles the implementation middle and the first pass/fail review;
 Codex is reserved for the final structured QA gate.
 
-The default profile pins architect to Claude `claude-opus-4-7` with
-`reasoning_effort: max`, builder and first review to Kiro `claude-opus-4.6`,
-and final QA to Codex `gpt-5.5` with `reasoning_effort: xhigh`. Adjust those
-values to models available in your installed CLIs.
+This example profile sets `architect` to Claude `claude-opus-4-7` with
+`reasoning_effort: max`, `builder` and `first_review` to Kiro
+`claude-opus-4.6`, and `final_qa` to Codex `gpt-5.5` with
+`reasoning_effort: xhigh`.
+These values are examples; adapt them after checking the target account,
+model availability, plan/tier, quota, pricing, region/country access, and
+organization policy.
+Kiro model availability is account-, tier-, and region-scoped; absence from
+`kiro-cli chat --list-models` means unavailable for that account, not that the
+documented Kiro model id is globally invalid.
 
 ## States
 
@@ -38,7 +44,7 @@ for runs that already cleared the first review gate.
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
 | `goal` | no | Goal threaded into architect and builder prompts. |
-| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to built-in prompts for `architect`, `builder`, `first_review`, or `final_qa`. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to prompts defined by this workflow for `architect`, `builder`, `first_review`, or `final_qa`. |
 
 Unknown fields are rejected. `promptAdditions` keys must match one of the
 promptable state NAMEs listed above; agent names are not valid prompt keys.

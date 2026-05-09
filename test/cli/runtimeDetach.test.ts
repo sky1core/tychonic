@@ -140,7 +140,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(output).not.toMatch(/"mode": "foreground"/);
   });
 
-  it("foreground runtime up fails before starting Temporal when bundle-owned deps are missing", async () => {
+  it("foreground runtime up fails before starting Temporal when bundle deps are missing", async () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
     const instance = `missing-deps-${process.pid}`;
@@ -186,7 +186,7 @@ describe("tychonic runtime up --detach (gating)", () => {
     expect(status.stdout).toContain('"health": "stopped"');
   }, 20000);
 
-  it("detached runtime up fails before printing a PID when bundle-owned deps are missing", async () => {
+  it("detached runtime up fails before printing a PID when bundle deps are missing", async () => {
     const fakeHome = await makeStateHome();
     const env = makeIsolatedEnv(fakeHome);
     const instance = `missing-deps-detach-${process.pid}`;

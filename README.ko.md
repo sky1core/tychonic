@@ -20,7 +20,12 @@ Codex, Claude Code, Gemini CLI, Kiro CLI, shell check, review gate를 묶는
 - 품질, 비용, token 사용량에 맞춰 agent CLI와 model 계정을 나눠 쓸 수 있습니다.
 
 Tychonic core에는 workflow module이 없습니다. workflow는 설치형 bundle입니다.
-참고용 예제는 `examples/workflows/` 아래에 있으며 명시적으로 설치해서 사용합니다.
+참고용 예제는 `examples/workflows/` 아래에 있으며, package에 포함돼 있어도
+명시적으로 설치하기 전에는 실행 registry에 들어가지 않는 파일입니다.
+참고용 예제는 workflow author가 자기 환경에 맞춰 조정하는 출발점입니다.
+target 계정, model availability, plan/tier, 쿼터, 가격, region/country access,
+organization policy가 operator마다 다르므로 Tychonic은 그대로 재사용할 하나의
+기본 workflow profile을 제공하지 않습니다.
 
 ## 요구사항
 
@@ -155,9 +160,13 @@ tychonic sessions --workflow-id <id>
 반환합니다.
 
 no-agent smoke가 통과한 뒤에는 `simpleWorkflow` 같은 agent workflow를 설치합니다.
-기본 profile은 외부 agent CLI를 사용하고 `npm run typecheck`, `npm run build`,
-`npm test`로 검증하므로, target repository에 해당 CLI와 script가 준비되어
-있어야 합니다.
+그 workflow의 `defaultProfile`은 외부 agent CLI를 사용하고 `npm run typecheck`,
+`npm run build`, `npm test`로 검증하므로, target repository에 해당 CLI와
+script가 준비되어 있어야 합니다.
+실행 전에 설치된 profile을 확인하십시오. `model` 또는 `reasoning_effort` 선택이
+target 계정, model availability, plan/tier, 쿼터, 가격, region/country access,
+organization policy와 맞지 않으면 whole-profile `--config <file>` replacement를
+넘기십시오.
 
 ```sh
 tychonic workflows install "$EXAMPLES_DIR/simpleWorkflow"
@@ -188,10 +197,11 @@ workflow JSON input은 task data입니다. config를 `profile`에 넣지 마십�
 field입니다.
 
 workflow run input은 하나의 안정적인 task-shaped public contract를 씁니다:
-`cwd`와 `goal`입니다. prompt 본문은 workflow bundle에 내장됩니다. state별
-추가 지시가 꼭 필요할 때만 `promptAdditions.<stateName>`을 쓰십시오. key는
-workflow의 state NAME과 일치해야 합니다. top-level prompt field나 agent 이름을
-input key로 쓰지 마십시오.
+필수 `cwd`, 선택 `goal`, 그리고 workflow가 state별 추가 지시를 명시적으로 지원할
+때만 쓰는 선택 `promptAdditions`입니다. prompt 본문은 workflow code가
+정의합니다. `promptAdditions` key는 effective profile에 존재하는 promptable
+state NAME과 일치해야 합니다. top-level prompt field나 agent 이름을 input key로
+쓰지 마십시오.
 
 변경된 checkout에서 workflow를 실행하기 전에는 contract gate를 먼저 실행하십시오:
 
@@ -202,7 +212,7 @@ npm run check:contracts
 이 gate는 production config, workflow input, review, interaction validator를
 호출합니다. 특정 workflow 실행이 성공했다는 증거를 대체하지는 않습니다.
 
-권장 profile pattern:
+environment-specific agent setting을 생략한 config shape:
 
 ```yaml
 version: tychonic.config.v1
@@ -210,13 +220,10 @@ states:
   architect:
     type: work
     agent: claude
-    model: claude-opus-4-7
-    reasoning_effort: max
     permission_mode: plan
   builder:
     type: work
     agent: kiro
-    model: claude-opus-4.6
     trust_all_tools: true
     sandbox: workspace-write
     approval: never
@@ -229,16 +236,20 @@ states:
   qa:
     type: review
     agent: codex
-    model: gpt-5.5
-    reasoning_effort: xhigh
     approval: never
 ```
 
-재현 가능한 agent state에는 `model`을 지정하는 것을 권장합니다.
-Claude/Codex state에서 품질이 reasoning 깊이에 좌우된다면 `reasoning_effort`도
-권장 설정입니다. Claude exact versioned model 이름은 CLI가 보고한 model과
-설정 문자열이 다르면 activity를 실패 처리합니다. `opus` 같은 alias는 CLI가
-내부에서 concrete model로 해석하므로 exact-match 검사 대상이 아닙니다.
+workflow author는 target 계정, model availability, plan/tier, 쿼터, 가격,
+region/country access, organization policy를 확인한 뒤에만 state별 `model`과
+지원되는 `reasoning_effort`를 명시적으로 선택할 수 있습니다. 생략하면 선택된
+CLI의 default 또는 auto-selection 동작에 맡깁니다. Claude exact versioned model
+이름은 CLI가 보고한 model과 설정 문자열이 다르면 activity를 실패 처리합니다.
+`opus` 같은 alias는 CLI가 내부에서 concrete model로 해석하므로 exact-match 검사
+대상이 아닙니다.
+Kiro model id는 Kiro CLI의 id이며 account, tier, region에 따라 availability가
+달라질 수 있습니다. `kiro-cli chat --list-models` 결과는 현재 계정에서 실행
+가능한 목록이지, 문서화된 모든 Kiro model id의 전역 존재 여부를 판단하는
+목록이 아닙니다.
 `resume`, permission, sandbox, timeout, trust, policy 같은
 orchestration knob는 workflow 동작에 실제로 필요할 때만 사용합니다.
 
@@ -268,7 +279,7 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 ## Example Workflows
 
 - `verifyOnlyWorkflow`: agent 없이 runtime만 확인하는 smoke workflow
-- `simpleWorkflow`: work, verify, review를 한 번씩 실행하는 기본 workflow
+- `simpleWorkflow`: work, verify, review를 한 번씩 실행하는 단순 reference workflow
 - `pipelineWorkflow`: 여러 stage와 반복된 `review` state를 보여주는 one-pass pipeline
 - `checkpointWorkflow`: 고정 deterministic gate와 두 structured review를 실행하는 workflow
 - `architectBuilderQaWorkflow`: Claude가 설계하고 Kiro가 build, Codex가 final QA 수행
@@ -276,7 +287,7 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 - `architectBuilderFirstReviewQaWorkflow`: Claude가 설계하고 Kiro가 build와 1차 normalized review를 수행한 뒤 Codex final QA 수행
 - `architectBuilderReviewRepairQaWorkflow`: Kiro가 build, pre-review, repair를 수행한 뒤 Codex final QA로 넘기는 pattern
 
-config shape나 `promptAdditions` state key를 바꾸기 전에 각 bundle의
+config shape나 `promptAdditions` state key를 바꾸기 전에 각 workflow
 `README.md`를 읽으십시오.
 
 ## Agent Skill

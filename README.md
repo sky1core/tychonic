@@ -22,7 +22,12 @@ checks, and review gates.
   quality, cost, or token usage.
 
 Tychonic core contains no workflow modules. Workflows are installed bundles.
-Reference examples live under `examples/workflows/` and are opt-in.
+Reference examples live under `examples/workflows/`; packaged examples are
+inert files until explicitly installed.
+Reference examples are starting points for authors. Target account, model
+availability, plan/tier, quota, pricing, region/country access, and
+organization policy differ by operator, so Tychonic does not provide one
+default workflow profile that should be reused unchanged.
 
 ## Requirements
 
@@ -155,9 +160,13 @@ Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
 it returns the evidence needed to decide the next operator action.
 
 After the no-agent smoke passes, install an agent workflow such as
-`simpleWorkflow`. Its default profile uses external agent CLIs and verifies
+`simpleWorkflow`. Its `defaultProfile` uses external agent CLIs and verifies
 with `npm run typecheck`, `npm run build`, and `npm test`, so make sure those
 CLIs and scripts are available in the target repository.
+Inspect the installed profile before running it; if its model or
+`reasoning_effort` choices do not fit the target account, model availability,
+plan/tier, quota, pricing, region/country access, or organization policy, pass a
+whole-profile `--config <file>` replacement.
 
 ```sh
 tychonic workflows install "$EXAMPLES_DIR/simpleWorkflow"
@@ -187,10 +196,11 @@ Workflow JSON input is task data only. Do not put config under `profile`;
 Tychonic reserves that field for the effective profile it passes into workflow
 code.
 
-Workflow run input uses one stable task-shaped public contract: `cwd` plus
-`goal`. Workflow prompts are built into the bundle. When extra per-state prompt
-instructions are needed, use `promptAdditions.<stateName>`; keys must match the
-workflow's state NAMEs. Do not use top-level prompt fields or agent names as
+Workflow run input uses one stable task-shaped public contract: required `cwd`,
+optional `goal`, and optional `promptAdditions` only when the workflow explicitly
+supports additive per-state prompt instructions. Workflow code defines its own
+prompts. `promptAdditions` keys must match promptable state NAMEs present
+in the effective profile. Do not use top-level prompt fields or agent names as
 input keys.
 
 Before running workflows from a changed checkout, run the contract gate:
@@ -203,7 +213,7 @@ The gate calls the production config, workflow-input, review, and interaction
 validators. It is a pre-run contract check, not evidence that a specific
 workflow execution succeeded.
 
-Recommended profile pattern:
+Config shape with environment-specific agent settings omitted:
 
 ```yaml
 version: tychonic.config.v1
@@ -211,13 +221,10 @@ states:
   architect:
     type: work
     agent: claude
-    model: claude-opus-4-7
-    reasoning_effort: max
     permission_mode: plan
   builder:
     type: work
     agent: kiro
-    model: claude-opus-4.6
     trust_all_tools: true
     sandbox: workspace-write
     approval: never
@@ -230,18 +237,22 @@ states:
   qa:
     type: review
     agent: codex
-    model: gpt-5.5
-    reasoning_effort: xhigh
     approval: never
 ```
 
-`model` is recommended for repeatable agent states. `reasoning_effort` is
-recommended for Claude/Codex states whose quality depends on reasoning depth.
+A workflow author may explicitly choose `model` and supported
+`reasoning_effort` per state only after checking the target account, model
+availability, plan/tier, quota, pricing, region/country access, and organization
+policy. Omission delegates to the selected CLI's default or auto-selection
+behavior.
 For exact versioned Claude model names, Tychonic compares the CLI-reported
 model with the configured string and fails the activity on mismatch; aliases
 such as `opus` are passed through without exact-match assertion.
-Other knobs such as `resume`, permissions, sandbox, timeout, trust, and policy
-settings should appear only when the workflow behavior needs them.
+Kiro model ids are Kiro CLI ids; availability can be account-, tier-, or
+region-scoped. `kiro-cli chat --list-models` proves what this account can run,
+not whether every documented Kiro model id exists globally.
+Include other knobs such as `resume`, permissions, sandbox, timeout, trust, and
+policy settings only when the workflow behavior needs them.
 
 Use `agent: "<name>"` for built-in adapters. Use `command` only as an escape
 hatch for custom CLIs, unusual flags, or test stubs. A state sets exactly one

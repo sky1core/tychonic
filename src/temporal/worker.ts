@@ -86,13 +86,12 @@ export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}):
 /**
  * Resolve the path the Temporal workflow bundler compiles. The worker
  * has exactly one workflow-loading path: read every `.mjs` file under
- * `<state>/workflows/modules/` and re-export from all of them. Whether
- * a file was placed there by `tychonic service install` (the workflow
- * bundle packaged with tychonic) or by `tychonic workflows install`
- * (an operator-supplied bundle) makes no difference at load time. The
- * worker does not re-seed, repair, or choose an alternate source — if the modules
- * directory is empty, workflow work cannot run and the error message
- * points the operator at the install commands.
+ * `<state>/workflows/modules/` and re-export from all of them. Bundles arrive
+ * there only through an explicit install operation such as
+ * `tychonic workflows install <directory>`. The worker does not seed bundled
+ * examples, re-seed missing workflows, repair the registry, or choose an
+ * alternate source — if the modules directory is empty, workflow work cannot
+ * run and the error message points the operator at the install commands.
  */
 export async function resolveWorkflowModulePath(): Promise<string> {
   const installedBundles = await Promise.all(
@@ -119,8 +118,8 @@ export async function resolveWorkflowModulePath(): Promise<string> {
   }
   await assertNoInstalledWorkflowExportConflicts(installedBundles);
 
-  // Keep the entrypoint inside a real installed bundle package so bundle-owned
-  // dependencies still resolve from the bundle's standard package layout.
+  // Keep the entrypoint inside a real installed bundle package so dependencies
+  // shipped with that bundle resolve through the standard package layout.
   const generatedDir = join(dirname(installedBundles[0]!.workflowPath), ".tychonic");
   await mkdir(generatedDir, { recursive: true });
   const combinedPath = join(await realpath(generatedDir), "combined-workflows.mjs");

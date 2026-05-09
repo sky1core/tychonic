@@ -6,7 +6,7 @@ session until review passes or the configured loop budget is exhausted.
 
 ## Purpose
 
-Use this as the reference for a normal delegated coding loop: one worker state,
+Use this as an example delegated coding loop: one worker state,
 one deterministic verification gate, one structured review, and optional
 same-session continuation when review finds fixable issues.
 
@@ -16,21 +16,27 @@ same-session continuation when review finds fixable issues.
 - `verify` — `verify`
 - `review` — `review`
 
-Inspect the installed profile:
+Inspect this workflow's installed `defaultProfile`:
 
 ```sh
 tychonic workflows install ./examples/workflows/simpleWorkflow
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```
 
-The bundled default profile uses Claude for `work` and Codex `gpt-5.5` with
-`reasoning_effort: xhigh` for the final `review`. Its `verify` state runs:
+This example profile sets `work` to Claude and `review` to Codex `gpt-5.5` with
+`reasoning_effort: xhigh`. Its
+`verify` state runs:
 
 ```sh
 npm run typecheck
 npm run build
 npm test
 ```
+
+The agent settings above are examples; adapt them after checking
+the target account, model availability, plan/tier, quota, pricing,
+region/country access, and organization policy.
+This workflow has no Kiro state.
 
 Pass a whole-profile `--config <file>` replacement when the target repository
 uses a different verification command.
@@ -43,7 +49,7 @@ to the workflow.
 | Field | Required | Purpose |
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
-| `goal` | no | Prompt text for the worker. |
+| `goal` | no | Worker goal threaded into this workflow's `work` prompt. |
 
 Unknown fields are rejected. `cwd` must be a git repository.
 
@@ -70,7 +76,7 @@ tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 
 ## Loop Policy
 
-The bundle default profile includes `policies.loop`. The workflow reads:
+This workflow's `defaultProfile` includes `policies.loop`. The workflow reads:
 
 | Key | Purpose |
 |---|---|

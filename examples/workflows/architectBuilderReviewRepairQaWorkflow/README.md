@@ -11,11 +11,16 @@ before the final structured reviewer runs. The goal is to reduce final review
 loop pressure by letting Kiro catch and fix clear issues first, while preserving
 a final structured QA gate with Codex.
 
-The default profile demonstrates per-state model selection: architect uses
-Claude `claude-opus-4-7` with `reasoning_effort: max`, builder/pre-review/repair
-use Kiro `claude-opus-4.6`, and final QA uses Codex `gpt-5.5` with
-`reasoning_effort: xhigh`. Adjust those values to models available in your
-installed CLIs.
+This example profile sets `architect` to Claude `claude-opus-4-7` with
+`reasoning_effort: max`, `builder`, `pre_review`, and `repair` to Kiro
+`claude-opus-4.6`, and `final_qa` to Codex `gpt-5.5` with
+`reasoning_effort: xhigh`.
+These values are examples; adapt them after checking the target account,
+model availability, plan/tier, quota, pricing, region/country access, and
+organization policy.
+Kiro model availability is account-, tier-, and region-scoped; absence from
+`kiro-cli chat --list-models` means unavailable for that account, not that the
+documented Kiro model id is globally invalid.
 
 ## States
 
@@ -38,7 +43,7 @@ explicitly named as `repair`.
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
 | `goal` | no | Goal threaded into architect and builder prompts. |
-| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to built-in prompts for `architect`, `builder`, `pre_review`, `repair`, or `final_qa`. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to prompts defined by this workflow for `architect`, `builder`, `pre_review`, `repair`, or `final_qa`. |
 
 Unknown fields are rejected. `promptAdditions` keys must match one of the
 promptable state NAMEs listed above; agent names are not valid prompt keys.

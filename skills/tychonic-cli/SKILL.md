@@ -14,6 +14,16 @@ verification.
 - Temporal workflow history and Temporal APIs are the product state authority.
 - Tychonic core ships no host-owned workflows.
 - Workflows are installed bundles with `workflow.mjs` and `defaultProfile`.
+- There are no built-in, official, default, or host-seeded workflows. Reference
+  examples under `examples/workflows/` are inert files, even when included in a
+  package install, until an operator explicitly installs one with
+  `tychonic workflows install <directory>`.
+- A workflow that appears in `tychonic workflows list` is a local installed
+  registry entry, not proof that Tychonic core owns that workflow.
+- Reference examples are starting points for authors. Target account, model
+  availability, plan/tier, quota, pricing, region/country access, and
+  organization policy differ by operator, so Tychonic does not provide one
+  default workflow profile to reuse unchanged.
 - Workflow code owns ordering, branching, loops, retry, recovery, and signals.
 - Workflow modules should stay simple: use `tychonic/workflow` helpers for
   repeated run-record bookkeeping, but keep ordering and branching explicit.
@@ -131,10 +141,10 @@ it returns the evidence needed to decide the next operator action.
 Temporal UI/API for routine monitoring.
 
 Workflow run input uses the stable task-shaped surface documented by the
-bundle: `cwd` and `goal`, with optional `promptAdditions.<stateName>` only when
-the workflow exposes extra state instructions. The workflow owns policy keys,
-artifacts, inbox items, signals, and recovery flow. Read the bundle README
-before configuring or operating that workflow.
+workflow: required `cwd`, optional `goal`, and optional `promptAdditions` only
+when the workflow exposes extra state instructions. The workflow owns policy
+keys, artifacts, inbox items, signals, and recovery flow. Read the workflow
+README before configuring or operating that workflow.
 
 Before running a workflow from a changed checkout, run the contract gate:
 
@@ -167,7 +177,7 @@ For architect/builder/QA workflows, architect and builder states are `work`.
 The QA gate is `review`. A prose Kiro pre-review or repair step is still
 `work`; only the structured pass/fail gate is `review`.
 
-Recommended state profile shape:
+State profile shape with environment-specific agent settings omitted:
 
 ```yaml
 version: tychonic.config.v1
@@ -175,13 +185,10 @@ states:
   architect:
     type: work
     agent: claude
-    model: claude-opus-4-7
-    reasoning_effort: max
     permission_mode: plan
   builder:
     type: work
     agent: kiro
-    model: claude-opus-4.6
     trust_all_tools: true
     sandbox: workspace-write
     approval: never
@@ -194,15 +201,14 @@ states:
   qa:
     type: review
     agent: codex
-    model: gpt-5.5
-    reasoning_effort: xhigh
     approval: never
 ```
 
-For repeatable workflows, pin `model` on agent states instead of relying on a
-changing CLI default. Set `reasoning_effort` on Claude/Codex states whose
-quality depends on reasoning depth. These are recommended agent settings, not
-cargo-cult knobs.
+A workflow author may explicitly choose `model` and supported
+`reasoning_effort` per state only after checking the target account, model
+availability, plan/tier, quota, pricing, region/country access, and organization
+policy. These are explicit agent settings, not defaults for an unchecked
+operator environment.
 
 Do not add `resume`, permission, sandbox, timeout, trust, or policy knobs just
 because the schema accepts them. Those are orchestration controls, not the same
@@ -260,7 +266,10 @@ state config, Tychonic fails the activity instead of accepting a silent model
 change. Claude aliases such as `opus` are not exact-match asserted because the
 CLI resolves them to concrete model names internally.
 
-High-model examples by agent:
+Current repo example values, not a template:
+
+Use them only after checking the target account, model availability, plan/tier,
+quota, pricing, region/country access, and organization policy.
 
 ```yaml
 codex_build:
@@ -284,6 +293,11 @@ kiro_work:
 Kiro states may set `model`, but not `reasoning_effort`;
 the installed Kiro CLI ACP surface exposes no stable reasoning/effort/thinking
 option.
+Kiro model ids are Kiro CLI ids. Availability may be account-, tier-, or
+region-scoped: `kiro-cli chat --list-models` proves what this account can run,
+not whether every documented Kiro model id exists globally. Do not rewrite a
+documented dot-form Kiro id such as `claude-opus-4.6` solely because it is not
+available in the current account.
 Do not add normalizer model fields; Tychonic supplies the lightweight
 normalizer model flag internally (`claude` gets `haiku`; `codex` gets
 `gpt-5.3-codex-spark`).

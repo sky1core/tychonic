@@ -32,12 +32,12 @@ activities. Operators pass workflow input as a JSON object and replace config
 with `tychonic run --config <file>`, not by putting `profile` in workflow JSON
 input.
 
-Workflow run input must stay task-shaped (`cwd`, `goal`) for every installed
-workflow. Workflow prompts are bundle-owned defaults. If a workflow accepts
-per-state extra prompt instructions, use the additive map
-`promptAdditions.<stateName>`. Reject keys that do not match promptable state
-NAMEs in the effective profile. Do not expose top-level prompt fields or
-agent-named input keys.
+Workflow run input must stay task-shaped. Public top-level input fields are
+required `cwd`, optional `goal`, and optional `promptAdditions` only when the
+workflow explicitly supports additive per-state prompt instructions. Workflow
+code defines its own prompts. Reject `promptAdditions` keys that do not match
+promptable state NAMEs in the effective profile. Do not expose top-level prompt
+fields or agent-named input keys.
 
 The bundle may include `README.md`, `package.json`, lockfiles, relative modules
 imported by `workflow.mjs`, assets, and `node_modules`. Tychonic provides
@@ -80,12 +80,12 @@ Built-in adapters are `claude`, `codex`, `gemini`, and `kiro`.
 `normalizer: codex`; the normalizer structures the primary review output and
 must not invent findings.
 
-`model` applies to the primary `agent` in the same state block. For repeatable
-workflows, pin `model` on states whose quality, latency, or cost profile
-matters. `reasoning_effort` is supported by `claude` and `codex`; set it on
-Claude/Codex states whose quality depends on reasoning depth. Omitted fields
-become omitted CLI flags/config overrides and delegate to the selected external
-CLI's default or auto-selection behavior.
+`model` applies to the primary `agent` in the same state block. A workflow
+author may explicitly choose `model` and supported `reasoning_effort` per state
+only after checking the target account, model availability, plan/tier, quota,
+pricing, region/country access, and organization policy. Omitted fields become
+omitted CLI flags/config overrides and delegate to the selected external CLI's
+default or auto-selection behavior.
 
 For `agent: claude`, use Claude CLI model values. Versionless aliases such as
 `opus` let the installed Claude CLI resolve the current model.
@@ -102,17 +102,23 @@ config, Tychonic fails the activity instead of accepting a silent model
 change. Claude aliases such as `opus` are not exact-match asserted because the
 CLI resolves them to concrete model names internally.
 
-High-model examples should use `model: gpt-5.5` for `codex`,
-`model: gemini-3.1-pro-preview` for `gemini`, and
-`model: claude-opus-4.6` for `kiro` when those exact strings
-are available in the installed CLIs. High reasoning examples should use
-`reasoning_effort: max` for `claude` and `reasoning_effort: xhigh` for
-`codex`; `gemini` and `kiro` do not expose a supported reasoning
-effort setting through Tychonic.
+The bundled reference examples currently declare `model: gpt-5.5` for `codex`,
+`model: gemini-3.1-pro-preview` for `gemini`, and `model: claude-opus-4.6` for
+`kiro` where those exact strings fit the author's environment. Some examples
+also declare `reasoning_effort: max` for `claude` and `reasoning_effort: xhigh`
+for `codex`; `gemini` and `kiro` do not expose a supported reasoning effort
+setting through Tychonic. These values do not define a universal model choice.
+Target account, model availability, plan/tier, quota, pricing, region/country
+access, and organization policy differ by operator, so Tychonic does not
+provide one default workflow profile to reuse unchanged.
 
 Kiro states may set `model`, but not
 `reasoning_effort`; the installed Kiro CLI ACP surface exposes no stable
-reasoning/effort/thinking option. Do not add normalizer model fields;
+reasoning/effort/thinking option. Kiro model availability may be account-,
+tier-, or region-scoped: `kiro-cli chat --list-models` proves what this account
+can run, not whether every documented Kiro model id exists globally. Do not
+rewrite a documented dot-form Kiro id such as `claude-opus-4.6` solely because
+it is not available in the current account. Do not add normalizer model fields;
 Tychonic supplies the lightweight normalizer model flag internally (`claude`
 gets `haiku`; `codex` gets `gpt-5.3-codex-spark`).
 
@@ -169,7 +175,7 @@ Temporal workflow code is deterministic.
 - Use `@temporalio/workflow`, `tychonic/workflow`, relative modules shipped in
   the bundle, and installed bundle dependencies. Tychonic provides
   `@temporalio/workflow` and `tychonic/workflow`; other package dependencies
-  are bundle-owned.
+  must be shipped with the bundle.
 
 ## Signals
 

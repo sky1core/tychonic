@@ -164,12 +164,11 @@ specific to their task. Users must not be required to re-state values the
 author already pinned.
 
 Workflow run input must not make callers memorize workflow-internal prompt
-field names. Public input stays task-shaped (`cwd`, `goal`) for every installed
-workflow. Prompt text is built into workflow code by default. If a workflow
-exposes per-state extra prompt instructions, the only accepted shape is the
-additive map `promptAdditions.<stateName>`; keys must match promptable state
-NAMEs in the effective profile. Top-level prompt fields and agent-named input
-keys are forbidden.
+field names. Public top-level input fields are required `cwd`, optional `goal`,
+and optional `promptAdditions` only when the workflow explicitly supports
+additive per-state prompt instructions. Prompt text is owned by workflow code.
+`promptAdditions` keys must match promptable state NAMEs in the effective
+profile. Top-level prompt fields and agent-named input keys are forbidden.
 
 ## Public Surface Principle
 

@@ -7,7 +7,8 @@ A Tychonic workflow bundle is a directory that contains `workflow.mjs`.
 - `defaultProfile`, a `tychonic.config.v1` object for that workflow
 
 The bundle directory name must match the exported workflow function name. The
-host package contains no workflow modules; operators install bundles with
+host runtime owns no workflow modules; packaged reference examples, when
+present, are inert files until operators install a bundle with
 `tychonic workflows install`.
 
 At workflow start, Tychonic injects the effective config into the workflow
@@ -36,14 +37,14 @@ const act = proxyActivities({
 export const defaultProfile = {
   version: "tychonic.config.v1",
   states: {
-    work: { type: "work", agent: "kiro", model: "claude-opus-4.6", trust_all_tools: true },
+    work: { type: "work", agent: "kiro", trust_all_tools: true },
     verify: {
       type: "verify",
       command: `npm run typecheck
 npm run build
 npm test`
     },
-    review: { type: "review", agent: "codex", model: "gpt-5.5", reasoning_effort: "xhigh" }
+    review: { type: "review", agent: "codex" }
   }
 };
 
@@ -98,23 +99,29 @@ or agent runs. Execution selection belongs to `profile.states.<name>.agent` or
 the primary reviewer must also declare
 `profile.states.<name>.normalizer` as `claude` or `codex`.
 
-Workflow run input must stay task-shaped (`cwd`, `goal`) for every installed
-workflow. Workflow prompts are bundle-owned defaults. If a workflow accepts
-per-state extra instructions, use one additive map,
-`promptAdditions.<stateName>`, and reject keys that do not match promptable
-state NAMEs in the effective profile. Do not expose top-level prompt fields or
-agent-named input keys.
+Workflow run input must stay task-shaped. Public top-level input fields are
+required `cwd`, optional `goal`, and optional `promptAdditions` only when the
+workflow explicitly supports additive per-state prompt instructions. Workflow
+code defines its own prompts. Reject `promptAdditions` keys that do not match
+promptable state NAMEs in the effective profile. Do not expose top-level prompt
+fields or agent-named input keys.
 
-Agent settings belong in the state config block next to `agent`. Pin `model`
-for the primary `agent` when a state's quality, latency, or cost profile
-matters; omission intentionally delegates to the selected CLI's default or
-auto-selection behavior. Use `reasoning_effort` only for agents that support
-it, and set it on Claude/Codex states whose quality depends on reasoning
-depth. Do not pass those values through activity runtime inputs. When a CLI
-reports the concrete selected model, Tychonic fails the activity if that report
-differs from an exact versioned model string in state config. Do not add
-separate normalizer model fields; Tychonic owns the lightweight model flag for
-the normalizer. Kiro states may set `model`, but not
+Agent settings belong in the state config block next to `agent`. A workflow
+author may explicitly choose `model` and supported `reasoning_effort` per state
+only after checking the target account, model availability, plan/tier, quota,
+pricing, region/country access, and organization policy. Omission intentionally
+delegates to the selected CLI's default or auto-selection behavior. Do not pass
+those values through activity runtime inputs. When a CLI reports the concrete
+selected model, Tychonic fails the activity if that report differs from an exact
+versioned model string in state config. Do not add separate normalizer model
+fields; Tychonic owns the lightweight model flag for the normalizer. Kiro model
+ids are Kiro CLI ids and their availability can be account-, tier-, or
+region-scoped; `kiro-cli chat --list-models` reports what that account can run,
+not the global validity of every documented Kiro model id. Target account,
+model availability, plan/tier, quota, pricing, region/country access, and
+organization policy differ by operator, so reference examples are starting
+points to adapt, not default profiles to reuse unchanged.
+Kiro states may set `model`, but not
 `reasoning_effort`; the installed Kiro CLI ACP surface exposes no stable
 reasoning/effort/thinking option.
 
@@ -144,7 +151,7 @@ Temporal workflow code runs in a deterministic sandbox.
 - Use `@temporalio/workflow`, `tychonic/workflow`, copied relative support
   modules, or real package dependencies shipped with the bundle. Tychonic
   provides `@temporalio/workflow` and `tychonic/workflow`; other package
-  dependencies are bundle-owned.
+  dependencies must be shipped with the bundle.
 
 Tychonic installs the bundle directory as-is. It does not run `npm install`,
 copy arbitrary host `node_modules`, create symlinks, or rewrite resolver paths.
@@ -211,7 +218,7 @@ one.
 - [skills/tychonic-cli/workflow-module-contract.md](../skills/tychonic-cli/workflow-module-contract.md): compact authoring contract
 - [examples/workflows/verifyOnlyWorkflow](../examples/workflows/verifyOnlyWorkflow): minimal no-agent verify example
 - [examples/workflows/pipelineWorkflow](../examples/workflows/pipelineWorkflow): multi-stage example
-- [examples/workflows/architectBuilderQaWorkflow](../examples/workflows/architectBuilderQaWorkflow): default architect/builder/QA example
+- [examples/workflows/architectBuilderQaWorkflow](../examples/workflows/architectBuilderQaWorkflow): reference architect/builder/QA example
 - [examples/workflows/architectBuilderFinalQaWorkflow](../examples/workflows/architectBuilderFinalQaWorkflow): Kiro-assisted build with Codex final QA
 - [examples/workflows/architectBuilderFirstReviewQaWorkflow](../examples/workflows/architectBuilderFirstReviewQaWorkflow): Kiro build and first normalized review before Codex final QA
 - [examples/workflows/architectBuilderReviewRepairQaWorkflow](../examples/workflows/architectBuilderReviewRepairQaWorkflow): Kiro build, pre-review, and repair before Codex final QA

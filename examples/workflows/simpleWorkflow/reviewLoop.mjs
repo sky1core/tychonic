@@ -8,7 +8,7 @@ const RESUME_CAP_DEFAULT = 0;
 const DEFAULT_AUTO_CONTINUE_MAX_ITERATIONS = 5;
 
 /**
- * Validate the bundle-owned `policies.loop` block. The host config
+ * Validate this workflow's `policies.loop` block. The host config
  * schema treats `policies` as opaque; this workflow validates the keys
  * it actually consumes.
  */

@@ -1,5 +1,5 @@
 /**
- * Validate the bundle-owned `policies.interaction` block. The host
+ * Validate this workflow's `policies.interaction` block. The host
  * config schema treats `policies` as opaque; this workflow validates
  * the keys it actually consumes.
  */
@@ -43,7 +43,7 @@ export function validateInteractionPolicy(policies) {
 }
 
 /**
- * Validate the bundle-owned `policies.loop` block as consumed by this
+ * Validate this workflow's `policies.loop` block as consumed by this
  * workflow. Only `max_review_iterations` is read; other knobs are
  * rejected so a typo never silently regresses the auto-mode loop cap.
  */

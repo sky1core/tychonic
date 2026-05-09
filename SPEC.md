@@ -285,10 +285,10 @@ The bundle contract is fixed:
   `@temporalio/workflow` just to use Temporal workflow helpers such as
   `proxyActivities`, and do not install `tychonic/workflow` just to publish
   Tychonic's standard run-state snapshot or standard interaction handlers.
-  Any other package dependency is bundle-owned: prepare it in the bundle
-  directory before `tychonic workflows install`, or pre-bundle it into
-  `workflow.mjs`. Tychonic copies the directory tree verbatim and does not run
-  a package manager during install.
+  Any other package dependency must be shipped with the bundle: prepare it in
+  the bundle directory before `tychonic workflows install`, or pre-bundle it
+  into `workflow.mjs`. Tychonic copies the directory tree verbatim and does
+  not run a package manager during install.
 
 Bundles are installed with `tychonic workflows install <directory>`.
 Installation copies the directory tree verbatim to
@@ -315,12 +315,13 @@ the installed bundle directory, except `@temporalio/workflow` and
 runtime surface. Tychonic does not inject arbitrary host package `node_modules`,
 symlinks, or staging resolver state.
 
-Tychonic ships **no** workflow bundles inside the host package. A fresh
-`tychonic service install` produces an empty workflow module registry. The
-operator installs whatever bundles the project needs — hand-authored, or
-the example bundles under `examples/workflows/` — through `tychonic
-workflows install <directory>`. There is no separate host-shipped workflow
-execution path.
+Tychonic ships **no host-owned workflow modules**. A fresh `tychonic service
+install` produces an empty workflow module registry. Reference example bundle
+files may be present under `examples/workflows/`, including in package
+installs, but they are inert files until an operator explicitly installs one
+with `tychonic workflows install <directory>`. The operator installs whatever
+bundles the project needs — hand-authored, or reference examples — through that
+same command. There is no separate host-shipped workflow execution path.
 
 ### Workflow-default profile
 
@@ -446,11 +447,13 @@ state names, types, and policy values once, in one place, and the runtime
 reads exactly that.
 
 Workflow run input is a stable task-shaped public contract for every installed
-workflow: `cwd` plus `goal` is the default surface. Workflow prompts are built
-into the workflow code. If a workflow exposes extra per-state prompt
-instructions, they must be additive and use one uniform shape:
-`promptAdditions.<stateName>`. The `<stateName>` key must match a promptable
-state NAME declared by that workflow and present in the effective
+workflow. The only public top-level input fields are required `cwd`, optional
+`goal`, and `promptAdditions` only when the workflow explicitly supports
+additive per-state prompt instructions. `profile` is reserved for Tychonic's
+internal config handoff and is not public workflow input. Workflow prompts are
+owned by workflow code. Prompt additions must be additive and use one uniform
+shape: `promptAdditions.<stateName>`. The `<stateName>` key must match a
+promptable state NAME declared by that workflow and present in the effective
 `profile.states`. Workflows must reject unknown `promptAdditions` keys and
 non-string addition values. They must not expose top-level prompt fields such
 as `architectPrompt`, `builderPrompt`, or agent-named fields such as
@@ -461,10 +464,12 @@ Two consequences follow and must both hold:
 
 - Absent fields stay absent. Agent settings whose valid values are owned by
   the external CLI, such as `model` and `reasoning_effort`, appear only as
-  state config fields documented below. They are recommended when
-  repeatability or reasoning depth matters, but Tychonic never fills them with
-  defaults and never validates the vendor's model catalog. If omitted, the
-  generated command omits the corresponding CLI flag or config override.
+  state config fields documented below. Workflow authors may explicitly choose
+  them per state only after checking the target account, model availability,
+  plan/tier, quota, pricing, region/country access, and organization policy.
+  Tychonic never fills them with defaults and never validates the vendor's model
+  catalog. If omitted, the generated command omits the corresponding CLI flag or
+  config override.
 - Product defaults are expressed in workflow code, not configuration.
   Invariants that must hold regardless of any bundle's `defaultProfile`
   (for example, per-TYPE command timeout defaults when a block omits
@@ -588,31 +593,39 @@ Rules:
   New types are added by releasing new product code, not by user
   declaration.
 - The settings allowed in a block are the union of settings the type
-  contract requires, recommended agent settings (`model`,
+  contract requires, explicit agent settings (`model`,
   `reasoning_effort` where supported), and orchestration values Tychonic owns
   (`resume`, `sandbox`, `approval`,
   `permission_mode`, `trust_all_tools`, `timeout`). Unknown fields are a
   validation error.
 - `model` is valid only with `agent`. It selects the model for the primary
   built-in adapter when that CLI supports a model flag. Current built-in
-  adapters `claude`, `codex`, `gemini`, and `kiro` all support it. Workflow
-  authors should pin `model` for states whose quality, latency, or cost
-  profile matters. Omitting `model` explicitly delegates model choice to the
-  selected external CLI's default or auto-selection behavior. Tychonic passes
-  the string through and does not maintain the vendor model list.
+  adapters `claude`, `codex`, `gemini`, and `kiro` all support it. A workflow
+  author may explicitly choose `model` per state only after checking the target
+  account, model availability, plan/tier, quota, pricing, region/country
+  access, and organization policy. Omitting `model` explicitly delegates model
+  choice to the selected external CLI's default or auto-selection behavior.
+  Tychonic passes the string through and does not maintain the vendor model list.
+  Because target account, model availability, plan/tier, quota, pricing,
+  region/country access, and organization policy vary by operator, Tychonic
+  does not define a universal default model profile. Reference examples are
+  inputs for authors to adapt, not defaults to reuse unchanged.
   When a built-in CLI reports the concrete model that handled the request,
   Tychonic compares that report with exact versioned model strings it sent
   from state config and fails the activity on mismatch. Claude versionless
   aliases such as `opus` are pass-through aliases, so they are not exact-match
-  asserted against the concrete model the CLI resolves internally.
+  asserted against the concrete model the CLI resolves internally. Some CLI
+  catalogs are account-, tier-, or region-scoped; `kiro-cli chat --list-models`
+  output is evidence of availability for that account, not a global validity
+  list for every documented Kiro model id.
 - `reasoning_effort` is valid only with `agent` when that CLI exposes a
   reasoning/effort surface. Current built-in support is `claude` and `codex`.
-  Workflow authors should set it on Claude/Codex states whose quality depends
-  on reasoning depth. Omitting it delegates to the external CLI's
-  configured/default effort. Tychonic passes the string through and does not
-  invent a default. `gemini` and `kiro` currently expose model selection but
-  no stable reasoning/effort/thinking CLI option, so the schema rejects
-  `reasoning_effort` for those agents.
+  A workflow author may explicitly choose it per state only after the same
+  target-environment checks required for `model`. Omitting it delegates to the
+  external CLI's configured/default effort. Tychonic passes the string through
+  and does not invent a default. `gemini` and `kiro` currently expose model
+  selection but no stable reasoning/effort/thinking CLI option, so the schema
+  rejects `reasoning_effort` for those agents.
 - Allowed fields inside a state block are exactly `type`, `agent`,
   `normalizer`, `resume`, `command`, `model`, `reasoning_effort`, `timeout`,
   `sandbox`, `approval`, `permission_mode`, and `trust_all_tools`. Unknown
@@ -915,7 +928,8 @@ standard names one by one.
 The host does **not** assign semantics to `policies.interaction`.
 `policies.interaction`, reject accumulation, per-state reject caps, signal
 parking, and whether interaction replaces or composes with auto retry loops are
-bundle-owned workflow contracts documented by the bundle that implements them.
+workflow-specific contracts documented by the workflow bundle that implements
+them.
 
 ### Agent session continuity
 
@@ -937,8 +951,8 @@ its own recovery path and documents that behavior in the bundle's README.
 
 ### Integration policy
 
-`policies.integration` is bundle-owned workflow policy. The host schema treats
-it as opaque data and does not assign integration behavior.
+`policies.integration` is workflow-specific policy. The host schema treats it
+as opaque data and does not assign integration behavior.
 
 The checkpoint example uses only `policies.integration.position`:
 

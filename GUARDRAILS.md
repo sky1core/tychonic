@@ -32,20 +32,22 @@ input boundary.
 
 Do not present option-heavy orchestration config as the default path. Optional
 fields are not all the same category: `model` and supported
-`reasoning_effort` are recommended agent settings for repeatability and quality
-control, while `resume`, timeout, sandbox, approval, permission, trust, and
-policy knobs change orchestration or execution boundaries.
+`reasoning_effort` are explicit agent settings a workflow author may choose
+only after checking the target account, model availability, plan/tier, quota,
+pricing, region/country access, and organization policy. `resume`, timeout,
+sandbox, approval, permission, trust, and policy knobs change orchestration or
+execution boundaries.
 
 The failure pattern is showing `resume`, timeout, sandbox, approval,
 permission, trust, and policy knobs together in a basic example. That teaches
 operators and agents to cargo-cult every available field, which makes workflow
 inputs harder to read and hides the real contract.
 
-For agent states, pin `model` when repeatability matters and set
-`reasoning_effort` for Claude/Codex states whose quality depends on reasoning
-depth. That is a recommended agent setting, not option cargo-culting. Keep
-orchestration knobs next to the concrete behavior they control and explain why
-that workflow needs them.
+A workflow author may explicitly choose `model` and supported
+`reasoning_effort` per state only after checking the target account, model
+availability, plan/tier, quota, pricing, region/country access, and organization
+policy. Keep orchestration knobs next to the concrete behavior they control and
+explain why that workflow needs them.
 
 ## QA Is Not A Hidden Repair Step
 

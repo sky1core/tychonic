@@ -6,9 +6,9 @@ capture, artifacts, and final status work without calling an external AI agent.
 
 ## Purpose
 
-Use this as the first runtime smoke example. It can run as-is in any git
-repository and proves the non-agent command path before adding agent or review
-states.
+Use this as the first runtime smoke reference. It has no external AI dependency
+and proves the non-agent command path before adding agent or review states.
+Inspect and adjust its `defaultProfile.command` for the target repository.
 
 ## States
 
@@ -43,7 +43,7 @@ tychonic run verifyOnlyWorkflow --input-file ./verify-input.json --wait
 
 ## Config
 
-The default profile runs a multi-line command:
+This example's defaultProfile runs a multi-line command:
 
 ```yaml
 states:

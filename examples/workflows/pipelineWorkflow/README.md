@@ -20,17 +20,23 @@ appear more than once without adding new activity kinds.
 - `review_2` — `review`
 - `security` — `verify`
 
-The default profile uses Kiro `claude-opus-4.6` for `work`, Claude
-`claude-opus-4-7` with `reasoning_effort: max` for `review_1`, and Codex
-`gpt-5.5` with `reasoning_effort: xhigh` for the final `review_2`.
+This example profile sets `work` to Kiro `claude-opus-4.6`, `review_1` to
+Claude `claude-opus-4-7` with `reasoning_effort: max`, and `review_2` to Codex
+`gpt-5.5` with `reasoning_effort: xhigh`.
+These values are examples; adapt them after checking the target account,
+model availability, plan/tier, quota, pricing, region/country access, and
+organization policy.
+Kiro model availability is account-, tier-, and region-scoped; absence from
+`kiro-cli chat --list-models` means unavailable for that account, not that the
+documented Kiro model id is globally invalid.
 
 ## Input
 
 | Field | Required | Purpose |
 |---|---|---|
 | `cwd` | yes | Git repository used for facts and the isolated worker worktree. |
-| `goal` | no | Worker goal threaded into the built-in `work` prompt. |
-| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to built-in prompts for `work`, `review_1`, or `review_2`. |
+| `goal` | no | Worker goal threaded into this workflow's `work` prompt. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to prompts defined by this workflow for `work`, `review_1`, or `review_2`. |
 
 Unknown fields are rejected. `promptAdditions` keys must match one of the
 promptable state NAMEs listed above. `cwd` must be a git repository.
@@ -67,7 +73,7 @@ of being ignored.
 
 ## Config
 
-Inspect the installed default profile:
+Inspect this workflow's installed `defaultProfile`:
 
 ```sh
 tychonic config show --workflow-name pipelineWorkflow --format yaml

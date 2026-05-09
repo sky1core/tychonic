@@ -190,8 +190,10 @@ describe("simpleWorkflow defaultProfile.states.work.resume", () => {
   });
 });
 
-describe("example bundle recommended agent profile style", () => {
-  it("uses Codex gpt-5.5 xhigh for final structured review gates", () => {
+// These assertions document the current bundled reference examples. They are
+// not universal model choices or templates for user bundles.
+describe("current example bundle defaultProfile choices", () => {
+  it("currently declares one structured-review model choice on every final review gate", () => {
     const finalReviewStates: Array<[string, any]> = [
       ["simpleWorkflow.review", (simpleDefault as any).states?.review],
       ["checkpointWorkflow.test_review", (checkpointDefault as any).states?.test_review],
@@ -215,7 +217,7 @@ describe("example bundle recommended agent profile style", () => {
     }
   });
 
-  it("uses Claude Opus Max for architect/planning review states and Kiro Opus for middle work", () => {
+  it("currently declares explicit model choices for planning review states and middle work", () => {
     for (const [name, block] of [
       ["architectBuilderQaWorkflow.architect", (architectDefault as any).states?.architect],
       ["architectBuilderFinalQaWorkflow.architect", (architectFinalQaDefault as any).states?.architect],
@@ -266,8 +268,8 @@ describe("simpleWorkflow defaultProfile.states.verify.command", () => {
   });
 });
 
-describe("agent-pinned example profiles", () => {
-  it("uses Kiro as the builder and Codex as final QA in the Kiro-assisted QA variant", () => {
+describe("current agent choices in reference examples", () => {
+  it("declares distinct builder and final QA agent roles in the Kiro-assisted QA variant", () => {
     const builder = (architectFinalQaDefault as any).states?.builder;
     const qa = (architectFinalQaDefault as any).states?.qa;
     expect(builder).toMatchObject({
@@ -308,7 +310,7 @@ describe("agent-pinned example profiles", () => {
     expect(states?.final_qa?.normalizer).toBeUndefined();
   });
 
-  it("uses Kiro plus Claude normalizer for first structured review before Codex final QA", () => {
+  it("declares a normalized first structured review before final QA", () => {
     const states = (architectFirstReviewQaDefault as any).states;
     expect(states?.first_review).toMatchObject({
       type: "review",

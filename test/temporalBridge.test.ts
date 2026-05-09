@@ -133,7 +133,7 @@ describe("Temporal bridge", () => {
     }
   });
 
-  it("builds a workflow bundle with Tychonic-provided workflow SDK and bundle-owned dependencies", async () => {
+  it("builds a workflow bundle with Tychonic-provided workflow SDK and bundled dependencies", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-temporal-package-state-"));
     const realStateHome = join(cwd, "real-state");
     const symlinkStateHome = join(cwd, "state-link");

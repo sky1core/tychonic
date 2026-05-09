@@ -6,14 +6,20 @@ run with interactive gates or straight through in auto mode, depending on
 
 ## Purpose
 
-Use this as the default reference for staged delegation: one agent plans,
-another agent builds, and QA reviews. The bundled default runs in auto mode
-with a bounded builder/QA loop. Switch `policies.interaction.mode` to
+Use this as an example staged delegation pipeline: one agent plans,
+another agent builds, and QA reviews. This workflow's `defaultProfile`
+runs in auto mode with a bounded builder/QA loop. Switch `policies.interaction.mode` to
 `interactive` when an operator should approve each stage.
 
-The default profile uses Claude `claude-opus-4-7` with `reasoning_effort: max`
-for architecture, Kiro `claude-opus-4.6` for building, and Codex `gpt-5.5` with
-`reasoning_effort: xhigh` for final QA.
+This example profile sets `architect` to Claude `claude-opus-4-7` with
+`reasoning_effort: max`, `builder` to Kiro `claude-opus-4.6`, and `qa` to
+Codex `gpt-5.5` with `reasoning_effort: xhigh`.
+These values are examples; adapt them after checking the target account,
+model availability, plan/tier, quota, pricing, region/country access, and
+organization policy.
+Kiro model availability is account-, tier-, and region-scoped; absence from
+`kiro-cli chat --list-models` means unavailable for that account, not that the
+documented Kiro model id is globally invalid.
 
 ## States
 
@@ -29,7 +35,7 @@ for architecture, Kiro `claude-opus-4.6` for building, and Codex `gpt-5.5` with
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
 | `goal` | no | Goal threaded into architect and builder prompts. |
-| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to built-in prompts for `architect`, `builder`, or `qa`. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to prompts defined by this workflow for `architect`, `builder`, or `qa`. |
 
 Unknown fields are rejected. `promptAdditions` keys must match one of the
 promptable state NAMEs listed above; agent names are not valid prompt keys.

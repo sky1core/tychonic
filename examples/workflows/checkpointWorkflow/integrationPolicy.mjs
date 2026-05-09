@@ -1,5 +1,5 @@
 /**
- * Validate the bundle-owned `policies.integration` block. The host
+ * Validate this workflow's `policies.integration` block. The host
  * config schema treats `policies` as opaque; this workflow validates
  * the keys it actually consumes.
  */
