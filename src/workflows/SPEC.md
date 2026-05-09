@@ -119,6 +119,37 @@ Host-side invariants:
 - A terminal `waiting_user` result may require a fresh run with adjusted input
   or config. That recovery path must be documented by the bundle.
 
+## State Rerun Recovery
+
+Recoverable state failure is part of the workflow state machine. If a
+state-producing activity fails, times out, or blocks because of an
+external/transient problem — for example network loss, unavailable external CLI,
+temporary provider failure, interrupted command execution, or process timeout —
+the workflow must not make the operator start over from the beginning when the
+same state can be safely tried again.
+
+A recoverable state rerun has this contract:
+
+- the failed attempt remains in Temporal history and in the Tychonic run record
+- output, logs, artifacts, findings, and session references from the failed
+  attempt remain inspectable evidence
+- the workflow execution remains open while rerun recovery is offered
+- rerun is driven by an explicit workflow-owned signal, not by Temporal activity
+  proxy retry
+- rerun invokes the same state NAME again and appends a new
+  `WorkflowStateRecord` / `ActivityAttemptRecord`
+- the workflow code owns whether rerun continues to the next state, returns to
+  an interaction gate, or stops after the rerun attempt
+
+A closed workflow execution cannot be resumed by signal. If a workflow returns a
+terminal result instead of keeping the execution open, it is declaring that
+state-level rerun is no longer available and the documented recovery path is a
+fresh run.
+
+Rerun recovery does not create a generic config-driven retry list. Workflow code
+must name the state it is willing to rerun and must document the rerunnable
+state NAMEs, stop conditions, and unsafe cases in the bundle README.
+
 ## Agent Session Continuity
 
 Agent session continuity is a host capability, not a host policy. Tychonic

@@ -1,76 +1,63 @@
 import { parseReviewResult, type ReviewResult } from "./schema.js";
 
+export type BuiltInReviewOutputAdapter = "claude" | "codex";
+
 export function parseReviewOutput(output: string): ReviewResult | undefined {
-  const candidates = collectReviewCandidates(output.trim(), { normalizeBuiltInEnvelopes: false });
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    const candidate = candidates[i];
-    if (candidate === undefined) continue;
-    const parsed = tryParseAsReview(candidate);
-    if (parsed) return parsed;
+  return tryParseAsReview(output.trim());
+}
+
+export function parseBuiltInReviewOutput(
+  output: string,
+  adapter: BuiltInReviewOutputAdapter
+): ReviewResult | undefined {
+  const trimmed = output.trim();
+  if (adapter === "codex") {
+    const terminalLastMessage = extractBuiltInTrailingLastMessage(trimmed);
+    return terminalLastMessage !== undefined ? tryParseAsBuiltInReview(terminalLastMessage) : undefined;
+  }
+
+  const terminalResult = extractBuiltInTerminalResult(trimmed);
+  if (terminalResult !== undefined) {
+    return tryParseAsBuiltInReview(terminalResult);
   }
   return undefined;
 }
 
-export function parseBuiltInReviewOutput(output: string): ReviewResult | undefined {
-  const candidates = collectReviewCandidates(output.trim(), { normalizeBuiltInEnvelopes: true });
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    const candidate = candidates[i];
-    if (candidate === undefined) continue;
-    const parsed = tryParseAsReview(candidate);
-    if (parsed) return parsed;
+function extractBuiltInTrailingLastMessage(output: string): string | undefined {
+  if (output.length === 0) return undefined;
+  const lines = output.split(/\r?\n/);
+  let lastAdapterEventIndex = -1;
+  for (let index = 0; index < lines.length; index++) {
+    const parsed = parseJsonObjectLine(lines[index]?.trim() ?? "");
+    if (parsed !== undefined && isBuiltInAdapterEvent(parsed)) {
+      lastAdapterEventIndex = index;
+    }
   }
-  return undefined;
+  if (lastAdapterEventIndex < 0) return undefined;
+
+  const trailing = lines.slice(lastAdapterEventIndex + 1).join("\n").trim();
+  return trailing.length > 0 ? trailing : undefined;
 }
 
-interface ReviewCandidateOptions {
-  normalizeBuiltInEnvelopes: boolean;
-}
-
-function collectReviewCandidates(output: string, options: ReviewCandidateOptions): string[] {
-  if (output.length === 0) {
-    return [];
-  }
-
-  const wholeObject = parseJsonObjectLine(output);
-  if (wholeObject !== undefined) {
-    return [output, ...extractDocumentedEnvelopeCandidates(wholeObject, options)];
-  }
-  if (!options.normalizeBuiltInEnvelopes) {
-    return [];
-  }
-
+function extractBuiltInTerminalResult(output: string): string | undefined {
   const lines = output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
-  if (lines.length === 1) {
-    return candidatesFromJsonLine(lines[0] ?? "", options);
-  }
-
-  const parsedLines: Array<{ line: string; parsed: Record<string, unknown> }> = [];
-  let sawNonJsonLine = false;
+  let terminalResult: string | undefined;
   for (const line of lines) {
     const parsed = parseJsonObjectLine(line);
-    if (parsed === undefined) {
-      sawNonJsonLine = true;
+    if (parsed === undefined || parsed.type !== "result") continue;
+    const structuredOutput = parsed.structured_output;
+    if (structuredOutput && typeof structuredOutput === "object" && !Array.isArray(structuredOutput)) {
+      terminalResult = JSON.stringify(structuredOutput);
       continue;
     }
-    parsedLines.push({ line, parsed });
+    const text = parsed.result;
+    terminalResult = typeof text === "string" ? text : undefined;
   }
-  if (parsedLines.length === 0) return [];
-
-  const candidates: string[] = [];
-  for (const { line, parsed } of parsedLines) {
-    if (!sawNonJsonLine) {
-      candidates.push(line);
-    }
-
-    candidates.push(...extractDocumentedEnvelopeCandidates(parsed, options));
-  }
-  return candidates;
+  return terminalResult;
 }
 
-function candidatesFromJsonLine(line: string, options: ReviewCandidateOptions): string[] {
-  const parsed = parseJsonObjectLine(line);
-  if (parsed === undefined) return [];
-  return [line, ...extractDocumentedEnvelopeCandidates(parsed, options)];
+function isBuiltInAdapterEvent(value: Record<string, unknown>): boolean {
+  return typeof value.type === "string";
 }
 
 function parseJsonObjectLine(line: string): Record<string, unknown> | undefined {
@@ -83,46 +70,6 @@ function parseJsonObjectLine(line: string): Record<string, unknown> | undefined 
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
   return parsed as Record<string, unknown>;
-}
-
-function extractDocumentedEnvelopeCandidates(
-  value: Record<string, unknown>,
-  options: ReviewCandidateOptions
-): string[] {
-  const out: string[] = [];
-  const obj = value as Record<string, unknown>;
-  if (!options.normalizeBuiltInEnvelopes) {
-    return out;
-  }
-
-  // Codex exec --json stream: { type:"item.completed", item:{ type:"agent_message", text:"..." } }
-  if (obj.type === "item.completed") {
-    const item = obj.item;
-    if (item && typeof item === "object" && !Array.isArray(item)) {
-      const itemObj = item as Record<string, unknown>;
-      const text = itemObj.text;
-      if (itemObj.type === "agent_message" && typeof text === "string") {
-        out.push(text.trim());
-        const parsedText = parseJsonObjectLine(text.trim());
-        if (parsedText !== undefined) {
-          out.push(JSON.stringify(normalizeBuiltInStructuredOutput(parsedText)));
-        }
-      }
-    }
-  }
-
-  // Claude --output-format stream-json terminal line:
-  // { type:"result", result:"...", structured_output:{...} }
-  if (obj.type === "result") {
-    const text = obj.result;
-    if (typeof text === "string") out.push(text);
-    const structuredOutput = obj.structured_output;
-    if (structuredOutput && typeof structuredOutput === "object" && !Array.isArray(structuredOutput)) {
-      out.push(JSON.stringify(normalizeBuiltInStructuredOutput(structuredOutput as Record<string, unknown>)));
-    }
-  }
-
-  return out;
 }
 
 function normalizeBuiltInStructuredOutput(value: Record<string, unknown>): Record<string, unknown> {
@@ -145,8 +92,22 @@ function tryParseAsReview(candidate: string): ReviewResult | undefined {
     return undefined;
   }
   try {
-    return parseReviewResult(value);
+    return parseReviewValue(value);
   } catch {
     return undefined;
   }
+}
+
+function tryParseAsBuiltInReview(candidate: string): ReviewResult | undefined {
+  const parsed = parseJsonObjectLine(candidate.trim());
+  if (parsed === undefined) return undefined;
+  try {
+    return parseReviewValue(normalizeBuiltInStructuredOutput(parsed));
+  } catch {
+    return undefined;
+  }
+}
+
+function parseReviewValue(value: unknown): ReviewResult {
+  return parseReviewResult(value);
 }

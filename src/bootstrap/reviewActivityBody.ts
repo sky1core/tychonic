@@ -19,7 +19,11 @@ import type {
 } from "../domain/types.js";
 import { FINDING_SEVERITIES } from "../domain/types.js";
 import { resolveCommand } from "../adapters/resolveAdapter.js";
-import { parseBuiltInReviewOutput, parseReviewOutput } from "../review/parse.js";
+import {
+  parseBuiltInReviewOutput,
+  parseReviewOutput,
+  type BuiltInReviewOutputAdapter
+} from "../review/parse.js";
 import type { ReviewActivityOutcome } from "../review/outcome.js";
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
@@ -255,7 +259,7 @@ export async function runReviewActivityBody(
   }
 
   let outputToParse = result.output;
-  let parseBuiltInEnvelope = reviewOptions.adapterDispatch !== undefined;
+  let builtInParseAdapter = reviewOutputAdapter(reviewOptions.adapterDispatch?.agentName);
   const createdAt = now().toISOString();
 
   if (reviewOptions.normalizerAgent !== undefined) {
@@ -303,11 +307,11 @@ export async function runReviewActivityBody(
       };
     }
     outputToParse = normalized.result.output;
-    parseBuiltInEnvelope = true;
+    builtInParseAdapter = reviewOptions.normalizerAgent;
   }
 
-  const parsed = parseBuiltInEnvelope
-    ? parseBuiltInReviewOutput(outputToParse)
+  const parsed = builtInParseAdapter
+    ? parseBuiltInReviewOutput(outputToParse, builtInParseAdapter)
     : parseReviewOutput(outputToParse);
 
   if (!parsed) {
@@ -356,6 +360,10 @@ export async function runReviewActivityBody(
     delta: { states: [state], activityAttempts: [attempt] },
     reviewOutcome: outcome
   };
+}
+
+function reviewOutputAdapter(agentName: string | undefined): BuiltInReviewOutputAdapter | undefined {
+  return agentName === "claude" || agentName === "codex" ? agentName : undefined;
 }
 
 function reviewPromptForExecution(prompt: string, reviewOptions: ResolvedReviewOptions): string {

@@ -148,6 +148,12 @@ SPEC:
   the effective profile and call the installed workflow's `runInput.mjs`
   validator before starting a Temporal workflow. Invalid input must not enter a
   Temporal workflow task retry loop.
+- **Recoverable state failure stays rerunnable.** When a state-producing
+  activity fails, times out, or blocks because of an external/transient problem,
+  the workflow must preserve the failed state evidence and keep an explicit
+  recovery path that can rerun that state later in the same Temporal workflow
+  execution. Rerun appends history and records; it never rewrites the failed
+  attempt.
 - **Activities return deltas and evidence.** Activity bodies do not mutate
   `input.run`. They return `WorkflowRunDelta` plus TYPE-specific outcome
   records; workflow code owns the live run record and applies those results.

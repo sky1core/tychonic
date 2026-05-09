@@ -21,15 +21,18 @@ import {
   interactionApproveStateSignalName,
   interactionModifyStateSignalName,
   interactionPendingStateQueryName,
+  interactionRerunStateSignalName,
   interactionRejectStateSignalName,
   type InteractionApproveStatePayload,
   type InteractionModifyStatePayload,
+  type InteractionRerunStatePayload,
   type InteractionRejectStatePayload,
   type StateRecordPatch
 } from "../temporal/types.js";
 import {
   parseInteractionApprovePayload,
   parseInteractionModifyPayload,
+  parseInteractionRerunPayload,
   parseInteractionRejectPayload
 } from "../interaction/payloads.js";
 import { applyModifyStateDecision } from "./runMerge.js";
@@ -37,10 +40,11 @@ import { applyModifyStateDecision } from "./runMerge.js";
 export type ApprovalDecision =
   | { kind: "approve" }
   | { kind: "reject"; feedback: string }
-  | { kind: "modify"; patch: StateRecordPatch };
+  | { kind: "modify"; patch: StateRecordPatch }
+  | { kind: "rerun"; reason?: string };
 
 export interface StraySignal {
-  kind: "approve" | "reject" | "modify" | "invalid";
+  kind: "approve" | "reject" | "modify" | "rerun" | "invalid";
   state: string;
   payload: unknown;
   reason?: string;
@@ -108,16 +112,20 @@ interface QueuedModify {
   kind: "modify";
   payload: InteractionModifyStatePayload;
 }
+interface QueuedRerun {
+  kind: "rerun";
+  payload: InteractionRerunStatePayload;
+}
 interface QueuedInvalid {
   kind: "invalid";
   state: string;
   payload: unknown;
   reason: string;
 }
-type QueuedInteraction = QueuedApprove | QueuedReject | QueuedModify | QueuedInvalid;
+type QueuedInteraction = QueuedApprove | QueuedReject | QueuedModify | QueuedRerun | QueuedInvalid;
 
 /**
- * Single FIFO queue across all three interaction kinds. The queue
+ * Single FIFO queue across all standard interaction kinds. The queue
  * preserves signal arrival order so two rejects received before an
  * approve are consumed reject-first (matching the operator's intent
  * when they dispatched them in sequence).
@@ -142,7 +150,7 @@ export function __resetInteractionHookState(): void {
 }
 
 /**
- * Register the three interaction signal handlers and the
+ * Register the standard interaction signal handlers and the
  * pending-state query. Each product workflow calls this once at
  * workflow start, before its first `await`, so Temporal-buffered
  * signals that arrived before the workflow reached its first task are
@@ -158,6 +166,7 @@ export function registerInteractionSignals(): void {
   const approveSignal = harness.defineSignal<[InteractionApproveStatePayload]>(interactionApproveStateSignalName);
   const rejectSignal = harness.defineSignal<[InteractionRejectStatePayload]>(interactionRejectStateSignalName);
   const modifySignal = harness.defineSignal<[InteractionModifyStatePayload]>(interactionModifyStateSignalName);
+  const rerunSignal = harness.defineSignal<[InteractionRerunStatePayload]>(interactionRerunStateSignalName);
 
   harness.setHandler(approveSignal, (payload: unknown) => {
     const parsed = parseInteractionApprovePayload(payload);
@@ -170,6 +179,10 @@ export function registerInteractionSignals(): void {
   harness.setHandler(modifySignal, (payload: unknown) => {
     const parsed = parseInteractionModifyPayload(payload);
     signalQueue.push(parsed.ok ? { kind: "modify", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
+  });
+  harness.setHandler(rerunSignal, (payload: unknown) => {
+    const parsed = parseInteractionRerunPayload(payload);
+    signalQueue.push(parsed.ok ? { kind: "rerun", payload: parsed.payload } : invalidSignal(payload, parsed.reason));
   });
 
   if (!queryRegistered) {
@@ -220,6 +233,35 @@ export function resolveRejectCap(): number {
   return policyCache.policy?.max_reject_iterations ?? INTERACTION_DEFAULT_MAX_REJECT_ITERATIONS;
 }
 
+/**
+ * Recovery gate used after a state-producing activity failed before the
+ * workflow could continue. It intentionally ignores auto/interactive mode:
+ * recoverable failure always waits for an explicit operator signal.
+ */
+export async function waitForStateRecovery(stateName: string): Promise<ApprovalDecision> {
+  if (typeof stateName !== "string" || stateName.length === 0) {
+    throw new Error("waitForStateRecovery stateName must be a non-empty string");
+  }
+
+  pendingStateName = stateName;
+  try {
+    const queued = takeQueuedDecision(stateName);
+    if (queued) {
+      return queued;
+    }
+    await harness.condition(() => hasQueuedSignalFor(stateName));
+    const decision = takeQueuedDecision(stateName);
+    if (!decision) {
+      throw new Error(
+        `waitForStateRecovery('${stateName}') woke without a queued decision; this is an internal bug`
+      );
+    }
+    return decision;
+  } finally {
+    pendingStateName = undefined;
+  }
+}
+
 function hasQueuedSignalFor(stateName: string): boolean {
   return signalQueue.some((entry) => entry.kind !== "invalid" && entry.payload.state === stateName);
 }
@@ -248,6 +290,12 @@ function takeQueuedDecision(stateName: string): ApprovalDecision | undefined {
     }
     return { kind: "reject", feedback };
   }
+  if (entry.kind === "rerun") {
+    return {
+      kind: "rerun",
+      ...(entry.payload.reason !== undefined ? { reason: entry.payload.reason } : {})
+    };
+  }
   const patch = entry.payload.patch;
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     throw new Error(`modifyState for '${stateName}' carried no patch object`);
@@ -262,7 +310,7 @@ function takeQueuedDecision(stateName: string): ApprovalDecision | undefined {
  *
  * - Auto mode resolves to `{ kind: "approve" }` immediately with no
  *   signal wait, no Temporal timer, and no history event.
- * - Interactive mode suspends on `condition()` until one of the three
+ * - Interactive mode suspends on `condition()` until one of the standard
  *   interaction signals arrives whose `state` matches `stateName`.
  *   Signals targeting a different state name stay on their queue for
  *   the hook call that matches them; stray signals are surfaced
@@ -329,6 +377,8 @@ export function applyApprovalDecision(
       return run;
     case "modify":
       return applyModifyStateDecision(run, stateName, decision.patch);
+    case "rerun":
+      return run;
     case "reject":
       return run;
     default: {

@@ -10,10 +10,12 @@ import {
   interactionApproveStateSignalName,
   interactionModifyStateSignalName,
   interactionPendingStateQueryName,
+  interactionRerunStateSignalName,
   interactionRejectStateSignalName,
   tychonicWorkflowStateQueryName,
   type InteractionApproveStatePayload,
   type InteractionModifyStatePayload,
+  type InteractionRerunStatePayload,
   type InteractionRejectStatePayload,
   type StateRecordPatch
 } from "./types.js";
@@ -68,6 +70,13 @@ export interface SignalInteractionModifyStateOptions extends TemporalConfig {
   runId?: string;
   state: string;
   patch: StateRecordPatch;
+}
+
+export interface SignalInteractionRerunStateOptions extends TemporalConfig {
+  workflowId: string;
+  runId?: string;
+  state: string;
+  reason?: string;
 }
 
 export interface QueryInteractionPendingStateOptions extends TemporalConfig {
@@ -394,6 +403,29 @@ export async function signalInteractionModifyState(
     patch: options.patch
   };
   await handle.signal(interactionModifyStateSignalName, payload);
+  return {
+    workflowId: options.workflowId,
+    ...(options.runId ? { runId: options.runId } : {}),
+    signaled: true
+  };
+}
+
+export async function signalInteractionRerunState(
+  options: SignalInteractionRerunStateOptions
+): Promise<WorkflowSignalResult> {
+  validateInteractionStateName(options.state, "rerunState");
+  if (options.reason !== undefined && (typeof options.reason !== "string" || options.reason.length === 0)) {
+    throw new Error("rerunState reason must be a non-empty string when present");
+  }
+  const config = normalizeTemporalConfig(options);
+  const connection = await Connection.connect({ address: config.address });
+  const client = new Client({ connection, namespace: config.namespace });
+  const handle = client.workflow.getHandle(options.workflowId, options.runId);
+  const payload: InteractionRerunStatePayload = {
+    state: options.state,
+    ...(options.reason !== undefined ? { reason: options.reason } : {})
+  };
+  await handle.signal(interactionRerunStateSignalName, payload);
   return {
     workflowId: options.workflowId,
     ...(options.runId ? { runId: options.runId } : {}),

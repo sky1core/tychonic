@@ -1,6 +1,8 @@
 import {
   addRunInboxItem,
   applyActivityResult,
+  latestStateByName,
+  recoverableActivityFailureResult,
   nextRunLocalId
 } from "tychonic/workflow";
 export { validateLoopPolicy } from "./loopPolicy.mjs";
@@ -15,7 +17,8 @@ export async function runAutoContinueLoop({
   workSession,
   maxIterations,
   activities,
-  onRunUpdate
+  onRunUpdate,
+  interaction
 }) {
   const profile = input.profile;
   const maxResume = profile?.states?.work?.resume ?? RESUME_CAP_DEFAULT;
@@ -53,41 +56,72 @@ export async function runAutoContinueLoop({
       break;
     }
 
-    const resumeRes = await activities.runWorker({
-      stateName: "work",
+    const resumeCall = await runActivityWithRecovery({
       run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd,
-      worktreePath,
-      sessionId: currentSession.id,
-      prompt: buildResumePrompt(run)
+      stateName: "work",
+      kind: "work",
+      cwd: worktreePath ?? input.cwd,
+      interaction,
+      onRunUpdate: updateRun,
+      invoke: (currentRun) => activities.runWorker({
+        stateName: "work",
+        run: currentRun,
+        ...(profile ? { profile } : {}),
+        cwd: input.cwd,
+        worktreePath,
+        sessionId: currentSession.id,
+        prompt: buildResumePrompt(currentRun)
+      })
     });
-    run = updateRun(applyResult(run, resumeRes));
+    run = resumeCall.run;
+    if (latestStateByName(run, "work")?.status !== "succeeded") {
+      break;
+    }
     resumeConsumed += 1;
     run = updateRun(markInboxResolved(run, resumeItem.id));
 
-    const verifyRes = await activities.runVerify({
-      stateName: "verify",
+    const verifyCall = await runActivityWithRecovery({
       run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd,
-      worktreePath
+      stateName: "verify",
+      kind: "verify",
+      cwd: worktreePath ?? input.cwd,
+      interaction,
+      onRunUpdate: updateRun,
+      invoke: (currentRun) => activities.runVerify({
+        stateName: "verify",
+        run: currentRun,
+        ...(profile ? { profile } : {}),
+        cwd: input.cwd,
+        worktreePath
+      })
     });
-    run = updateRun(applyResult(run, verifyRes));
-    if (verifyRes.delta?.states?.[0]?.status !== "succeeded") {
+    run = verifyCall.run;
+    if (latestStateByName(run, "verify")?.status !== "succeeded") {
       break;
     }
 
-    const reviewRes = await activities.runReview({
-      stateName: "review",
+    const reviewCall = await runActivityWithRecovery({
       run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd,
-      worktreePath,
-      prompt: buildReviewPrompt(run, "auto-continue iteration"),
-      verificationCommands: verificationCommands(profile)
+      stateName: "review",
+      kind: "review",
+      cwd: worktreePath ?? input.cwd,
+      interaction,
+      onRunUpdate: updateRun,
+      invoke: (currentRun) => activities.runReview({
+        stateName: "review",
+        run: currentRun,
+        ...(profile ? { profile } : {}),
+        cwd: input.cwd,
+        worktreePath,
+        prompt: buildReviewPrompt(currentRun, "auto-continue iteration"),
+        verificationCommands: verificationCommands(profile)
+      })
     });
-    run = updateRun(applyResult(run, reviewRes));
+    run = reviewCall.run;
+    const reviewRes = reviewCall.result;
+    if (!reviewRes) {
+      break;
+    }
     if (reviewRes.delta?.states?.[0]?.status === "succeeded") {
       break;
     }
@@ -103,6 +137,54 @@ export function verificationCommands(profile) {
 
 export function applyResult(run, result) {
   return applyActivityResult(run, result);
+}
+
+export async function runActivityWithRecovery({
+  run,
+  stateName,
+  kind,
+  cwd,
+  interaction,
+  onRunUpdate,
+  invoke
+}) {
+  const updateRun = (next) => (onRunUpdate ? onRunUpdate(next) : next);
+  while (true) {
+    let result;
+    try {
+      result = await invoke(run);
+    } catch (error) {
+      result = recoverableActivityFailureResult({
+        run,
+        stateName,
+        kind,
+        cwd,
+        error
+      });
+    }
+    run = updateRun(applyResult(run, result));
+    if (!interaction || !isRecoverableResult(kind, result, latestStateByName(run, stateName))) {
+      return { run, result };
+    }
+    run = updateRun({ ...run, status: "waiting_user" });
+    const decision = await interaction.waitForStateRecovery(stateName);
+    if (decision.kind === "rerun" || decision.kind === "reject") {
+      run = updateRun({ ...run, status: "running" });
+      continue;
+    }
+    if (decision.kind === "modify") {
+      run = updateRun(interaction.applyApprovalDecision(run, stateName, decision));
+      return { run, result: undefined };
+    }
+    return { run, result };
+  }
+}
+
+function isRecoverableResult(_kind, result, state) {
+  if (!state || !["failed", "timed_out", "blocked"].includes(state.status)) {
+    return false;
+  }
+  return result.recoverableFailure?.kind === "activity_exception";
 }
 
 function markInboxResolved(run, inboxItemId) {

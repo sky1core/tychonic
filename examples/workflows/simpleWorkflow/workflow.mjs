@@ -15,13 +15,18 @@
 // or config.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicRunState } from "tychonic/workflow";
+import {
+  createTychonicInteraction,
+  createTychonicRunState,
+  latestStateByName
+} from "tychonic/workflow";
 import { validateRunInput } from "./runInput.mjs";
 import {
   applyResult,
   appendReviewFindingsAndInbox,
   buildReviewPrompt,
   normalizeMaxIterations,
+  runActivityWithRecovery,
   runAutoContinueLoop,
   verificationCommands
 } from "./reviewLoop.mjs";
@@ -87,6 +92,7 @@ export async function simpleWorkflow(input) {
   // "reinstall" of the bundle does not change the running cap values.
   const profileSnapshot = input.profile;
   const runState = createTychonicRunState();
+  const interaction = createTychonicInteraction();
 
   const publishRun = (run, worktreePath) => {
     const published = runState.update(run, worktreePath ? { worktreePath } : {});
@@ -95,7 +101,7 @@ export async function simpleWorkflow(input) {
 
   // Run work -> verify -> review with optional auto-continue. The
   // workflow returns once it reaches a Tychonic terminal status.
-  let latestResult = await runMainPipeline({ ...input, profile: profileSnapshot }, runState, publishRun);
+  let latestResult = await runMainPipeline({ ...input, profile: profileSnapshot }, runState, publishRun, interaction);
   runState.update(latestResult.run, {
     artifactRoot: latestResult.artifactRoot,
     worktreePath: latestResult.worktreePath,
@@ -106,7 +112,7 @@ export async function simpleWorkflow(input) {
   return latestResult;
 }
 
-async function runMainPipeline(input, runState, publishRun) {
+async function runMainPipeline(input, runState, publishRun, interaction) {
   const profile = input.profile;
   let worktreePath;
   const updateRun = (next) => publishRun(next, worktreePath);
@@ -123,49 +129,77 @@ async function runMainPipeline(input, runState, publishRun) {
   run = updateRun(run);
 
   // Stage: work
-  const workRes = await runWorkerActivity({
-    stateName: "work",
+  const workCall = await runActivityWithRecovery({
     run,
-    ...(profile ? { profile } : {}),
-    cwd: input.cwd,
-    worktreePath,
-    prompt: input.goal ?? ""
+    stateName: "work",
+    kind: "work",
+    cwd: worktreePath ?? input.cwd,
+    interaction,
+    onRunUpdate: updateRun,
+    invoke: (currentRun) => runWorkerActivity({
+      stateName: "work",
+      run: currentRun,
+      ...(profile ? { profile } : {}),
+      cwd: input.cwd,
+      worktreePath,
+      prompt: input.goal ?? ""
+    })
   });
-  run = updateRun(applyResult(run, workRes));
-  const workSession = workRes.workerOutcome?.kind === "executed"
+  run = workCall.run;
+  const workRes = workCall.result;
+  const workSession = workRes?.workerOutcome?.kind === "executed"
     ? workRes.workerOutcome.agentSessions[0]
     : undefined;
 
-  if (workRes.delta?.states?.[0]?.status !== "succeeded") {
+  if (latestStateByName(run, "work")?.status !== "succeeded") {
     return finalize(run, input.cwd, worktreePath, runState, "work failed");
   }
 
   // Stage: verify
-  const verifyRes = await runVerifyActivity({
-    stateName: "verify",
+  const verifyCall = await runActivityWithRecovery({
     run,
-    ...(profile ? { profile } : {}),
-    cwd: input.cwd,
-    worktreePath
+    stateName: "verify",
+    kind: "verify",
+    cwd: worktreePath ?? input.cwd,
+    interaction,
+    onRunUpdate: updateRun,
+    invoke: (currentRun) => runVerifyActivity({
+      stateName: "verify",
+      run: currentRun,
+      ...(profile ? { profile } : {}),
+      cwd: input.cwd,
+      worktreePath
+    })
   });
-  run = updateRun(applyResult(run, verifyRes));
-  if (verifyRes.delta?.states?.[0]?.status !== "succeeded") {
+  run = verifyCall.run;
+  if (latestStateByName(run, "verify")?.status !== "succeeded") {
     return finalize(run, input.cwd, worktreePath, runState, "verify failed");
   }
 
   // Stage: review (optional)
   if (profile?.states?.review) {
-    const reviewRes = await runReviewActivity({
-      stateName: "review",
+    const reviewCall = await runActivityWithRecovery({
       run,
-      ...(profile ? { profile } : {}),
-      cwd: input.cwd,
-      worktreePath,
-      prompt: buildReviewPrompt(run, "initial work output"),
-      verificationCommands: verificationCommands(profile)
+      stateName: "review",
+      kind: "review",
+      cwd: worktreePath ?? input.cwd,
+      interaction,
+      onRunUpdate: updateRun,
+      invoke: (currentRun) => runReviewActivity({
+        stateName: "review",
+        run: currentRun,
+        ...(profile ? { profile } : {}),
+        cwd: input.cwd,
+        worktreePath,
+        prompt: buildReviewPrompt(currentRun, "initial work output"),
+        verificationCommands: verificationCommands(profile)
+      })
     });
-    run = updateRun(applyResult(run, reviewRes));
-    run = updateRun(appendReviewFindingsAndInbox(run, reviewRes));
+    run = reviewCall.run;
+    const reviewRes = reviewCall.result;
+    if (reviewRes) {
+      run = updateRun(appendReviewFindingsAndInbox(run, reviewRes));
+    }
 
     if (profile?.policies?.loop?.auto_continue) {
       const maxIter = normalizeMaxIterations(
@@ -178,7 +212,8 @@ async function runMainPipeline(input, runState, publishRun) {
         workSession,
         maxIterations: maxIter,
         activities: defaultActivities(),
-        onRunUpdate: updateRun
+        onRunUpdate: updateRun,
+        interaction
       });
     }
   }

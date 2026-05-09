@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyResult,
   appendReviewFindingsAndInboxForTests,
+  runActivityWithRecovery,
   runAutoContinueLoop
 } from "../examples/workflows/simpleWorkflow/reviewLoop.mjs";
 
@@ -344,6 +345,101 @@ function makeActivities(opts: {
 }
 
 describe("simpleWorkflow cap loop", () => {
+  it("reruns a thrown verify activity through the shared recovery wrapper", async () => {
+    let run = makeBaseRun(makeWorkerSession("session_w0"));
+    run.inbox = [];
+    const updates: any[] = [];
+    const interaction = {
+      waitForStateRecovery: async () => ({ kind: "rerun" }),
+      applyApprovalDecision: (nextRun: any) => nextRun
+    };
+    const invoke = makeRejectThenSucceedVerify();
+
+    const result = await runActivityWithRecovery({
+      run,
+      stateName: "verify",
+      kind: "verify",
+      cwd: "/tmp/tychonic-test/wt",
+      interaction,
+      onRunUpdate: (next: any) => {
+        run = next;
+        updates.push(next.status);
+        return next;
+      },
+      invoke
+    });
+
+    expect(invoke.calls).toBe(2);
+    expect(result.run.states.slice(-2).map((state: any) => state.status)).toEqual([
+      "failed",
+      "succeeded"
+    ]);
+    expect(result.run.activity_attempts.at(-2).status).toBe("failed");
+    expect(result.run.activity_attempts.at(-1).status).toBe("succeeded");
+    expect(updates).toContain("waiting_user");
+    expect(updates).toContain("running");
+  });
+
+  it("does not pause for rerun when verify returns an ordinary failed command result", async () => {
+    let run = makeBaseRun(makeWorkerSession("session_w0"));
+    const updates: any[] = [];
+    let recoveryCalls = 0;
+    const interaction = {
+      waitForStateRecovery: async () => {
+        recoveryCalls += 1;
+        return { kind: "rerun" };
+      },
+      applyApprovalDecision: (nextRun: any) => nextRun
+    };
+    const invoke = () => ({
+      delta: {
+        states: [
+          {
+            id: "state_verify_failed",
+            name: "verify",
+            status: "failed",
+            reason: "verify failed",
+            activity_attempt_ids: ["attempt_verify_failed"],
+            artifact_ids: [],
+            finding_ids: [],
+            started_at: nowIso(),
+            finished_at: nowIso()
+          }
+        ],
+        activityAttempts: [
+          {
+            id: "attempt_verify_failed",
+            state_id: "state_verify_failed",
+            kind: "deterministic_command",
+            status: "failed",
+            reason: "verify failed",
+            cwd: "/tmp/tychonic-test/wt",
+            started_at: nowIso(),
+            finished_at: nowIso()
+          }
+        ]
+      }
+    });
+
+    const result = await runActivityWithRecovery({
+      run,
+      stateName: "verify",
+      kind: "verify",
+      cwd: "/tmp/tychonic-test/wt",
+      interaction,
+      onRunUpdate: (next: any) => {
+        run = next;
+        updates.push(next.status);
+        return next;
+      },
+      invoke
+    });
+
+    expect(recoveryCalls).toBe(0);
+    expect(result.run.states.at(-1).status).toBe("failed");
+    expect(updates).not.toContain("waiting_user");
+  });
+
   it("resume cap fires after exactly N resume_work attempts → triage inbox → no fresh worker", async () => {
     const initialWorker = makeWorkerSession("session_w0");
     const run = makeBaseRun(initialWorker);
@@ -758,3 +854,48 @@ describe("simpleWorkflow cap loop", () => {
     expect(twice.inbox.filter((item: any) => item.finding_id === findingId)).toHaveLength(1);
   });
 });
+
+function makeRejectThenSucceedVerify() {
+  let calls = 0;
+  const invoke = (_callInput: any) => {
+    calls += 1;
+    if (calls === 1) {
+      throw new Error("temporary network failure");
+    }
+    const stateId = "state_verify_success";
+    const attemptId = "attempt_verify_success";
+    return {
+      delta: {
+        states: [
+          {
+            id: stateId,
+            name: "verify",
+            status: "succeeded",
+            reason: "verify ok",
+            activity_attempt_ids: [attemptId],
+            artifact_ids: [],
+            finding_ids: [],
+            started_at: nowIso(),
+            finished_at: nowIso()
+          }
+        ],
+        activityAttempts: [
+          {
+            id: attemptId,
+            state_id: stateId,
+            kind: "deterministic_command",
+            status: "succeeded",
+            reason: "verify ok",
+            cwd: "/tmp/tychonic-test/wt",
+            started_at: nowIso(),
+            finished_at: nowIso()
+          }
+        ]
+      }
+    };
+  };
+  Object.defineProperty(invoke, "calls", {
+    get: () => calls
+  });
+  return invoke as ((input: unknown) => unknown) & { calls: number };
+}

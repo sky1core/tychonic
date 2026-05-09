@@ -101,83 +101,108 @@ describe("parseReviewOutput — raw JSON", () => {
 });
 
 describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () => {
-  it("unwraps a terminal item.completed/agent_message containing raw review JSON", () => {
-    const stream = [
+  it("does not treat codex agent_message JSON as a review verdict", () => {
+    const wireStream = [
       `{"type":"thread.started","thread_id":"t"}`,
       `{"type":"turn.started"}`,
       `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"thinking out loud"}}`,
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
       `{"type":"turn.completed","usage":{"input_tokens":1}}`
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
-    expect(parsed?.status).toBe("pass");
-  });
-
-  it("normalizes semantic-only agent_message JSON from the built-in codex envelope", () => {
     const semanticPass = `{"status":"pass","summary":"semantic pass","findings":[]}`;
-    const stream = [
+    const semanticStream = [
       `{"type":"thread.started","thread_id":"t"}`,
       `{"type":"turn.started"}`,
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(semanticPass)}}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
-    expect(parsed?.schema_version).toBe("tychonic.review.v1");
-    expect(parsed?.status).toBe("pass");
-    expect(parsed?.summary).toBe("semantic pass");
+
+    expect(parseBuiltInReviewOutput(wireStream, "codex")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(semanticStream, "codex")).toBeUndefined();
   });
 
-  it("rejects a codex agent_message JSON object with a wrong schema_version", () => {
-    const wrongVersion = `{"schema_version":"tychonic.review.v2","status":"pass","summary":"wrong","findings":[]}`;
-    const stream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(wrongVersion)}}}`,
-      `{"type":"turn.completed"}`
-    ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
-  });
-
-  it("selects the LAST agent_message when earlier ones contain non-matching JSON", () => {
+  it("does not select among multiple codex agent_message JSON objects", () => {
     const earlier = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"draft","findings":[{"severity":"low","title":"x","detail":"y","target":"z"}]}`;
     const stream = [
       `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":${JSON.stringify(earlier)}}}`,
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
+    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+  });
+
+  it("uses the appended codex --output-last-message payload over earlier agent_message JSON", () => {
+    const earlyProgress = `{"status":"fail","summary":"starting review...","findings":[{"severity":"low","title":"not final","detail":"progress message only"}]}`;
+    const semanticPass = `{"status":"pass","summary":"final review passed","findings":[]}`;
+    const stream = [
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"turn.started"}`,
+      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":${JSON.stringify(earlyProgress)}}}`,
+      `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"sed -n '1,80p' src/file.ts"}}`,
+      `{"type":"turn.completed"}`,
+      semanticPass
+    ].join("\n");
+
+    const parsed = parseBuiltInReviewOutput(stream, "codex");
+    expect(parsed?.schema_version).toBe("tychonic.review.v1");
     expect(parsed?.status).toBe("pass");
+    expect(parsed?.summary).toBe("final review passed");
     expect(parsed?.findings).toEqual([]);
   });
 
-  it("rejects review JSON wrapped in a fenced code block inside agent_message", () => {
+  it("does not fall back to earlier agent_message JSON when appended codex last message is invalid", () => {
+    const earlyProgress = `{"status":"pass","summary":"not final","findings":[]}`;
+    const invalidFinal = `{"status":"fail","summary":"invalid terminal review","findings":[]}`;
+    const stream = [
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":${JSON.stringify(earlyProgress)}}}`,
+      `{"type":"turn.completed"}`,
+      invalidFinal
+    ].join("\n");
+
+    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+  });
+
+  it("ignores review JSON wrapped in a fenced code block inside agent_message", () => {
     const fenced = "Here is the review:\n\n```json\n" + failReview + "\n```\n";
     const stream = [
       `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(fenced)}}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
   });
 
-  it("returns undefined when no agent_message contains a conforming review", () => {
+  it("returns undefined when no appended codex last-message exists", () => {
     const stream = [
       `{"type":"thread.started","thread_id":"t"}`,
       `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"i looked at the code"}}`,
       `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls"}}`,
       `{"type":"turn.completed"}`
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
   });
 
-  it("ignores non-JSON adapter warning lines while still unwrapping documented codex envelopes", () => {
+  it("does not accept claude-style result events on the codex path", () => {
+    const stream = [
+      `{"type":"thread.started","thread_id":"t"}`,
+      `{"type":"result","result":${JSON.stringify(`{"status":"pass","summary":"wrong path","findings":[]}`)}}`,
+      `{"type":"turn.completed"}`
+    ].join("\n");
+    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+  });
+
+  it("ignores non-JSON adapter warning lines before the codex appended last-message", () => {
+    const semanticPass = `{"status":"pass","summary":"last message passed","findings":[]}`;
     const stream = [
       `2026-04-27T15:59:43.003779Z ERROR codex_core::session: failed to load skill /path/SKILL.md: invalid YAML`,
       `{"type":"thread.started","thread_id":"t"}`,
       `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"checking"}}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
-      `{"type":"turn.completed"}`
+      `{"type":"turn.completed"}`,
+      semanticPass
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream, "codex");
     expect(parsed?.status).toBe("pass");
+    expect(parsed?.summary).toBe("last message passed");
   });
 
   it("rejects a bare semantic payload line after a malformed codex tool event", () => {
@@ -188,7 +213,7 @@ describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () =>
       `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","aggregated_output":"unterminated`,
       semanticPass
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
   });
 
 });
@@ -206,7 +231,8 @@ describe("parseBuiltInReviewOutput — gemini envelope is not unwrapped", () => 
       stats: { models: { "gemini-test": {} } }
     });
     expect(parseReviewOutput(geminiLike)).toBeUndefined();
-    expect(parseBuiltInReviewOutput(geminiLike)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(geminiLike, "codex")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(geminiLike, "claude")).toBeUndefined();
   });
 });
 
@@ -218,7 +244,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
       `{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"found nothing"}]}}`,
       `{"type":"result","subtype":"success","is_error":false,"duration_ms":12,"result":${JSON.stringify(passReview)},"session_id":"s1"}`
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream, "claude");
     expect(parsed?.status).toBe("pass");
   });
 
@@ -239,7 +265,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
         session_id: "s1"
       })
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream, "claude");
     expect(parsed?.schema_version).toBe("tychonic.review.v1");
     expect(parsed?.status).toBe("fail");
     expect(parsed?.findings[0]?.title).toBe("t");
@@ -261,7 +287,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
         session_id: "s1"
       })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
   });
 
   it("rejects structured_output that supplies a wrong schema_version", () => {
@@ -280,7 +306,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
         session_id: "s1"
       })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
   });
 
   it("rejects a result field with fenced code block around review JSON", () => {
@@ -289,7 +315,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
       `{"type":"system","subtype":"init","session_id":"s1"}`,
       `{"type":"result","subtype":"success","result":${JSON.stringify(fenced)},"session_id":"s1"}`
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
   });
 
   it("rejects assistant.message.content text when result field is absent", () => {
@@ -297,7 +323,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
       `{"type":"system","subtype":"init","session_id":"s1"}`,
       `{"type":"assistant","message":{"id":"m","role":"assistant","content":[{"type":"text","text":${JSON.stringify(passReview)}}]}}`
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
   });
 
   it("selects the LAST terminal result over earlier terminal results", () => {
@@ -307,7 +333,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
       `{"type":"result","subtype":"success","result":${JSON.stringify(earlier)},"session_id":"s1"}`,
       `{"type":"result","subtype":"success","result":${JSON.stringify(passReview)},"session_id":"s1"}`
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream);
+    const parsed = parseBuiltInReviewOutput(stream, "claude");
     expect(parsed?.status).toBe("pass");
   });
 
@@ -317,7 +343,7 @@ describe("parseBuiltInReviewOutput — claude --print --output-format stream-jso
       `{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"i am working on it"}]}}`,
       `{"type":"result","subtype":"success","result":"looked good to me","session_id":"s1"}`
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
   });
 });
 

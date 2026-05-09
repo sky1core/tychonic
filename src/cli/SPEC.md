@@ -57,6 +57,7 @@ the standard interaction signal/query names:
 - `tychonic reject <workflow-id> [--state <name>] --feedback <text>`
 - `tychonic modify <workflow-id> [--state <name>] [--status <status>]
   [--reason <text>] [--note <text>] [--patch-file <path.json>]`
+- `tychonic rerun <workflow-id> [--state <name>] [--reason <text>]`
 
 The signal/query names and payload shapes are host public surface because the
 CLI sends them:
@@ -66,10 +67,11 @@ CLI sends them:
 | approve | `tychonic.interaction.approve_state` | `{ state: string }` |
 | reject | `tychonic.interaction.reject_state` | `{ state: string, feedback: string }` |
 | modify | `tychonic.interaction.modify_state` | `{ state: string, patch: StateRecordPatch }` |
+| rerun | `tychonic.interaction.rerun_state` | `{ state: string, reason?: string }` |
 | pending-state query | `tychonic.interaction.pending_state` | returns `string | undefined` |
 
 `state` is always a non-empty state NAME. `reject.feedback` is a non-empty
-string.
+string. `rerun.reason`, when present, is a non-empty string.
 
 `StateRecordPatch` is an object with at least one meaningful field:
 
@@ -91,13 +93,13 @@ message and ask the operator to pass `--state` explicitly.
 
 Using these signal names is optional. A workflow that does not create the
 standard interaction helper is not interactive from the point of view of
-`tychonic approve`, `tychonic reject`, and `tychonic modify`.
+`tychonic approve`, `tychonic reject`, `tychonic modify`, and `tychonic rerun`.
 
 `createTychonicInteraction(policy)` from `tychonic/workflow` registers the
 standard signal/query handlers as one unit and exposes the workflow-side gate
 for waiting on state approval, applying modify patches, draining stray signals,
-and creating standard inbox items. Workflow code must not hand-register these
-standard names one by one.
+handling explicit state rerun requests, and creating standard inbox items.
+Workflow code must not hand-register these standard names one by one.
 
 The host does **not** assign semantics to `policies.interaction`.
 `policies.interaction`, reject accumulation, per-state reject caps, signal

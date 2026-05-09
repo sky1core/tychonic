@@ -38,7 +38,7 @@ describe("CLI help public surface", () => {
     expect(stdout).not.toContain("--temporal-");
   });
 
-  it.each(["wait", "signal", "status", "approve", "reject", "modify", "artifacts", "logs", "inbox", "sessions"])(
+  it.each(["wait", "signal", "status", "approve", "reject", "modify", "rerun", "artifacts", "logs", "inbox", "sessions"])(
     "hides Temporal connection wiring from %s help",
     async (command) => {
       const stdout = await cliHelp([command, "--help"]);

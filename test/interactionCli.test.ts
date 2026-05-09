@@ -37,7 +37,7 @@ async function runCli(args: string[], options: { input?: string; env?: NodeJS.Pr
   }
 }
 
-describe("tychonic approve / reject / modify", () => {
+describe("tychonic approve / reject / modify / rerun", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -124,10 +124,17 @@ describe("tychonic approve / reject / modify", () => {
     expect(result.stderr + result.stdout).toMatch(/summary is not allowed/);
   });
 
+  it("rerun fails when --reason is empty", async () => {
+    const result = await runCli(["rerun", "wf_id", "--state", "work", "--reason", ""]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr + result.stdout).toMatch(/reason must be a non-empty string/i);
+  });
+
   it.each([
     { command: "approve", args: ["approve", "wf_id", "--state", ""] },
     { command: "reject", args: ["reject", "wf_id", "--state", "", "--feedback", "retry"] },
-    { command: "modify", args: ["modify", "wf_id", "--state", ""] }
+    { command: "modify", args: ["modify", "wf_id", "--state", ""] },
+    { command: "rerun", args: ["rerun", "wf_id", "--state", ""] }
   ])("$command with an empty --state fails before querying or signaling", async ({ args }) => {
     const result = await runCli(args);
     expect(result.exitCode).not.toBe(0);

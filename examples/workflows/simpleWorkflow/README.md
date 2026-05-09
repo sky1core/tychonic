@@ -90,16 +90,33 @@ the workflow uses its internal default.
 
 ## Recovery
 
-The run can end in `waiting_user` when the resume budget or review-iteration
-budget is exhausted with unresolved findings. Recover by inspecting evidence
-and starting a fresh run with adjusted input or config:
+While the Temporal workflow execution is still open, `work`, `verify`, and
+`review` can also enter `waiting_user` if the activity itself throws before it
+returns a Tychonic state result. This path is for external/transient failures
+such as an unavailable agent CLI, provider/network interruption, or process
+timeout before the activity can return its normal output. After fixing the
+external issue, rerun the same state:
+
+```sh
+tychonic status --workflow-id <id>
+tychonic rerun <id> --state <work|verify|review> --reason "<what changed>"
+```
+
+Ordinary state results are not rerun recovery. A failed verification command,
+a parsed failing review verdict, or malformed reviewer output remains the
+workflow's normal state-machine result.
+
+The run can also end in terminal `waiting_user` when the resume budget or
+review-iteration budget is exhausted with unresolved findings. Recover by
+inspecting evidence and starting a fresh run with adjusted input or config:
 
 ```sh
 tychonic inbox --workflow-id <id>
 tychonic artifacts --workflow-id <id>
 ```
 
-The workflow does not resume a terminal `waiting_user` run by signal.
+A closed workflow execution does not resume a terminal `waiting_user` run by
+signal.
 
 ## Config Override
 

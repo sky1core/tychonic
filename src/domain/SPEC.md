@@ -24,6 +24,11 @@ Workflow run status values and inbox/finding records must be updated by workflow
 code through explicit deltas or workflow-owned record updates. Domain helpers
 must not create a second source of truth outside the workflow run record.
 
+`profile.states.<name>` keys are unique in the effective config, but
+`run.states[]` may contain multiple records with the same `name` across
+iterations or explicit state reruns. Those records are ordered evidence, not
+competing definitions of the state config.
+
 ## Deltas
 
 `WorkflowRunDelta` is the handoff shape for activity-produced record changes.

@@ -48,6 +48,7 @@ import {
   queryInteractionPendingState,
   signalInteractionApproveState,
   signalInteractionModifyState,
+  signalInteractionRerunState,
   signalInteractionRejectState,
   signalNamedWorkflow,
   startNamedTemporalWorkflow,
@@ -877,6 +878,52 @@ program
         workflowId,
         state,
         patch,
+        ...(options.runId ? { runId: options.runId } : {}),
+        ...temporalConfigFromOptions(options)
+      });
+      console.log(
+        JSON.stringify(
+          { ok: true, state, ...result, _meta: cliInstanceMeta() },
+          null,
+          2
+        )
+      );
+    }
+  );
+
+program
+  .command("rerun")
+  .argument("<workflow-id>", "workflow id")
+  .option("--state <name>", "workflow state name to rerun; when omitted, queried from the workflow")
+  .option("--reason <text>", "optional non-empty reason for the rerun request")
+  .option("--run-id <id>", "workflow run id")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("Request rerun of a recoverable workflow state")
+  .action(
+    async (
+      workflowId: string,
+      options: Omit<RequiredTemporalResultCommandOptions, "workflowId"> & {
+        state?: string;
+        reason?: string;
+      }
+    ) => {
+      if (options.reason !== undefined && options.reason.length === 0) {
+        throw new Error("--reason must be a non-empty string when supplied");
+      }
+      const state = await resolveInteractionState({
+        workflowId,
+        ...(options.state !== undefined ? { explicitState: options.state } : {}),
+        ...(options.runId ? { runId: options.runId } : {}),
+        ...temporalConfigFromOptions(options)
+      });
+      const result = await signalInteractionRerunState({
+        workflowId,
+        state,
+        ...(options.reason !== undefined ? { reason: options.reason } : {}),
         ...(options.runId ? { runId: options.runId } : {}),
         ...temporalConfigFromOptions(options)
       });

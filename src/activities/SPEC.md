@@ -98,6 +98,10 @@ Workflow activity proxies for state-producing activities use
 `maximumAttempts: 1`. Retries that change product state belong in workflow code
 with explicit state NAMEs, not in Temporal activity proxy retry.
 
+An explicit state rerun is a new workflow decision to invoke the same state NAME
+again. It appends a new state record and activity attempt record. It does not
+rewrite, delete, or reinterpret the prior failed/timed-out/blocked attempt.
+
 ## Activity Timing
 
 When a state config block omits `timeout`, Tychonic applies the per-TYPE default

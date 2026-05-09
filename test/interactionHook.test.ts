@@ -12,15 +12,18 @@ import {
   resolveRejectCap,
   setInteractionPolicy,
   strayInteractionSignalInboxItem,
-  waitForStateApproval
+  waitForStateApproval,
+  waitForStateRecovery
 } from "../src/workflows/interactionHook.js";
 import {
   interactionApproveStateSignalName,
   interactionModifyStateSignalName,
   interactionPendingStateQueryName,
+  interactionRerunStateSignalName,
   interactionRejectStateSignalName,
   type InteractionApproveStatePayload,
   type InteractionModifyStatePayload,
+  type InteractionRerunStatePayload,
   type InteractionRejectStatePayload
 } from "../src/temporal/types.js";
 import { createTychonicInteraction } from "../src/workflow.js";
@@ -158,6 +161,7 @@ describe("interactionHook", () => {
       expect(harness.signalHandlersByName.has(interactionApproveStateSignalName)).toBe(true);
       expect(harness.signalHandlersByName.has(interactionRejectStateSignalName)).toBe(true);
       expect(harness.signalHandlersByName.has(interactionModifyStateSignalName)).toBe(true);
+      expect(harness.signalHandlersByName.has(interactionRerunStateSignalName)).toBe(true);
       expect(harness.queryHandlersByName.has(interactionPendingStateQueryName)).toBe(true);
 
       const pending = interaction.waitForStateApproval("qa");
@@ -212,6 +216,17 @@ describe("interactionHook", () => {
         patch
       } satisfies InteractionModifyStatePayload);
       await expect(pending).resolves.toEqual({ kind: "modify", patch });
+    });
+
+    it("resolves with rerun when a rerunState signal arrives", async () => {
+      registerInteractionSignals();
+      setInteractionPolicy({ mode: "interactive" });
+      const pending = waitForStateApproval("work");
+      dispatchSignal(harness, interactionRerunStateSignalName, {
+        state: "work",
+        reason: "network recovered"
+      } satisfies InteractionRerunStatePayload);
+      await expect(pending).resolves.toEqual({ kind: "rerun", reason: "network recovered" });
     });
 
     it("parks cross-name signals until the matching hook call runs", async () => {
@@ -299,6 +314,26 @@ describe("interactionHook", () => {
       await expect(pending).resolves.toEqual({ kind: "approve" });
     });
 
+    it("keeps an invalid rerun payload from satisfying the approval gate", async () => {
+      registerInteractionSignals();
+      setInteractionPolicy({ mode: "interactive" });
+      const pending = waitForStateApproval("work");
+      dispatchSignal(harness, interactionRerunStateSignalName, {
+        state: "work",
+        reason: ""
+      });
+      await flushMicrotasks();
+      expect(drainStraySignals()).toMatchObject([
+        {
+          kind: "invalid",
+          state: "<invalid>",
+          reason: "rerun payload reason must be a non-empty string when present"
+        }
+      ]);
+      dispatchSignal(harness, interactionApproveStateSignalName, { state: "work" } satisfies InteractionApproveStatePayload);
+      await expect(pending).resolves.toEqual({ kind: "approve" });
+    });
+
     it("consumes signals buffered before the workflow reached the hook (R-07)", async () => {
       registerInteractionSignals();
       setInteractionPolicy({ mode: "interactive" });
@@ -306,6 +341,26 @@ describe("interactionHook", () => {
       // Temporal's pre-registration buffering behavior.
       dispatchSignal(harness, interactionApproveStateSignalName, { state: "work" } satisfies InteractionApproveStatePayload);
       await expect(waitForStateApproval("work")).resolves.toEqual({ kind: "approve" });
+    });
+  });
+
+  describe("waitForStateRecovery", () => {
+    it("waits for rerun even when interaction mode is auto", async () => {
+      registerInteractionSignals();
+      setInteractionPolicy({ mode: "auto" });
+      const pending = waitForStateRecovery("verify");
+      let resolved = false;
+      pending.then(() => {
+        resolved = true;
+      });
+      await flushMicrotasks();
+      expect(resolved).toBe(false);
+      expect(runQuery(harness, interactionPendingStateQueryName)).toBe("verify");
+      dispatchSignal(harness, interactionRerunStateSignalName, {
+        state: "verify",
+        reason: "network recovered"
+      } satisfies InteractionRerunStatePayload);
+      await expect(pending).resolves.toEqual({ kind: "rerun", reason: "network recovered" });
     });
   });
 
@@ -322,10 +377,14 @@ describe("interactionHook", () => {
         state: "typo3",
         patch: { status: "succeeded" }
       });
+      dispatchSignal(harness, interactionRerunStateSignalName, {
+        state: "typo4",
+        reason: "try again"
+      });
       dispatchSignal(harness, interactionApproveStateSignalName, {});
       const strays = drainStraySignals();
-      expect(strays.map((item) => item.kind)).toEqual(["approve", "reject", "modify", "invalid"]);
-      expect(strays.map((item) => item.state)).toEqual(["typo1", "typo2", "typo3", "<invalid>"]);
+      expect(strays.map((item) => item.kind)).toEqual(["approve", "reject", "modify", "rerun", "invalid"]);
+      expect(strays.map((item) => item.state)).toEqual(["typo1", "typo2", "typo3", "typo4", "<invalid>"]);
       // Subsequent call returns empty — queues were drained.
       expect(drainStraySignals()).toEqual([]);
     });
@@ -378,6 +437,25 @@ describe("interactionHook", () => {
         inbox: []
       };
       expect(applyApprovalDecision(run, "work", { kind: "reject", feedback: "x" })).toBe(run);
+    });
+
+    it("returns the run unchanged for rerun (workflow handles the new activity call)", () => {
+      const run = {
+        schema_version: "tychonic.run.v1" as const,
+        id: "run_apply_rerun",
+        template: "t",
+        status: "running" as const,
+        cwd: "/c",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        states: [],
+        activity_attempts: [],
+        agent_sessions: [],
+        artifacts: [],
+        findings: [],
+        inbox: []
+      };
+      expect(applyApprovalDecision(run, "work", { kind: "rerun", reason: "network recovered" })).toBe(run);
     });
 
     it("replaces the latest state record for modify", () => {

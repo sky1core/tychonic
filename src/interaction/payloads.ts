@@ -11,6 +11,7 @@ import {
 import type {
   InteractionApproveStatePayload,
   InteractionModifyStatePayload,
+  InteractionRerunStatePayload,
   InteractionRejectStatePayload,
   StateRecordPatch
 } from "../temporal/types.js";
@@ -57,6 +58,26 @@ export function parseInteractionModifyPayload(payload: unknown): ParsedPayload<I
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
   return { ok: true, payload: { state, patch } };
+}
+
+export function parseInteractionRerunPayload(payload: unknown): ParsedPayload<InteractionRerunStatePayload> {
+  const payloadObject = parseStrictObject(payload, ["state", "reason"], "rerun payload");
+  if (!payloadObject.ok) return payloadObject;
+  const state = payloadObject.value.state;
+  if (typeof state !== "string" || state.length === 0) {
+    return { ok: false, reason: "rerun payload state must be a non-empty string" };
+  }
+  const reason = payloadObject.value.reason;
+  if (reason !== undefined && (typeof reason !== "string" || reason.length === 0)) {
+    return { ok: false, reason: "rerun payload reason must be a non-empty string when present" };
+  }
+  return {
+    ok: true,
+    payload: {
+      state,
+      ...(reason !== undefined ? { reason } : {})
+    }
+  };
 }
 
 export function validateStateRecordPatch(

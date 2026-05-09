@@ -338,7 +338,7 @@ describe("runReviewActivity adapter dispatch", () => {
     expect(result.reviewOutcome.agentSessions[0]?.status).toBe("failed");
   });
 
-  it("block.agent built-in (codex) parses semantic agent_message JSON through the review activity path", async () => {
+  it("block.agent built-in (codex) parses the appended last-message through the review activity path", async () => {
     await writeCodexSemanticReviewStubBinary(join(stubBinDir, "codex"));
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-codex-semantic-"));
 
@@ -727,6 +727,11 @@ async function writeClaudeStructuredReviewWithCwdStubBinary(path: string): Promi
 
 async function writeCodexSemanticReviewStubBinary(path: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
+  const semanticReview = JSON.stringify({
+    status: "pass",
+    summary: "codex semantic review passed",
+    findings: []
+  });
   const threadEvent = JSON.stringify({
     type: "thread.started",
     thread_id: "codex-structured-thread-id"
@@ -737,9 +742,9 @@ async function writeCodexSemanticReviewStubBinary(path: string): Promise<void> {
       id: "item_1",
       type: "agent_message",
       text: JSON.stringify({
-        status: "pass",
-        summary: "codex semantic review passed",
-        findings: []
+        status: "fail",
+        summary: "starting review",
+        findings: [{ severity: "low", title: "progress", detail: "not final" }]
       })
     }
   });
@@ -749,6 +754,19 @@ async function writeCodexSemanticReviewStubBinary(path: string): Promise<void> {
     [
       "#!/bin/sh",
       "printf 'ARGV:%s\\n' \"$*\" >&2",
+      "last_message=",
+      "while [ \"$#\" -gt 0 ]; do",
+      "  if [ \"$1\" = \"--output-last-message\" ]; then",
+      "    shift",
+      "    last_message=${1:-}",
+      "  fi",
+      "  shift || break",
+      "done",
+      "if [ -n \"$last_message\" ]; then",
+      "  cat > \"$last_message\" <<'TYCHONIC_LAST_MESSAGE'",
+      semanticReview,
+      "TYCHONIC_LAST_MESSAGE",
+      "fi",
       "cat > /dev/null",
       "cat <<'JSON'",
       threadEvent,

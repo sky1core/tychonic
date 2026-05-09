@@ -12,6 +12,7 @@ export const tychonicWorkflowStateQueryName = "tychonic.workflow_state";
 export const interactionApproveStateSignalName = "tychonic.interaction.approve_state";
 export const interactionRejectStateSignalName = "tychonic.interaction.reject_state";
 export const interactionModifyStateSignalName = "tychonic.interaction.modify_state";
+export const interactionRerunStateSignalName = "tychonic.interaction.rerun_state";
 
 export const interactionPendingStateQueryName = "tychonic.interaction.pending_state";
 
@@ -46,10 +47,16 @@ export interface InteractionModifyStatePayload {
   patch: StateRecordPatch;
 }
 
+export interface InteractionRerunStatePayload {
+  state: string;
+  reason?: string;
+}
+
 export type InteractionSignalPayload =
   | ({ kind: "approve" } & InteractionApproveStatePayload)
   | ({ kind: "reject" } & InteractionRejectStatePayload)
-  | ({ kind: "modify" } & InteractionModifyStatePayload);
+  | ({ kind: "modify" } & InteractionModifyStatePayload)
+  | ({ kind: "rerun" } & InteractionRerunStatePayload);
 
 export interface ActivityCallFieldsByType {
   work: {
@@ -129,12 +136,18 @@ export type ActivityInput<T extends ActivityType> = {
  *                           to `run.artifacts`. The artifact exists regardless
  *                           of command success — `state.status` reflects the
  *                           command result.
+ * @field recoverableFailure Present only when workflow code converts a thrown
+ *                           activity exception into a state record so the same
+ *                           open workflow execution can offer explicit rerun
+ *                           recovery. Ordinary command/model/review failures
+ *                           returned by an activity do not set this field.
  */
 export interface ActivityResult {
   delta: WorkflowRunDelta;
   reviewOutcome?: ReviewActivityOutcome;
   commandOutcome?: { artifact: ArtifactRecord };
   workerOutcome?: WorkerActivityOutcome;
+  recoverableFailure?: { kind: "activity_exception" };
 }
 
 export interface TemporalConnectionOptions {
