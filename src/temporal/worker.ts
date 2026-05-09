@@ -124,7 +124,7 @@ export async function resolveWorkflowModulePath(): Promise<string> {
   await mkdir(generatedDir, { recursive: true });
   const combinedPath = join(await realpath(generatedDir), "combined-workflows.mjs");
   // Each bundle's directory name equals the single workflow function it
-  // exports (see SPEC §Workflow Modules → Workflow-default profile).
+  // exports (see src/temporal/SPEC.md §Workflow-default Profile).
   // Re-export only that named function so bundle-private exports like
   // `defaultProfile` or helper functions do not collide in the combined
   // module.

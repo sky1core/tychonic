@@ -46,8 +46,8 @@ export interface RunWorkerActivityBodyOptions<T extends WorkerBodyType> {
 
 /**
  * Single worker-session body. Produces exactly one
- * `WorkflowStateRecord` and one `ActivityAttemptRecord` (SPEC §Activity
- * Result And Evidence Invariants). Does not mutate `input.run` — files are
+ * `WorkflowStateRecord` and one `ActivityAttemptRecord`
+ * (src/bootstrap/SPEC.md §Activity Bodies). Does not mutate `input.run` — files are
  * written directly with `node:fs` and records are returned through the
  * delta / `workerOutcome` for the caller to append.
  *

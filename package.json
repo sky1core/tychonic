@@ -34,6 +34,8 @@
     "AGENTS.md",
     "GUARDRAILS.md",
     "SPEC.md",
+    "src/**/SPEC.md",
+    "examples/workflows/SPEC.md",
     "SECURITY.md",
     "LICENSE"
   ],

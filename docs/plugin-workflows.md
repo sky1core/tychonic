@@ -239,7 +239,7 @@ one.
 
 ## References
 
-- [SPEC.md](../SPEC.md): authoritative product contract
+- [SPEC.md](../SPEC.md): authoritative product contract index and module SPEC map
 - [skills/tychonic-cli/workflow-module-contract.md](../skills/tychonic-cli/workflow-module-contract.md): compact authoring contract
 - [examples/workflows/verifyOnlyWorkflow](../examples/workflows/verifyOnlyWorkflow): minimal no-agent verify example
 - [examples/workflows/pipelineWorkflow](../examples/workflows/pipelineWorkflow): multi-stage example

@@ -19,7 +19,7 @@ export interface CreateWorktreeActivityResult {
  * worker / verify / review activities through the explicit
  * `worktreePath` call field.
  *
- * SPEC §Workflow Loop Semantics: "Background mutation must use an
+ * src/workflows/SPEC.md §Workflow Loop Semantics: "Background mutation must use an
  * isolated worktree." This activity is the single place that creates
  * one.
  */

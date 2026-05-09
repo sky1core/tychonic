@@ -21,7 +21,7 @@ import type { ActivityResult, StateRecordPatch } from "../temporal/types.js";
  * - `result.reviewOutcome`, `result.commandOutcome`, `result.workerOutcome`
  *   — TYPE-specific payloads carrying `ArtifactRecord` / `AgentSessionRecord`
  *   that the caller appends to `run.artifacts` / `run.agent_sessions`. The
- *   body never pushes into `input.run` itself (SPEC §Activity Result And
+ *   body never pushes into `input.run` itself (src/activities/SPEC.md §Activity Result And
  *   Evidence Invariants).
  *
  * `applyActivityResult` applies both halves in one step. Parsed failed review
@@ -148,7 +148,7 @@ function appendParsedReviewFindings(
  * Apply a `StateRecordPatch` from an external `modifyState` signal to the
  * latest state record whose `name === stateName`. Pure.
  *
- * Contract (see SPEC §Workflow Model → `waitForStateApproval`):
+ * Contract (see src/cli/SPEC.md §Interaction Signal Contract):
  * - The patch is an overlay, not a replacement. `status`, `reason`, and
  *   `note` update the latest state record; `artifacts` and `findings` are
  *   appended to both the state record's id lists and to the run-level

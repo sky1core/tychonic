@@ -13,7 +13,7 @@
  * - `deriveInstancePort` — deterministic fnv1a32-based port derivation.
  * - `setActiveInstance` / `getActiveInstance` — module-scoped accessor
  *   for the process-local active instance. (Process-local, Temporal-free
- *   per SPEC §Source Of Truth.)
+ *   per root SPEC.md §Source Of Truth.)
  * - `resolveInstanceRuntime` — pure function that applies the field-level
  *   explicit-override precedence (explicit > derived > default) to produce
  *   a `ResolvedInstanceRuntime`.

@@ -323,7 +323,7 @@ macOS notification은 OS의 일반 notification permission을 사용합니다. �
 
 ## 추가 문서
 
-- [SPEC.md](SPEC.md): 제품 contract
+- [SPEC.md](SPEC.md): 제품 contract index와 module SPEC map
 - [docs/plugin-workflows.md](docs/plugin-workflows.md): workflow authoring guide
 - [skills/tychonic-cli/SKILL.md](skills/tychonic-cli/SKILL.md): agent-facing CLI operating guide
 - [SECURITY.md](SECURITY.md): security boundary와 reporting

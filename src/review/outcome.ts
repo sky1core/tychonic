@@ -4,8 +4,8 @@ import type { ReviewResult } from "./schema.js";
 export type ParsedReviewResult = ReviewResult;
 
 /**
- * 4-way outcome of one review-body invocation. Pins the contract in SPEC
- * §Finding and inbox routing. `artifacts` and `agentSessions` carry full
+ * 4-way outcome of one review-body invocation. Pins the contract in
+ * src/review/SPEC.md and activity routing. `artifacts` and `agentSessions` carry full
  * records (not ids) because the caller appends them to `run.artifacts` and
  * `run.agent_sessions`; the body never mutates `input.run` itself.
  *

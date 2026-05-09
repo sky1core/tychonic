@@ -7,7 +7,7 @@ import type { AgentSessionRecord, ArtifactRecord, WorkflowStateStatus } from "..
  *
  * `artifacts` and `agentSessions` carry full records (not ids) because the
  * caller appends them to `run.artifacts` / `run.agent_sessions`; the body
- * never mutates `input.run` (SPEC §Activity Result And Evidence Invariants).
+ * never mutates `input.run` (src/activities/SPEC.md §Activity Result And Evidence Invariants).
  *
  * For fresh work: `agentSessions` contains a newly-constructed session the
  * body created. For resume: the caller-supplied session id is returned

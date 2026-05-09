@@ -20,8 +20,8 @@ export type StartRunActivityResult = WorkflowRunRecord;
  *
  * `run.id` is generated here if the caller did not supply one through
  * `input.runId`. The id is surfaced across the product (filesystem
- * layout, inbox references, artifact paths) per SPEC §Activity Result
- * And Evidence Invariants — the workflow threads this id through every
+ * layout, inbox references, artifact paths) per
+ * src/activities/SPEC.md §Activity Result And Evidence Invariants — the workflow threads this id through every
  * subsequent activity call.
  */
 export async function startRunActivity(input: StartRunActivityInput): Promise<StartRunActivityResult> {

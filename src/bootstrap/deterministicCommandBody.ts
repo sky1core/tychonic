@@ -33,7 +33,7 @@ export interface RunDeterministicCommandBodyOptions<T extends DeterministicComma
 /**
  * Shared body for deterministic-command activities (`verify`). Runs one command, records one attempt, writes
  * one output artifact. Does not mutate `input.run` and produces exactly one
- * state (SPEC §Activity Result And Evidence Invariants).
+ * state (src/bootstrap/SPEC.md §Activity Bodies).
  *
  * Skip conditions (autonomy, facts, policy modes, missing config) live in
  * the caller. This body is called only when the caller has already decided

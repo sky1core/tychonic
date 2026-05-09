@@ -325,7 +325,7 @@ notification does not appear, open System Settings -> Notifications and allow
 
 ## More Documentation
 
-- [SPEC.md](SPEC.md): product contract
+- [SPEC.md](SPEC.md): product contract index and module SPEC map
 - [docs/plugin-workflows.md](docs/plugin-workflows.md): workflow authoring guide
 - [skills/tychonic-cli/SKILL.md](skills/tychonic-cli/SKILL.md): agent-facing CLI operating guide
 - [SECURITY.md](SECURITY.md): security boundary and reporting

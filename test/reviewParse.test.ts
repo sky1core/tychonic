@@ -195,7 +195,7 @@ describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () =>
 
 describe("parseBuiltInReviewOutput — gemini envelope is not unwrapped", () => {
   it("does not treat gemini --output-format json as a built-in reviewer contract", () => {
-    // SPEC §structured-review: only documented adapter envelopes are
+    // src/review/SPEC.md §Structured Reviewer Contract: only documented adapter envelopes are
     // normalized by the host. A real gemini --output-format json object has
     // `{ response: "<stringified review>", ... }`. The parser must NOT unwrap
     // that envelope; gemini review requires a declared normalizer or an

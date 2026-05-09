@@ -10,7 +10,8 @@ review/delegate continuation through one reliable workflow model.
 
 ## Source Of Truth
 
-Use [SPEC.md](SPEC.md) as the current product contract.
+Use [SPEC.md](SPEC.md) and the nearest module `SPEC.md` listed from that root
+index as the current product contract.
 
 Tychonic uses **Temporal only** for state management.
 
@@ -67,7 +68,8 @@ similar) must stay optional; omission propagates to flag omission in the
 generated command.
 
 Configuration has one source per workflow: the installed bundle's
-`defaultProfile` export from `workflow.mjs` (see SPEC §Configuration Model).
+`defaultProfile` export from `workflow.mjs` (see
+[src/catalog/SPEC.md](src/catalog/SPEC.md)).
 
 A `--config <file>` override or a Temporal signal payload replaces the
 bundle's `defaultProfile` as a single whole object for that one invocation.
@@ -132,13 +134,14 @@ Structured reviewers must emit the documented review contract.
 
 ## Spec Authority Principle
 
-`SPEC.md` is the user-controlled product contract. Every line of SPEC reflects
-a decision the user has explicitly made. Builder agents may sync SPEC prose to
-match user-approved contract changes, but **agents must not introduce new
-contracts, design rules, or policy statements into SPEC without an explicit
-user decision for that specific contract**. "The user authorized this larger
-refactor" is not authorization for individual SPEC clauses. When in doubt,
-draft the change, surface it for user approval, and only then commit.
+Root `SPEC.md` and module `SPEC.md` files are the user-controlled product
+contract. Every line of SPEC reflects a decision the user has explicitly made.
+Builder agents may sync SPEC prose to match user-approved contract changes, but
+**agents must not introduce new contracts, design rules, or policy statements
+into SPEC without an explicit user decision for that specific contract**. "The
+user authorized this larger refactor" is not authorization for individual SPEC
+clauses. When in doubt, draft the change, surface it for user approval, and only
+then commit.
 
 The same rule binds the rest of the source-of-truth surface: AGENTS.md,
 SKILL.md, workflow-module-contract.md, and any bundle README that documents

@@ -43,7 +43,7 @@ export async function resolveTychonicPackageRootFromCli(cliPath: string): Promis
  * Install a workflow bundle directory under
  * `<state>/workflows/modules/<name>/`. The source must be a directory
  * containing `workflow.mjs` and may also be a standard package directory
- * with separately installed dependencies (see SPEC §Workflow Modules →
+ * with separately installed dependencies (see src/temporal/SPEC.md §Workflow Modules →
  * Install-time validation).
  *
  * Validation runs fully before any copy: file shape, exported workflow
@@ -366,7 +366,7 @@ async function inspectWorkflowModuleExports(bundle: {
 
   if (!defaultProfileFound) {
     throw new Error(
-      `bundle ${JSON.stringify(bundle.name)} does not export a 'defaultProfile' object. Declare it in workflow.mjs per SPEC §Workflow Modules → Workflow-default profile.`
+      `bundle ${JSON.stringify(bundle.name)} does not export a 'defaultProfile' object. Declare it in workflow.mjs per src/temporal/SPEC.md §Workflow-default Profile.`
     );
   }
   const parsed = TychonicConfigSchema.safeParse(defaultProfileRaw);

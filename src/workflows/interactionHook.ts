@@ -182,8 +182,8 @@ export function registerInteractionSignals(): void {
 /**
  * Cache the start-time interaction policy. Called once per workflow
  * run. Absent block → auto. Overwriting an already-resolved cache is a
- * bug (the policy is immutable per SPEC §Configuration Model →
- * Immutability) so this throws to catch mis-wiring in tests.
+ * bug (the policy is immutable per src/catalog/SPEC.md §Immutability)
+ * so this throws to catch mis-wiring in tests.
  */
 export function setInteractionPolicy(policy: PolicyInteraction | undefined): void {
   if (policyCache.resolved) {

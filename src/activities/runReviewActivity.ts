@@ -15,7 +15,7 @@ import { heartbeatActivity } from "./heartbeat.js";
  * Temporal activity entry-point for `review` TYPE activities. Resolves the
  * NAMEd review block, builds the shared resources, and delegates to
  * `runReviewActivityBody`. The activity does not mutate `input.run` and
- * returns a `WorkflowRunDelta` through `ActivityResult` (SPEC §Activity
+ * returns a `WorkflowRunDelta` through `ActivityResult` (src/activities/SPEC.md §Activity
  * Result And Evidence Invariants).
  */
 export type RunReviewActivityInput = ActivityInput<"review">;

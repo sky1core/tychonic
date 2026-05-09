@@ -75,8 +75,8 @@ const DIRECT_BUILT_IN_REVIEW_CONTRACT = [
 
 /**
  * Single review body. Produces exactly one `WorkflowStateRecord`
- * and one `ActivityAttemptRecord` (SPEC §Activity Result And Evidence
- * Invariants). Does not mutate `input.run` — files are written directly
+ * and one `ActivityAttemptRecord` (src/bootstrap/SPEC.md §Activity Bodies).
+ * Does not mutate `input.run` — files are written directly
  * with `node:fs` and the resulting records are returned through the delta
  * and `reviewOutcome` for the caller to append.
  *

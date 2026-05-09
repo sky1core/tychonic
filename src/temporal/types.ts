@@ -116,8 +116,8 @@ export type ActivityInput<T extends ActivityType> = {
  *                           The caller merges the delta into its own run copy
  *                           (workflow state, existing runner, or a test shim).
  * @field reviewOutcome      Present only for review-type activities. 4-way
- *                           discriminated union pinned in SPEC §Finding and
- *                           inbox routing. Callers switch on `kind` to decide
+ *                           discriminated union pinned in src/review/SPEC.md
+ *                           and activity routing. Callers switch on `kind` to decide
  *                           whether to push inbox items or append findings;
  *                           `artifacts` / `agentSessions` carry full records
  *                           (not ids) that the caller appends to

@@ -16,10 +16,36 @@ describe("documentation consistency", () => {
   });
 
   it("documents that wait output does not carry the full raw run result", async () => {
-    const spec = await readFile("SPEC.md", "utf8");
+    const spec = await readFile("src/cli/SPEC.md", "utf8");
 
     expect(spec).toContain("The wait payload does not include the full raw run result.");
     expect(spec).not.toContain("`result` carries the full run result");
+  });
+
+  it("keeps the root SPEC linked to every module SPEC", async () => {
+    const rootSpec = await readFile("SPEC.md", "utf8");
+    const moduleSpecs = [
+      "src/workflows/SPEC.md",
+      "src/domain/SPEC.md",
+      "src/activities/SPEC.md",
+      "src/bootstrap/SPEC.md",
+      "src/temporal/SPEC.md",
+      "src/catalog/SPEC.md",
+      "src/contracts/SPEC.md",
+      "src/adapters/SPEC.md",
+      "src/review/SPEC.md",
+      "src/interaction/SPEC.md",
+      "src/cli/SPEC.md",
+      "src/runtime/SPEC.md",
+      "src/service/SPEC.md",
+      "src/storage/SPEC.md",
+      "examples/workflows/SPEC.md"
+    ];
+
+    for (const specPath of moduleSpecs) {
+      await expect(readFile(specPath, "utf8"), specPath).resolves.toContain("# ");
+      expect(rootSpec, `root SPEC must link ${specPath}`).toContain(`[${specPath}](${specPath})`);
+    }
   });
 
   it("does not document success-worded ctx.finish summaries", async () => {

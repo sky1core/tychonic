@@ -1,0 +1,38 @@
+# Bootstrap Module SPEC
+
+This file applies to shared activity bodies, command execution, and worktree
+helpers under `src/bootstrap/`.
+
+## Activity Bodies
+
+The shared body functions implement one activity invocation body. They are not
+workflow orchestration and they are not new activity TYPEs.
+
+Each worker, review, or deterministic command body produces exactly one
+`WorkflowStateRecord` and one `ActivityAttemptRecord` for that body call. It
+does not mutate `input.run`. Filesystem writes are allowed body effects, but the
+corresponding product records must be returned through `WorkflowRunDelta` and
+the TYPE-specific outcome payload.
+
+Skip conditions, policy routing, multi-iteration loops, mixed inbox
+orchestration, and finding/inbox routing belong to the caller workflow or
+activity entrypoint. A body runs the command it was asked to run, captures
+evidence, and reports the result.
+
+## Command Runner
+
+Multi-line commands run in fail-fast shell mode. If any line exits non-zero, the
+activity fails immediately and later lines do not run.
+
+Command timeout is the command's own wall-clock budget. Heartbeat timeout is a
+liveness contract around the whole activity and must not become the normal way a
+healthy command ends.
+
+Heartbeats must cover command launch, stdout/stderr capture, artifact writes,
+session-id extraction, and post-processing. Heartbeats must not depend on child
+process output; silent-but-healthy commands still require periodic heartbeats.
+
+## Worktree Helpers
+
+Background mutation must use an isolated worktree. Worktree helpers create or
+describe that isolated path; they do not make workflow state decisions.
