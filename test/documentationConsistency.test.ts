@@ -51,7 +51,8 @@ describe("documentation consistency", () => {
       .filter((entry) => entry.isDirectory())
       .flatMap((entry) => [
         `examples/workflows/${entry.name}/README.md`,
-        `examples/workflows/${entry.name}/workflow.mjs`
+        `examples/workflows/${entry.name}/workflow.mjs`,
+        `examples/workflows/${entry.name}/runInput.mjs`
       ]);
     const files = [
       "README.md",

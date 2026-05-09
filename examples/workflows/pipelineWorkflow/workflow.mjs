@@ -2,7 +2,8 @@
 // of the same TYPE.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { validateRunInput } from "./runInput.mjs";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -43,10 +44,8 @@ export const defaultProfile = {
   policies: {}
 };
 
-const PROMPT_ADDITION_STATES = ["work", "review_1", "review_2"];
-
 export async function pipelineWorkflow(input) {
-  validateTaskWorkflowInput(input, { promptAdditionStates: PROMPT_ADDITION_STATES });
+  validateRunInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "pipeline_7stage",

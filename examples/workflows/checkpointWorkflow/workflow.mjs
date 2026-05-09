@@ -5,8 +5,8 @@
 // use the `verify` TYPE; their state NAMEs carry workflow-specific meaning.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
-import { validateIntegrationPolicy } from "./integrationPolicy.mjs";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { validateRunInput } from "./runInput.mjs";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -41,8 +41,7 @@ export const defaultProfile = {
 };
 
 export async function checkpointWorkflow(input) {
-  validateTaskWorkflowInput(input);
-  validateIntegrationPolicy(input.profile?.policies);
+  validateRunInput(input);
 
   const ctx = createTychonicWorkflowContext({
     input,

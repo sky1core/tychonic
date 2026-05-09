@@ -6,6 +6,7 @@ import { Parser, type Node as AcornNode } from "acorn";
 import { tychonicRuntimeDirs } from "./manager.js";
 import { TychonicConfigSchema, type TychonicConfig } from "../catalog/types.js";
 import { validateBundleFileShape } from "./bundleValidator.js";
+import { assertWorkflowRunInputValidator } from "./runInputPreflight.js";
 
 export interface InstalledWorkflowModule {
   name: string;
@@ -71,6 +72,7 @@ export async function installRuntimeWorkflowModule(options: {
 
   const entries = await readdir(sourcePath);
   validateBundleFileShape(entries);
+  await assertWorkflowRunInputValidator({ workflowName: name, bundleDir: sourcePath });
 
   const workflowSourcePath = join(sourcePath, BUNDLE_WORKFLOW_FILE);
 
@@ -451,5 +453,6 @@ function isNotFoundError(error: unknown): boolean {
 
 export const BUNDLE_FILE_NAMES = {
   workflow: BUNDLE_WORKFLOW_FILE,
+  runInput: "runInput.mjs",
   readme: BUNDLE_README_FILE
 } as const;

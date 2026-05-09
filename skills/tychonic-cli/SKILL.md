@@ -13,7 +13,8 @@ verification.
 
 - Temporal workflow history and Temporal APIs are the product state authority.
 - Tychonic core ships no host-owned workflows.
-- Workflows are installed bundles with `workflow.mjs` and `defaultProfile`.
+- Workflows are installed bundles with `workflow.mjs`, `runInput.mjs`, and
+  `defaultProfile`.
 - There are no built-in, official, default, or host-seeded workflows. Reference
   examples under `examples/workflows/` are inert files, even when included in a
   package install, until an operator explicitly installs one with
@@ -156,6 +157,11 @@ This is a pre-run contract check for config, workflow input, review parsing,
 and interaction signal surfaces. It calls the production validators and parsers;
 it does not replace runtime evidence from the actual workflow run. If it fails,
 fix the contract failure before starting the workflow.
+
+`tychonic run` also calls the installed workflow's `runInput.mjs`
+`validateRunInput(input)` before starting Temporal. A bad workflow input or
+workflow-specific policy key in `--config` must fail there, not inside a
+Temporal workflow task retry loop.
 
 ## Bundle Config
 

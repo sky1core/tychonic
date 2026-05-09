@@ -67,6 +67,10 @@ import {
   runtimeWorkflowModulesDir,
   inspectBundle
 } from "../temporal/workflowModules.js";
+import {
+  assertWorkflowRunInputValidator,
+  validateInstalledWorkflowRunInput
+} from "../temporal/runInputPreflight.js";
 import { validateBundleFileShape } from "../temporal/bundleValidator.js";
 import { productVersion } from "../version.js";
 
@@ -205,6 +209,10 @@ workflowsCommand
       const { readdir } = await import("node:fs/promises");
       const entries = await readdir(directory);
       validateBundleFileShape(entries);
+      await assertWorkflowRunInputValidator({
+        workflowName: workflowsBundleDirName(directory),
+        bundleDir: resolveAbsolute(directory)
+      });
       const inspection = await inspectBundle({
         name: workflowsBundleDirName(directory),
         workflowPath: pathJoin(directory, "workflow.mjs")
@@ -1229,14 +1237,24 @@ interface RunCommandOptions extends TemporalCliOptions {
 
 async function startNamedWorkflowFromCli(workflowName: string, options: RunCommandOptions): Promise<void> {
   const rawInput = await resolveRunWorkflowInput(options);
+  let bundleDir: string | undefined;
+  const loadBundleDir = async (): Promise<string> => {
+    bundleDir ??= await bundleDirForInstalledName(workflowName);
+    return bundleDir;
+  };
   const workflowInput = await applyConfigOrDefaultProfileToRunInput({
     rawInput,
     ...(options.config ? { configPath: options.config } : {}),
-    loadDefaultProfile: async () => {
-      const bundleDir = await bundleDirForInstalledName(workflowName);
-      return loadBundleDefaultProfile(bundleDir);
-    }
+    loadDefaultProfile: async () => loadBundleDefaultProfile(await loadBundleDir())
   });
+  if (workflowInput.hasInput) {
+    const installedBundleDir = await loadBundleDir();
+    await validateInstalledWorkflowRunInput({
+      workflowName,
+      bundleDir: installedBundleDir,
+      input: workflowInput.input
+    });
+  }
   const temporalConfig = temporalConfigFromOptions(options);
   const result = await startNamedTemporalWorkflow({
     workflowType: workflowName,

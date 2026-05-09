@@ -1,5 +1,6 @@
 import { proxyActivities } from "@temporalio/workflow";
 import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { validateRunInput } from "./runInput.mjs";
 
 const {
   startRunActivity,
@@ -24,10 +25,8 @@ export const defaultProfile = {
   policies: {}
 };
 
-const ALLOWED_INPUT_FIELDS = new Set(["cwd", "profile"]);
-
 export async function tychonicSelfCheckWorkflow(input) {
-  rejectUnknownInputFields(input);
+  validateRunInput(input);
   const cwd = requireString(input?.cwd, "cwd");
   const ctx = createTychonicWorkflowContext({
     input: {
@@ -47,15 +46,6 @@ export async function tychonicSelfCheckWorkflow(input) {
   ctx.apply(await collectGitFactsActivity({ run: ctx.run(), cwd }));
   await ctx.verify("bootstrap");
   return ctx.finish();
-}
-
-function rejectUnknownInputFields(input) {
-  if (!input || typeof input !== "object") return;
-  for (const field of Object.keys(input)) {
-    if (!ALLOWED_INPUT_FIELDS.has(field)) {
-      throw new Error(`unsupported input field: ${field}`);
-    }
-  }
 }
 
 function requireString(value, field) {

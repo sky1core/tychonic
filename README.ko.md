@@ -188,9 +188,9 @@ tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 
 ## Workflow Config
 
-workflow bundle은 `workflow.mjs`와 `defaultProfile`을 가집니다. 이 profile은
-workflow author가 정한 기본 설정입니다. run마다 `--config <file>`로 대체할 수
-있지만 merge가 아니라 whole-object replacement입니다.
+workflow bundle은 `workflow.mjs`, `runInput.mjs`, `defaultProfile`을 가집니다.
+이 profile은 workflow author가 정한 기본 설정입니다. run마다
+`--config <file>`로 대체할 수 있지만 merge가 아니라 whole-object replacement입니다.
 
 workflow JSON input은 task data입니다. config를 `profile`에 넣지 마십시오.
 `profile`은 Tychonic이 effective profile을 workflow code에 넘기기 위해 예약한
@@ -208,6 +208,10 @@ state NAME과 일치해야 합니다. top-level prompt field나 agent 이름을 
 ```sh
 npm run check:contracts
 ```
+
+`tychonic run`도 Temporal workflow를 만들기 전에 설치된 workflow의
+`runInput.mjs`를 로드합니다. workflow input이나 `--config` profile이 해당
+workflow 계약과 맞지 않으면 Temporal 시작 전 실패합니다.
 
 이 gate는 production config, workflow input, review, interaction validator를
 호출합니다. 특정 workflow 실행이 성공했다는 증거를 대체하지는 않습니다.

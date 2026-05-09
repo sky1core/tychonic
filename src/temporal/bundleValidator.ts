@@ -5,12 +5,13 @@
  * `void` on success.
  */
 
-const REQUIRED_BUNDLE_ENTRIES = ["workflow.mjs"] as const;
+const REQUIRED_BUNDLE_ENTRIES = ["workflow.mjs", "runInput.mjs"] as const;
 /**
- * Asserts a bundle directory contains the workflow entrypoint. Other entries
- * are allowed because a workflow bundle may be a normal package directory:
- * `package.json`, lockfiles, `node_modules`, helper modules, and pre-bundled
- * assets all resolve through standard package mechanisms.
+ * Asserts a bundle directory contains the workflow entrypoint and the
+ * run-input preflight validator. Other entries are allowed because a workflow
+ * bundle may be a normal package directory: `package.json`, lockfiles,
+ * `node_modules`, helper modules, and pre-bundled assets all resolve through
+ * standard package mechanisms.
  */
 export function validateBundleFileShape(entries: readonly string[]): void {
   const seen = new Set<string>();

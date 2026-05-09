@@ -10,11 +10,8 @@
 // focused on orchestration.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
-import {
-  validateInteractionPolicy,
-  validateLoopPolicy
-} from "./workflowPolicies.mjs";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { validateRunInput } from "./runInput.mjs";
 
 const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
 
@@ -60,12 +57,8 @@ export const defaultProfile = {
   }
 };
 
-const PROMPT_ADDITION_STATES = ["architect", "builder", "qa"];
-
 export async function architectBuilderQaWorkflow(input) {
-  validateTaskWorkflowInput(input, { promptAdditionStates: PROMPT_ADDITION_STATES });
-  validateInteractionPolicy(input.profile?.policies);
-  validateLoopPolicy(input.profile?.policies);
+  validateRunInput(input);
 
   const ctx = createTychonicWorkflowContext({
     input,

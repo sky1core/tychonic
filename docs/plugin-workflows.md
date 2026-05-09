@@ -1,10 +1,14 @@
 # Plugin Workflow Authoring
 
-A Tychonic workflow bundle is a directory that contains `workflow.mjs`.
-`workflow.mjs` exports:
+A Tychonic workflow bundle is a directory that contains `workflow.mjs` and
+`runInput.mjs`. `workflow.mjs` exports:
 
 - one named workflow function
 - `defaultProfile`, a `tychonic.config.v1` object for that workflow
+
+`runInput.mjs` exports `validateRunInput(input)`. `tychonic run` calls that
+validator with the effective input before starting Temporal; workflow code
+should call the same validator at workflow start.
 
 The bundle directory name must match the exported workflow function name. The
 host runtime owns no workflow modules; packaged reference examples, when
@@ -24,9 +28,29 @@ mkdir myWorkflow
 ```
 
 ```js
+// myWorkflow/runInput.mjs
+export function validateRunInput(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("workflow input must be an object");
+  }
+  const allowedFields = new Set(["cwd", "profile", "goal"]);
+  for (const field of Object.keys(input)) {
+    if (!allowedFields.has(field)) throw new Error(`unsupported input field: ${field}`);
+  }
+  if (typeof input.cwd !== "string" || input.cwd.trim() === "") {
+    throw new Error("cwd must be a non-empty string");
+  }
+  if (input.profile !== undefined && (!input.profile || typeof input.profile !== "object" || Array.isArray(input.profile))) {
+    throw new Error("profile must be an object");
+  }
+}
+```
+
+```js
 // myWorkflow/workflow.mjs
 import { proxyActivities } from "@temporalio/workflow";
 import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { validateRunInput } from "./runInput.mjs";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -49,6 +73,7 @@ npm test`
 };
 
 export async function myWorkflow(input) {
+  validateRunInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "my_workflow",

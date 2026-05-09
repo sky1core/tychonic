@@ -180,6 +180,11 @@ describe("workflows install / remove under --instance do not touch launchd", () 
       ].join("\n"),
       "utf8"
     );
+    await writeFile(
+      join(bundleDir, "runInput.mjs"),
+      "export function validateRunInput(input) { if (!input || typeof input !== 'object') throw new Error('workflow input must be an object'); }\n",
+      "utf8"
+    );
 
     const result = await runCli(
       ["--instance", "ipos", "workflows", "install", bundleDir],

@@ -49,7 +49,7 @@ describe("workflow bundle install", () => {
     expect(installed.workflowPath).toBe(join(installed.path, "workflow.mjs"));
 
     const entries = await readdir(installed.path);
-    expect(new Set(entries)).toEqual(new Set(["workflow.mjs", "README.md"]));
+    expect(new Set(entries)).toEqual(new Set(["workflow.mjs", "runInput.mjs", "README.md"]));
 
     const list = await listRuntimeWorkflowModules();
     expect(list.map((entry) => entry.name)).toEqual(["exampleWorkflow"]);
@@ -91,7 +91,7 @@ describe("workflow bundle install", () => {
     const installed = await installRuntimeWorkflowModule({ sourcePath: bundleDir });
     expect(installed.name).toBe("noReadmeWorkflow");
     const entries = await readdir(installed.path);
-    expect(new Set(entries)).toEqual(new Set(["workflow.mjs"]));
+    expect(new Set(entries)).toEqual(new Set(["workflow.mjs", "runInput.mjs"]));
   });
 
   it("rejects a bundle whose directory name differs from the exported workflow function name", async () => {
@@ -132,7 +132,7 @@ describe("workflow bundle install", () => {
     const installed = await installRuntimeWorkflowModule({ sourcePath: bundleDir });
     const entries = await readdir(installed.path);
     expect(new Set(entries)).toEqual(
-      new Set(["workflow.mjs", "README.md", "package.json", "package-lock.json", "helper.mjs", "node_modules"])
+      new Set(["workflow.mjs", "runInput.mjs", "README.md", "package.json", "package-lock.json", "helper.mjs", "node_modules"])
     );
   });
 
@@ -177,6 +177,11 @@ async function makeFixtureBundle(options: {
   const bundleDir = join(root, options.name);
   await mkdir(bundleDir, { recursive: true });
   await writeFile(join(bundleDir, "workflow.mjs"), options.workflowSource, "utf8");
+  await writeFile(
+    join(bundleDir, "runInput.mjs"),
+    "export function validateRunInput(input) { if (!input || typeof input !== 'object') throw new Error('workflow input must be an object'); }\n",
+    "utf8"
+  );
   if (!options.omitReadme) {
     await writeFile(join(bundleDir, "README.md"), options.readme ?? "# fixture\n", "utf8");
   }

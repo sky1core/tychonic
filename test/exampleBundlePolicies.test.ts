@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 // Bundle-side policy validators. The host `TychonicConfigSchema` treats
 // `policies` as an opaque record; each example workflow validates the
-// policy keys it actually consumes at workflow start. These tests cover
+// policy keys it actually consumes during CLI preflight and workflow start. These tests cover
 // those bundle-local validators directly.
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment

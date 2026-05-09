@@ -28,7 +28,7 @@ describe("run workflow dispatch", () => {
     expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build/i);
   }, 20_000);
 
-  it("uses the generic run path without local shipped-workflow preflight", async () => {
+  it("rejects an unknown workflow before Temporal connection even when --config is present", async () => {
     const fixture = await createRunDispatchFixture();
     const configPath = join(fixture.repo, "profile.yaml");
     await writeFile(
@@ -43,10 +43,6 @@ describe("run workflow dispatch", () => {
       ].join("\n"),
       "utf8"
     );
-    // The explicit --config path short-circuits the installed-bundle
-    // defaultProfile lookup and lets the run command go straight to the
-    // Temporal client. The connection attempt to the unreachable address
-    // must be the first observable failure.
     const input = JSON.stringify({
       cwd: fixture.repo,
       goal: "connect through Temporal only"
@@ -57,10 +53,65 @@ describe("run workflow dispatch", () => {
       fixture.env
     );
 
-    expect(failure.stderr).toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
+    expect(failure.stderr).toMatch(/no installed workflow named "customWorkflow"/);
     expect(failure.stderr).not.toMatch(/tychonic-workflows\.mjs|stale for this tychonic build/i);
+    expect(failure.stderr).not.toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
   }, 20_000);
 
+  it("rejects workflow-specific invalid --config before Temporal connection", async () => {
+    const fixture = await createRunDispatchFixture();
+    await runCliExpectSuccess(
+      ["workflows", "install", "examples/workflows/architectBuilderQaWorkflow"],
+      fixture.env
+    );
+    const configPath = join(fixture.repo, "stock-discovery-profile.yaml");
+    await writeFile(
+      configPath,
+      [
+        "version: tychonic.config.v1",
+        "states:",
+        "  architect:",
+        "    type: work",
+        "    command: echo architect",
+        "  builder:",
+        "    type: work",
+        "    command: echo builder",
+        "  qa:",
+        "    type: review",
+        "    command: echo qa",
+        "policies:",
+        "  interaction:",
+        "    mode: auto",
+        "  loop:",
+        "    auto_continue: true",
+        "    max_review_iterations: 2",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    const input = JSON.stringify({
+      cwd: fixture.repo,
+      goal: "discover stocks"
+    });
+
+    const failure = await runCliExpectFailure(
+      [
+        "run",
+        "architectBuilderQaWorkflow",
+        "--input",
+        input,
+        "--config",
+        configPath,
+        "--temporal-address",
+        "127.0.0.1:1"
+      ],
+      fixture.env
+    );
+
+    expect(failure.stderr).toMatch(/workflow architectBuilderQaWorkflow preflight failed/);
+    expect(failure.stderr).toMatch(/policies\.loop\.auto_continue is not a recognised key/);
+    expect(failure.stderr).not.toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
+  }, 20_000);
 });
 
 async function createRunDispatchFixture(): Promise<{
@@ -105,6 +156,14 @@ async function runCliExpectFailure(
     };
   }
   throw new Error(`expected CLI failure for: ${args.join(" ")}`);
+}
+
+async function runCliExpectSuccess(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
+  await execFileAsync(process.execPath, ["--import", "tsx", cliPath, ...args], {
+    cwd: projectRoot,
+    env,
+    encoding: "utf8"
+  });
 }
 
 function errorOutput(error: unknown, stream: "stdout" | "stderr"): string {

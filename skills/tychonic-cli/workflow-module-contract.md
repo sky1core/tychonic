@@ -4,9 +4,9 @@ Use this when writing or changing workflow bundles.
 
 ## Bundle Shape
 
-A workflow bundle is a directory containing `workflow.mjs`. The directory name
-must equal the exported workflow function name, and that name is what users pass
-to `tychonic run <name>`.
+A workflow bundle is a directory containing `workflow.mjs` and `runInput.mjs`.
+The directory name must equal the exported workflow function name, and that
+name is what users pass to `tychonic run <name>`.
 
 `workflow.mjs` must export `defaultProfile`:
 
@@ -25,6 +25,11 @@ npm test`
   }
 };
 ```
+
+`runInput.mjs` must export `validateRunInput(input)`. `tychonic run` calls it
+with the effective input before starting Temporal. Workflow code should import
+and call the same validator at workflow start so CLI preflight and runtime
+validation do not drift.
 
 At workflow start, Tychonic injects the effective profile into the workflow
 input's reserved `profile` field. Workflow code passes that profile to
