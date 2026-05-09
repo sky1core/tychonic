@@ -310,15 +310,21 @@ export function createTychonicWorkflowContext(options: {
         return recovery.result;
       }
 
+      if (interaction.mode() === "interactive") {
+        update({ ...requireRun(), status: "waiting_user" });
+      }
       const decision = await interaction.waitForStateApproval(stateName);
       if (decision.kind === "approve") {
+        update({ ...requireRun(), status: "running" });
         return stateResult(stateName, false, undefined, lastActivityResult);
       }
       if (decision.kind === "modify") {
-        update(interaction.applyApprovalDecision(requireRun(), stateName, decision));
+        const patched = interaction.applyApprovalDecision(requireRun(), stateName, decision);
+        update({ ...patched, status: "running" });
         return stateResult(stateName, false, undefined, lastActivityResult);
       }
       if (decision.kind === "rerun") {
+        update({ ...requireRun(), status: "running" });
         continue;
       }
 
@@ -335,6 +341,7 @@ export function createTychonicWorkflowContext(options: {
         update({ ...run, status: "waiting_user" });
         return stateResult(stateName, true, `${stateName} reached reject cap`, lastActivityResult);
       }
+      update({ ...requireRun(), status: "running" });
       feedbacks.push(decision.feedback);
     }
   }
@@ -368,12 +375,10 @@ export function createTychonicWorkflowContext(options: {
     }
     if (decision.kind === "modify") {
       const patched = interaction.applyApprovalDecision(requireRun(), stateName, decision);
-      update({
-        ...patched,
-        status: latestStateByName(patched, stateName)?.status === "succeeded" ? "running" : patched.status
-      });
+      update({ ...patched, status: "running" });
       return { kind: "result", result: stateResult(stateName, false) };
     }
+    update({ ...requireRun(), status: "running" });
     return { kind: "result", result: stateResult(stateName, false) };
   }
 

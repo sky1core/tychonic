@@ -19,6 +19,9 @@ import { pipelineWorkflow } from "../examples/workflows/pipelineWorkflow/workflo
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { verifyOnlyWorkflow } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { validateRunInput as validateStructuralIssueDiscoveryInput } from "../examples/workflows/structuralIssueDiscoveryWorkflow/runInput.mjs";
 
 describe("example workflow input contracts", () => {
   it("rejects task input without cwd before starting activities", async () => {
@@ -119,5 +122,35 @@ describe("example workflow input contracts", () => {
     await expect(
       verifyOnlyWorkflow({ cwd: "/tmp/tychonic-test", goal: "run tests" })
     ).rejects.toThrow(/unsupported input field: goal/);
+  });
+
+  it("structuralIssueDiscoveryWorkflow accepts prompt additions only for promptable state NAMEs", () => {
+    expect(() =>
+      validateStructuralIssueDiscoveryInput({
+        cwd: "/tmp/tychonic-test",
+        promptAdditions: {
+          workflow_review: "look at recovery",
+          adapter_review: "look at parser",
+          docs_review: "look at README",
+          finding_audit: "audit duplicates"
+        }
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      validateStructuralIssueDiscoveryInput({
+        cwd: "/tmp/tychonic-test",
+        promptAdditions: { claude: "agent names are not state names" }
+      })
+    ).toThrow(/unsupported promptAdditions key: claude/);
+  });
+
+  it("structuralIssueDiscoveryWorkflow rejects undocumented top-level fields", () => {
+    expect(() =>
+      validateStructuralIssueDiscoveryInput({
+        cwd: "/tmp/tychonic-test",
+        knownIssues: []
+      })
+    ).toThrow(/unsupported input field: knownIssues/);
   });
 });

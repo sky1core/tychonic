@@ -15,6 +15,7 @@ describe("stoppedWorkflowMessage", () => {
     expect(message).toContain("`tychonic approve wf_pending --state qa`");
     expect(message).toContain("`tychonic reject wf_pending --state qa --feedback \"<feedback>\"`");
     expect(message).toContain("`tychonic modify wf_pending --state qa --note \"<note>\"`");
+    expect(message).toContain("`tychonic rerun wf_pending --state qa --reason \"<reason>\"`");
   });
 
   it("prints the evidence inspection command for succeeded workflows", () => {
@@ -49,6 +50,7 @@ describe("stoppedWorkflowMessage", () => {
     });
 
     expect(message).toContain("`tychonic approve 'wf odd' --state 'qa'\\''s turn'`");
+    expect(message).toContain("`tychonic rerun 'wf odd' --state 'qa'\\''s turn' --reason \"<reason>\"`");
   });
 
   it("keeps wait CLI payloads concise and leaves full results behind focused evidence commands", () => {

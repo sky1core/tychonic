@@ -173,9 +173,10 @@ export async function runActivityWithRecovery({
       continue;
     }
     if (decision.kind === "modify") {
-      run = updateRun(interaction.applyApprovalDecision(run, stateName, decision));
+      run = updateRun({ ...interaction.applyApprovalDecision(run, stateName, decision), status: "running" });
       return { run, result: undefined };
     }
+    run = updateRun({ ...run, status: "running" });
     return { run, result };
   }
 }

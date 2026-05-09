@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { WorkflowRunRecord } from "../src/domain/types.js";
 import type { ActivityResult } from "../src/temporal/types.js";
 
 type SignalHandler = (payload: unknown) => void;
@@ -57,7 +58,13 @@ vi.mock("@temporalio/workflow", () => ({
 
 const { createTychonicWorkflowContext } = await import("../src/workflow.js");
 const { __resetInteractionHookState } = await import("../src/workflows/interactionHook.js");
-const { interactionPendingStateQueryName, interactionRerunStateSignalName } = await import("../src/temporal/types.js");
+const {
+  interactionApproveStateSignalName,
+  interactionRejectStateSignalName,
+  interactionModifyStateSignalName,
+  interactionPendingStateQueryName,
+  interactionRerunStateSignalName
+} = await import("../src/temporal/types.js");
 
 describe("Tychonic workflow context recoverable state rerun", () => {
   beforeEach(() => {
@@ -233,7 +240,227 @@ describe("Tychonic workflow context recoverable state rerun", () => {
     expect(ctx.run().status).not.toBe("waiting_user");
     expect(runQuery(interactionPendingStateQueryName)).toBeUndefined();
   });
+
+  it("clears waiting_user when recovery receives approve", async () => {
+    const runVerifyActivity = vi.fn().mockRejectedValueOnce(new Error("network timed out"));
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            verify: { type: "verify", command: "npm test" }
+          },
+          policies: {}
+        }
+      },
+      template: "recovery_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        runVerifyActivity,
+        finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+      }
+    });
+
+    await ctx.start();
+    const pending = ctx.verify("verify");
+    await flushMicrotasks();
+
+    expect(ctx.run().status).toBe("waiting_user");
+    dispatchSignal(interactionApproveStateSignalName, { state: "verify" });
+
+    await expect(pending).resolves.toMatchObject({
+      halted: false,
+      passed: false,
+      state: { name: "verify", status: "timed_out" }
+    });
+    expect(ctx.run().status).toBe("running");
+  });
+
+  it("clears waiting_user when recovery receives modify", async () => {
+    const runVerifyActivity = vi.fn().mockRejectedValueOnce(new Error("network timed out"));
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            verify: { type: "verify", command: "npm test" }
+          },
+          policies: {}
+        }
+      },
+      template: "recovery_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        runVerifyActivity,
+        finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+      }
+    });
+
+    await ctx.start();
+    const pending = ctx.verify("verify");
+    await flushMicrotasks();
+
+    expect(ctx.run().status).toBe("waiting_user");
+    dispatchSignal(interactionModifyStateSignalName, {
+      state: "verify",
+      patch: { status: "failed", note: "operator accepted the failed attempt" }
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      halted: false,
+      passed: false,
+      state: { name: "verify", status: "failed" }
+    });
+    expect(ctx.run().status).toBe("running");
+  });
 });
+
+describe("Tychonic workflow context interactive approval status", () => {
+  beforeEach(() => {
+    __resetInteractionHookState();
+    temporalHarness.harness.signalHandlersByName.clear();
+    temporalHarness.harness.queryHandlersByName.clear();
+    temporalHarness.harness.conditionCalls.length = 0;
+    temporalHarness.definedSignals.clear();
+    temporalHarness.definedQueries.clear();
+  });
+
+  it("marks an interactive approval wait as waiting_user and clears it after approve", async () => {
+    const runWorkerActivity = vi
+      .fn()
+      .mockResolvedValueOnce(successfulWorkResult("work", "state_work_success", "attempt_work_success"));
+    const ctx = createInteractiveWorkContext(runWorkerActivity);
+
+    await ctx.start();
+    const pending = ctx.work("work", "implement the task");
+    await flushMicrotasks();
+
+    expect(runWorkerActivity).toHaveBeenCalledTimes(1);
+    expect(ctx.run().status).toBe("waiting_user");
+    expect(runQuery(interactionPendingStateQueryName)).toBe("work");
+
+    dispatchSignal(interactionApproveStateSignalName, { state: "work" });
+
+    await expect(pending).resolves.toMatchObject({
+      halted: false,
+      passed: true,
+      state: { name: "work", status: "succeeded" }
+    });
+    expect(ctx.run().status).toBe("running");
+    expect(runQuery(interactionPendingStateQueryName)).toBeUndefined();
+  });
+
+  it("clears waiting_user while a rejected interactive work state reruns", async () => {
+    let resolveSecondAttempt!: (result: ActivityResult) => void;
+    const secondAttempt = new Promise<ActivityResult>((resolve) => {
+      resolveSecondAttempt = resolve;
+    });
+    const runWorkerActivity = vi
+      .fn()
+      .mockResolvedValueOnce(successfulWorkResult("work", "state_work_first", "attempt_work_first"))
+      .mockReturnValueOnce(secondAttempt);
+    const ctx = createInteractiveWorkContext(runWorkerActivity);
+
+    await ctx.start();
+    const pending = ctx.work("work", "implement the task");
+    await flushMicrotasks();
+
+    expect(ctx.run().status).toBe("waiting_user");
+    dispatchSignal(interactionRejectStateSignalName, { state: "work", feedback: "retry with fix" });
+    await flushMicrotasks();
+
+    expect(runWorkerActivity).toHaveBeenCalledTimes(2);
+    expect(ctx.run().status).toBe("running");
+
+    resolveSecondAttempt(successfulWorkResult("work", "state_work_second", "attempt_work_second"));
+    await flushMicrotasks();
+
+    expect(ctx.run().status).toBe("waiting_user");
+    dispatchSignal(interactionApproveStateSignalName, { state: "work" });
+
+    await expect(pending).resolves.toMatchObject({
+      halted: false,
+      passed: true,
+      state: { name: "work", status: "succeeded" }
+    });
+    expect(ctx.run().status).toBe("running");
+  });
+});
+
+function baseRun(): WorkflowRunRecord {
+  return {
+    schema_version: "tychonic.run.v1",
+    id: "run_recovery",
+    template: "recovery_test",
+    status: "created",
+    cwd: "/repo",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    states: [],
+    activity_attempts: [],
+    agent_sessions: [],
+    artifacts: [],
+    findings: [],
+    inbox: []
+  };
+}
+
+function createInteractiveWorkContext(runWorkerActivity: ReturnType<typeof vi.fn>) {
+  return createTychonicWorkflowContext({
+    input: {
+      cwd: "/repo",
+      profile: {
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work", agent: "claude" }
+        },
+        policies: {
+          interaction: { mode: "interactive" }
+        }
+      }
+    },
+    template: "approval_test",
+    activities: {
+      startRunActivity: async () => baseRun(),
+      runWorkerActivity,
+      finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+    }
+  });
+}
+
+function successfulWorkResult(stateName: string, stateId: string, attemptId: string): ActivityResult {
+  return {
+    delta: {
+      states: [
+        {
+          id: stateId,
+          name: stateName,
+          status: "succeeded",
+          reason: "work succeeded",
+          activity_attempt_ids: [attemptId],
+          artifact_ids: [],
+          finding_ids: [],
+          started_at: "2026-01-01T00:00:01.000Z",
+          finished_at: "2026-01-01T00:00:02.000Z"
+        }
+      ],
+      activityAttempts: [
+        {
+          id: attemptId,
+          state_id: stateId,
+          kind: "agent_run",
+          status: "succeeded",
+          reason: "work succeeded",
+          cwd: "/repo",
+          started_at: "2026-01-01T00:00:01.000Z",
+          finished_at: "2026-01-01T00:00:02.000Z"
+        }
+      ]
+    }
+  };
+}
 
 function dispatchSignal(signalName: string, payload: unknown): void {
   const handler = temporalHarness.harness.signalHandlersByName.get(signalName);

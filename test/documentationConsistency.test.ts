@@ -15,6 +15,19 @@ describe("documentation consistency", () => {
     await expect(readFile("README.ko.md", "utf8")).resolves.toContain(example);
   });
 
+  it("keeps pending interaction wait examples aligned with the CLI message", async () => {
+    const message = stoppedWorkflowMessage({
+      reason: "pending_interaction",
+      workflowId: "wf_123",
+      pendingState: "qa"
+    });
+    const messageField = `"message": ${JSON.stringify(message)}`;
+
+    await expect(readFile("README.md", "utf8")).resolves.toContain(messageField);
+    await expect(readFile("README.ko.md", "utf8")).resolves.toContain(messageField);
+    await expect(readFile("skills/tychonic-cli/SKILL.md", "utf8")).resolves.toContain(messageField);
+  });
+
   it("documents that wait output does not carry the full raw run result", async () => {
     const spec = await readFile("src/cli/SPEC.md", "utf8");
 
@@ -94,6 +107,22 @@ describe("documentation consistency", () => {
       const text = await readFile(file, "utf8");
       for (const field of retiredFields) {
         expect(text, `${file} must not expose ${field}`).not.toContain(field);
+      }
+    }
+  });
+
+  it("keeps standard interaction command examples complete in bundle READMEs", async () => {
+    const exampleDirs = await readdir("examples/workflows", { withFileTypes: true });
+    const bundleReadmes = exampleDirs
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => `examples/workflows/${entry.name}/README.md`);
+
+    for (const readme of bundleReadmes) {
+      const text = await readFile(readme, "utf8");
+      if (text.includes("standard Tychonic interaction commands")) {
+        expect(text, `${readme} must include the full standard interaction command set`).toContain(
+          "tychonic rerun"
+        );
       }
     }
   });

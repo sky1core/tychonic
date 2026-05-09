@@ -380,6 +380,78 @@ describe("simpleWorkflow cap loop", () => {
     expect(updates).toContain("running");
   });
 
+  it("clears waiting_user when shared recovery receives approve", async () => {
+    let run = makeBaseRun(makeWorkerSession("session_w0"));
+    const updates: any[] = [];
+    const interaction = {
+      waitForStateRecovery: async () => ({ kind: "approve" }),
+      applyApprovalDecision: (nextRun: any) => nextRun
+    };
+    const invoke = () => {
+      throw new Error("network timed out");
+    };
+
+    const result = await runActivityWithRecovery({
+      run,
+      stateName: "verify",
+      kind: "verify",
+      cwd: "/tmp/tychonic-test/wt",
+      interaction,
+      onRunUpdate: (next: any) => {
+        run = next;
+        updates.push(next.status);
+        return next;
+      },
+      invoke
+    });
+
+    expect(result.run.status).toBe("running");
+    expect(result.run.states.at(-1).status).toBe("timed_out");
+    expect(updates).toContain("waiting_user");
+    expect(updates.at(-1)).toBe("running");
+  });
+
+  it("clears waiting_user when shared recovery receives modify", async () => {
+    let run = makeBaseRun(makeWorkerSession("session_w0"));
+    const updates: any[] = [];
+    const interaction = {
+      waitForStateRecovery: async () => ({
+        kind: "modify",
+        patch: { status: "failed", note: "operator accepted the failed attempt" }
+      }),
+      applyApprovalDecision: (nextRun: any, _stateName: string, decision: any) => ({
+        ...nextRun,
+        states: nextRun.states.map((state: any, index: number, states: any[]) =>
+          index === states.length - 1
+            ? { ...state, status: decision.patch.status, reason: decision.patch.note }
+            : state
+        )
+      })
+    };
+    const invoke = () => {
+      throw new Error("network timed out");
+    };
+
+    const result = await runActivityWithRecovery({
+      run,
+      stateName: "verify",
+      kind: "verify",
+      cwd: "/tmp/tychonic-test/wt",
+      interaction,
+      onRunUpdate: (next: any) => {
+        run = next;
+        updates.push(next.status);
+        return next;
+      },
+      invoke
+    });
+
+    expect(result.run.status).toBe("running");
+    expect(result.run.states.at(-1).reason).toBe("operator accepted the failed attempt");
+    expect(updates).toContain("waiting_user");
+    expect(updates.at(-1)).toBe("running");
+  });
+
   it("does not pause for rerun when verify returns an ordinary failed command result", async () => {
     let run = makeBaseRun(makeWorkerSession("session_w0"));
     const updates: any[] = [];

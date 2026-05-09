@@ -50,7 +50,7 @@ that specific evidence item.
 
 ## Interaction Signal Contract
 
-Tychonic CLI exposes three convenience commands for workflows that choose to use
+Tychonic CLI exposes four convenience commands for workflows that choose to use
 the standard interaction signal/query names:
 
 - `tychonic approve <workflow-id> [--state <name>]`

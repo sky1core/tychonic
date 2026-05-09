@@ -37,7 +37,8 @@ export function stoppedWorkflowMessage(result: StoppedWorkflowMessageInput): str
       `Inspect evidence with \`${statusCommand(result.workflowId)}\`; it lists inbox, artifacts, logs, and sessions.`,
       `Then run \`${interactionCommand("approve", result.workflowId, state)}\`,`,
       `\`${interactionCommand("reject", result.workflowId, state)} --feedback "<feedback>"\`,`,
-      `or \`${interactionCommand("modify", result.workflowId, state)} --note "<note>"\`.`
+      `\`${interactionCommand("modify", result.workflowId, state)} --note "<note>"\`,`,
+      `or \`${interactionCommand("rerun", result.workflowId, state)} --reason "<reason>"\`.`
     ].join(" ");
   }
   if (result.reason === "workflow_closed") {
@@ -66,7 +67,11 @@ function statusCommand(workflowId: string): string {
   return `tychonic status --workflow-id ${shellArg(workflowId)}`;
 }
 
-function interactionCommand(command: "approve" | "reject" | "modify", workflowId: string, state: string): string {
+function interactionCommand(
+  command: "approve" | "reject" | "modify" | "rerun",
+  workflowId: string,
+  state: string
+): string {
   return `tychonic ${command} ${shellArg(workflowId)} --state ${shellArg(state)}`;
 }
 

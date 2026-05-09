@@ -132,6 +132,16 @@ or act as a hidden repair step.
 
 Structured reviewers must emit the documented review contract.
 
+Do not use raw agent CLI calls (`claude -p`, `codex exec`, ad-hoc shell
+wrappers, or similar) as the product path for structured review verdicts,
+structural issue discovery, or commit-readiness review. Raw calls can be useful
+for exploratory diagnosis, but they bypass Tychonic's `review` TYPE contract:
+adapter-owned structured output, parser terminal-source rules, artifacts,
+session records, finding promotion, recovery, and workflow-owned deduplication
+or audit states. If a result will be treated as an actionable structured review,
+run it through a Tychonic `review` state or an explicit workflow bundle such as
+`structuralIssueDiscoveryWorkflow`.
+
 ## Spec Authority Principle
 
 Root `SPEC.md` and module `SPEC.md` files are the user-controlled product

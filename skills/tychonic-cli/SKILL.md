@@ -104,7 +104,7 @@ include the next useful Tychonic commands.
 ```json
 {
   "ok": true,
-  "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.",
+  "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, `tychonic modify wf_123 --state qa --note \"<note>\"`, or `tychonic rerun wf_123 --state qa --reason \"<reason>\"`.",
   "state": "qa",
   "workflowId": "wf_123"
 }
@@ -157,6 +157,15 @@ This is a pre-run contract check for config, workflow input, review parsing,
 and interaction signal surfaces. It calls the production validators and parsers;
 it does not replace runtime evidence from the actual workflow run. If it fails,
 fix the contract failure before starting the workflow.
+
+Do not substitute a raw agent CLI call for a structured Tychonic review. Direct
+commands such as `claude -p`, `codex exec`, or an ad-hoc shell wrapper may help
+with exploratory diagnosis, but they do not provide the product contract:
+Tychonic `review` TYPE schema enforcement, adapter terminal-source parsing,
+artifact/session capture, finding promotion, rerun recovery, or workflow-level
+finding audit. For structural issue discovery or commit-readiness review, use
+an installed workflow bundle with explicit `review` states, for example
+`structuralIssueDiscoveryWorkflow`, after running `npm run check:contracts`.
 
 `tychonic run` also calls the installed workflow's `runInput.mjs`
 `validateRunInput(input)` before starting Temporal. A bad workflow input or
@@ -396,7 +405,14 @@ For workflows that expose the standard interaction helper, use:
 tychonic approve <workflow-id> --state <state>
 tychonic reject <workflow-id> --state <state> --feedback "..."
 tychonic modify <workflow-id> --state <state> --note "..."
+tychonic rerun <workflow-id> --state <state> --reason "..."
 ```
+
+Use `rerun` when the workflow exposes a retry of the same state without adding
+new feedback or incrementing a reject cap. This can apply to recoverable state
+failures such as transient activity or external-agent failures, and to
+workflow-defined interactive gates that accept the standard interaction helper.
+It appends new history instead of rewriting the failed attempt.
 
 ## Verification
 

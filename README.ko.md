@@ -115,7 +115,7 @@ no-wait 응답에는 나중에 `tychonic wait`에 넘길 `workflowId`가 들어 
 interactive workflow는 waiting state를 반환할 수도 있습니다.
 
 ```json
-{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
+{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, `tychonic modify wf_123 --state qa --note \"<note>\"`, or `tychonic rerun wf_123 --state qa --reason \"<reason>\"`.", "workflowId": "wf_123", "state": "qa" }
 ```
 
 workflow를 시작만 하고 기다리지 않으려면 wait flag를 생략합니다.
@@ -290,6 +290,7 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 - `architectBuilderFinalQaWorkflow`: Kiro-assisted build 뒤 Codex final QA 수행
 - `architectBuilderFirstReviewQaWorkflow`: Claude가 설계하고 Kiro가 build와 1차 normalized review를 수행한 뒤 Codex final QA 수행
 - `architectBuilderReviewRepairQaWorkflow`: Kiro가 build, pre-review, repair를 수행한 뒤 Codex final QA로 넘기는 pattern
+- `structuralIssueDiscoveryWorkflow`: deterministic contract check와 scoped Claude structural review, finding-audit gate를 실행하는 workflow
 
 config shape나 `promptAdditions` state key를 바꾸기 전에 각 workflow
 `README.md`를 읽으십시오.

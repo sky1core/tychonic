@@ -116,7 +116,7 @@ The first smoke normally finishes like this:
 Interactive workflows can also return a waiting state:
 
 ```json
-{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, or `tychonic modify wf_123 --state qa --note \"<note>\"`.", "workflowId": "wf_123", "state": "qa" }
+{ "ok": true, "message": "Workflow is waiting for input at state 'qa'. Inspect evidence with `tychonic status --workflow-id wf_123`; it lists inbox, artifacts, logs, and sessions. Then run `tychonic approve wf_123 --state qa`, `tychonic reject wf_123 --state qa --feedback \"<feedback>\"`, `tychonic modify wf_123 --state qa --note \"<note>\"`, or `tychonic rerun wf_123 --state qa --reason \"<reason>\"`.", "workflowId": "wf_123", "state": "qa" }
 ```
 
 To start a workflow and keep working without waiting, omit the wait flag:
@@ -292,6 +292,8 @@ and fails the review if tracked files change during the review turn.
   first normalized review, then Codex performs final QA.
 - `architectBuilderReviewRepairQaWorkflow`: Kiro builds, pre-reviews, and repairs
   before Codex final QA.
+- `structuralIssueDiscoveryWorkflow`: deterministic contract checks plus scoped
+  Claude structural reviews and a finding-audit gate.
 
 Read each bundle's `README.md` before changing its config shape or
 `promptAdditions` state keys.

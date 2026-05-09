@@ -94,7 +94,12 @@ workflow is parked at a stage:
 tychonic approve <workflow-id> --state <state>
 tychonic reject <workflow-id> --state <state> --feedback "..."
 tychonic modify <workflow-id> --state <state> --note "..."
+tychonic rerun <workflow-id> --state <state> --reason "..."
 ```
+
+Use `rerun` to retry the same state without adding new feedback or incrementing
+the reject cap. Use `reject` when the next attempt should receive explicit
+feedback and count toward `policies.interaction.max_reject_iterations`.
 
 After the run reaches a terminal `waiting_user` status, those signals no longer
 resume it. Recovery is a fresh run with adjusted input or config.

@@ -242,8 +242,11 @@ one.
 - [SPEC.md](../SPEC.md): authoritative product contract index and module SPEC map
 - [skills/tychonic-cli/workflow-module-contract.md](../skills/tychonic-cli/workflow-module-contract.md): compact authoring contract
 - [examples/workflows/verifyOnlyWorkflow](../examples/workflows/verifyOnlyWorkflow): minimal no-agent verify example
+- [examples/workflows/simpleWorkflow](../examples/workflows/simpleWorkflow): work, verify, and review reference example
 - [examples/workflows/pipelineWorkflow](../examples/workflows/pipelineWorkflow): multi-stage example
+- [examples/workflows/checkpointWorkflow](../examples/workflows/checkpointWorkflow): deterministic gate and structured review example
 - [examples/workflows/architectBuilderQaWorkflow](../examples/workflows/architectBuilderQaWorkflow): reference architect/builder/QA example
 - [examples/workflows/architectBuilderFinalQaWorkflow](../examples/workflows/architectBuilderFinalQaWorkflow): Kiro-assisted build with Codex final QA
 - [examples/workflows/architectBuilderFirstReviewQaWorkflow](../examples/workflows/architectBuilderFirstReviewQaWorkflow): Kiro build and first normalized review before Codex final QA
 - [examples/workflows/architectBuilderReviewRepairQaWorkflow](../examples/workflows/architectBuilderReviewRepairQaWorkflow): Kiro build, pre-review, and repair before Codex final QA
+- [examples/workflows/structuralIssueDiscoveryWorkflow](../examples/workflows/structuralIssueDiscoveryWorkflow): contract checks, scoped structural reviews, and finding audit
