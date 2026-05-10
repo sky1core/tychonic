@@ -4,7 +4,7 @@ import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { getActiveInstance } from "../runtime/instance.js";
-import { buildExecutablePathValue, findExecutable, TYCHONIC_AGENT_PATH_ENV } from "../system/executables.js";
+import { buildExecutablePathValue, findExecutable, TYCHONIC_AGENT_PATH_ENV } from "../bootstrap/executables.js";
 import { normalizeTemporalConfig, temporalStartArgs, tychonicRuntimeDirs } from "../temporal/manager.js";
 
 const execFileAsync = promisify(execFile);

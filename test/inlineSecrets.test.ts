@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TychonicConfigSchema } from "../src/catalog/types.js";
-import { assertNoInlineSecrets, findInlineSecrets } from "../src/security/inlineSecrets.js";
+import { assertNoInlineSecrets, findInlineSecrets } from "../src/catalog/inlineSecrets.js";
 
 describe("inline secret guard", () => {
   it("detects literal token assignments and allows environment references", () => {

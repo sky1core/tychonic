@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { buildExecutablePathValue } from "../system/executables.js";
+import { buildExecutablePathValue } from "./executables.js";
 
 export interface CommandRunResult {
   status: "succeeded" | "failed" | "timed_out";

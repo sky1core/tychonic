@@ -6,7 +6,7 @@ import {
   buildExecutableSearchPath,
   findExecutable,
   TYCHONIC_AGENT_PATH_ENV
-} from "../src/system/executables.js";
+} from "../src/bootstrap/executables.js";
 
 describe("executable resolver", () => {
   it("finds user-local CLIs without relying on a shell startup PATH", async () => {

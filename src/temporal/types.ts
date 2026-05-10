@@ -2,10 +2,10 @@ import type { ArtifactRecord, WorkflowRunRecord } from "../domain/types.js";
 import type { ActivityType, TychonicConfig } from "../catalog/types.js";
 import type { WorkflowRunDelta } from "../domain/runDelta.js";
 import type { ReviewActivityOutcome } from "../review/outcome.js";
-import type { WorkerActivityOutcome } from "../worker/outcome.js";
+import type { WorkerActivityOutcome } from "../domain/outcome.js";
 
 export type { ParsedReviewResult, ReviewActivityOutcome } from "../review/outcome.js";
-export type { WorkerActivityOutcome } from "../worker/outcome.js";
+export type { WorkerActivityOutcome } from "../domain/outcome.js";
 
 export const tychonicWorkflowStateQueryName = "tychonic.workflow_state";
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { hasInlineSecrets } from "../security/inlineSecrets.js";
+import { hasInlineSecrets } from "./inlineSecrets.js";
 import { BUILTIN_AGENT_NAMES, isBuiltInAgentName } from "../adapters/index.js";
 
 const ActivityNameSchema = z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);

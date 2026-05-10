@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runWorkerActivity } from "../src/activities/runWorkerActivity.js";
 import { runReviewActivity } from "../src/activities/runReviewActivity.js";
-import { TYCHONIC_AGENT_PATH_ENV } from "../src/system/executables.js";
+import { TYCHONIC_AGENT_PATH_ENV } from "../src/bootstrap/executables.js";
 import type { TychonicConfig } from "../src/catalog/types.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
 

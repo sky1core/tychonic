@@ -9,7 +9,7 @@ import type {
 } from "../domain/types.js";
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
-import type { WorkerActivityOutcome } from "../worker/outcome.js";
+import type { WorkerActivityOutcome } from "../domain/outcome.js";
 import { runCommand, withPeriodicProgress } from "./commandRunner.js";
 
 export type WorkerBodyType = "work";

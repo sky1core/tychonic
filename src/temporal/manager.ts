@@ -5,7 +5,7 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { findExecutable } from "../system/executables.js";
+import { findExecutable } from "../bootstrap/executables.js";
 import {
   getActiveInstance,
   resolveInstanceRuntime,

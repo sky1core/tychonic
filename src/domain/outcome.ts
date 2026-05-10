@@ -1,4 +1,4 @@
-import type { AgentSessionRecord, ArtifactRecord, WorkflowStateStatus } from "../domain/types.js";
+import type { AgentSessionRecord, ArtifactRecord, WorkflowStateStatus } from "./types.js";
 
 /**
  * Outcome of one worker-body invocation. Parallels

@@ -56,7 +56,6 @@ import {
   type TychonicTemporalWorkflowStatus
 } from "../temporal/client.js";
 import type { WorkflowStateRecord } from "../domain/types.js";
-import { readFile as readFileAsync } from "node:fs/promises";
 import { TemporalManager, tychonicRuntimeDirs, type TemporalConfig } from "../temporal/manager.js";
 import type { StateRecordPatch } from "../temporal/types.js";
 import { buildWorkflowBundle, runTemporalWorker } from "../temporal/worker.js";
@@ -626,7 +625,7 @@ program
       if (options.payloadFile) {
         let raw: string;
         try {
-          raw = await readFileAsync(options.payloadFile, "utf8");
+          raw = await readFile(options.payloadFile, "utf8");
         } catch (error) {
           throw new Error(
             `failed to read --payload-file ${options.payloadFile}: ${
@@ -1438,7 +1437,7 @@ async function composePatchFromCliOptions(options: {
   if (options.patchFile) {
     let raw: string;
     try {
-      raw = await readFileAsync(options.patchFile, "utf8");
+      raw = await readFile(options.patchFile, "utf8");
     } catch (error) {
       throw new Error(
         `failed to read --patch-file ${options.patchFile}: ${error instanceof Error ? error.message : String(error)}`

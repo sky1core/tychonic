@@ -1,4 +1,4 @@
-import type { RunFacts } from "../facts/gitFacts.js";
+import type { RunFacts } from "./gitFacts.js";
 import type {
   ActivityAttemptRecord,
   WorkflowRunRecord,

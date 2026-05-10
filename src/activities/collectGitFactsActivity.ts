@@ -1,4 +1,4 @@
-import { collectGitFacts } from "../facts/gitFacts.js";
+import { collectGitFacts } from "../domain/gitFacts.js";
 import type { WorkflowRunRecord } from "../domain/types.js";
 import type { ActivityResult } from "../temporal/types.js";
 
