@@ -65,17 +65,17 @@ policy values once, in one place, and the runtime reads exactly that.
 
 Workflow run input is a stable task-shaped public contract for every installed
 workflow. The only public top-level input fields are required `cwd`, optional
-`goal`, and `promptAdditions` only when the workflow explicitly supports
-additive per-state prompt instructions. `profile` is reserved for Tychonic's
+`goal`, and optional `promptAdditions`. `profile` is reserved for Tychonic's
 internal config handoff and is not public workflow input. Workflow prompts are
 owned by workflow code. Prompt additions must be additive and use one uniform
-shape: `promptAdditions.<stateName>`. The `<stateName>` key must match a
-promptable state NAME declared by that workflow and present in the effective
-`profile.states`. Workflows must reject unknown `promptAdditions` keys and
-non-string addition values. They must not expose top-level prompt fields such as
-`architectPrompt`, `builderPrompt`, or agent-named fields such as
-`kiroFixPrompt`; those names leak internal workflow implementation into the
-public invocation contract.
+shape: `promptAdditions.<stateName>`. The `<stateName>` key must name a state
+with type `work` or `review` in the effective `profile.states`. The host
+auto-derives the set of valid `promptAdditions` keys from the profile; bundle
+authors do not declare them separately. The host rejects unknown
+`promptAdditions` keys and non-string addition values. Workflows must not
+expose top-level prompt fields such as `architectPrompt`, `builderPrompt`, or
+agent-named fields such as `kiroFixPrompt`; those names leak internal workflow
+implementation into the public invocation contract.
 
 Two consequences follow and must both hold:
 
@@ -113,9 +113,9 @@ workflows never re-read any config file.
 Before workflow start Tychonic loads the bundle's `defaultProfile`, optionally
 replaces it whole with a CLI-override file, validates the resulting
 `TychonicConfig`, injects the parsed object into the run input under the
-reserved `profile` field, and calls the workflow's `runInput.mjs`
-`validateRunInput(input)`. Running workflows must not re-read any config source
-for state decisions after start.
+reserved `profile` field, and validates the standard workflow input contract.
+Running workflows must not re-read any config source for state decisions after
+start.
 
 Each run records one `profile_snapshot.yaml` artifact so the effective settings
 are reproducible evidence. No `profile_sources.json` artifact is written —

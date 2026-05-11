@@ -19,11 +19,6 @@ The bundle contract is fixed:
   module. It exports one workflow function per file (the function name is the
   workflow name users pass to `tychonic run <name>`) and a `defaultProfile`
   object (see below).
-- every bundle contains `runInput.mjs`. It exports `validateRunInput(input)`.
-  `tychonic run` calls that validator with the effective input before starting
-  Temporal. Workflow code calls the same validator at workflow start. This is
-  the workflow-owned check for task input, `promptAdditions`, and policy values
-  after `--config <file>` replacement.
 - a bundle may also be a normal package directory: `README.md`, `package.json`,
   lockfiles, `node_modules`, relative support modules, and pre-bundled assets
   are allowed.
@@ -70,6 +65,26 @@ but they are inert files until an operator explicitly installs one with
 bundles the project needs — hand-authored, or reference examples — through that
 same command. There is no separate host-shipped workflow execution path.
 
+## Run-input Validation
+
+Run-input validation is split into two layers:
+
+**Host preflight** (`tychonic run`, before Temporal start): the host validates
+the standard workflow input contract — `cwd` required, `goal` optional,
+`profile` reserved, `promptAdditions` keys must name a state with type `work`
+or `review` in the effective profile. This validation is automatic and requires
+no per-bundle configuration. `promptAdditions` keys are auto-derived from the
+effective `profile.states`: every state whose `type` is `work` or `review` is
+a valid `promptAdditions` key. Invalid input never enters a Temporal workflow
+task retry loop.
+
+**Workflow-start guard**: workflow code calls `validateTaskWorkflowInput(input)`
+from `tychonic/workflow` at the first line of the workflow function. This is a
+defense-in-depth gate: the same standard contract check runs inside the
+Temporal sandbox. Workflow-specific policy validation (e.g., `policies.loop`,
+`policies.interaction`) runs at this point, inside the workflow function body,
+not at CLI preflight.
+
 ## Workflow-default Profile
 
 A bundle's `workflow.mjs` must export a `defaultProfile` object shaped like a
@@ -105,8 +120,7 @@ npm run validate:examples`
   workflow input's reserved `profile` field when no `--config <file>` override
   is passed.
 - The state and policy default values for the workflow live in this one export.
-  Workflow-specific input and policy validation lives in `runInput.mjs`. No
-  separate manifest, schema file, or JSON companion file exists.
+  No separate manifest, schema file, or JSON companion file exists.
 
 ## Install-time Validation
 
@@ -115,20 +129,15 @@ order. Any failure aborts the install without touching the runtime modules
 directory.
 
 1. The source path is a directory.
-2. The directory contains `workflow.mjs` and `runInput.mjs`.
+2. The directory contains `workflow.mjs`.
 3. `workflow.mjs` is parsed as an ES module AST without importing it, creating a
    staging directory, or symlinking `node_modules`. The static inspection must
    find at least one named workflow export (function) and exactly one
    `defaultProfile` export.
-4. `runInput.mjs` imports through standard package resolution and exports
-   `validateRunInput(input)`.
-5. The exported workflow function name equals the bundle directory name.
-6. The extracted `defaultProfile` parses under `TychonicConfigSchema`.
-7. No other installed bundle exports the same workflow function name.
+4. The exported workflow function name equals the bundle directory name.
+5. The extracted `defaultProfile` parses under `TychonicConfigSchema`.
+6. No other installed bundle exports the same workflow function name.
 
-Install-time validation confirms bundle shape and exported validators. For each
-run, `tychonic run` parses the effective profile, calls
-`validateRunInput(input)` before starting Temporal, and only then creates the
-Temporal workflow. The workflow calls the same validator at start as a runtime
-guard. Invalid workflow input or workflow-specific policy values must not enter
-a Temporal workflow task retry loop.
+For each run, `tychonic run` validates the standard workflow input contract
+before starting Temporal. Invalid workflow input must not enter a Temporal
+workflow task retry loop.

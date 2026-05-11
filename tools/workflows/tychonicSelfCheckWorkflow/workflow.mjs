@@ -1,6 +1,5 @@
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
-import { validateRunInput } from "./runInput.mjs";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
 
 const {
   startRunActivity,
@@ -10,7 +9,7 @@ const {
 } = proxyActivities({
   startToCloseTimeout: "6 hours",
   heartbeatTimeout: "5 minutes",
-  retry: { maximumAttempts: 1 }
+  retry: { maximumAttempts: 3 }
 });
 
 export const defaultProfile = {
@@ -26,7 +25,7 @@ export const defaultProfile = {
 };
 
 export async function tychonicSelfCheckWorkflow(input) {
-  validateRunInput(input);
+  validateTaskWorkflowInput(input);
   const cwd = requireString(input?.cwd, "cwd");
   const ctx = createTychonicWorkflowContext({
     input: {

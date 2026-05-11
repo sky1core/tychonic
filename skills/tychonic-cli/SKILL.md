@@ -13,8 +13,7 @@ verification.
 
 - Temporal workflow history and Temporal APIs are the product state authority.
 - Tychonic core ships no host-owned workflows.
-- Workflows are installed bundles with `workflow.mjs`, `runInput.mjs`, and
-  `defaultProfile`.
+- Workflows are installed bundles with `workflow.mjs` and `defaultProfile`.
 - There are no built-in, official, default, or host-seeded workflows. Reference
   examples under `examples/workflows/` are inert files, even when included in a
   package install, until an operator explicitly installs one with
@@ -167,10 +166,10 @@ finding audit. For structural issue discovery or commit-readiness review, use
 an installed workflow bundle with explicit `review` states, for example
 `structuralIssueDiscoveryWorkflow`, after running `npm run check:contracts`.
 
-`tychonic run` also calls the installed workflow's `runInput.mjs`
-`validateRunInput(input)` before starting Temporal. A bad workflow input or
-workflow-specific policy key in `--config` must fail there, not inside a
-Temporal workflow task retry loop.
+`tychonic run` validates the standard workflow input contract (required `cwd`,
+optional `goal`, optional `promptAdditions`) at CLI preflight before starting
+Temporal. A bad workflow input or mismatched `--config` profile fails there, not
+inside a Temporal workflow task retry loop.
 
 ## Bundle Config
 
@@ -434,6 +433,18 @@ provider quota:
 npm run verify:agents-live
 ```
 
+## Project Setup
+
+Before running a Tychonic workflow on a project, add `.tychonic/` to the
+project's root `.gitignore`. Tychonic creates `.tychonic/` for worktrees and
+working files; without the ignore entry those files appear as untracked in
+`git status`.
+
+Agents must not create files or directories at the project root. All scratch
+files, temporary files, notes, analysis outputs, and working state belong
+inside `.tychonic/`. The only files agents may create or modify at the project
+root are source files that are part of the actual task deliverable.
+
 ## Guardrails
 
 - Use Temporal-backed CLI commands for state.
@@ -442,5 +453,7 @@ npm run verify:agents-live
   `node_modules`, or environment rewrites.
 - Keep user-facing docs focused on product behavior. Put workflow-specific
   behavior in that workflow's bundle README.
+- Do not create scratch files, temporary files, or working directories at
+  the project root. All non-deliverable files belong inside `.tychonic/`.
 - For notification troubleshooting, use
   [notifications-troubleshooting.md](./notifications-troubleshooting.md).

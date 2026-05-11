@@ -188,10 +188,9 @@ tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 
 ## Workflow Config
 
-A workflow bundle contains `workflow.mjs`, `runInput.mjs`, and a
-`defaultProfile`. The workflow author owns that profile. A run can replace it
-with `--config <file>`, but the replacement is whole-object replacement, not
-merge.
+A workflow bundle contains `workflow.mjs` and a `defaultProfile`. The workflow
+author owns that profile. A run can replace it with `--config <file>`, but the
+replacement is whole-object replacement, not merge.
 
 Workflow JSON input is task data only. Do not put config under `profile`;
 Tychonic reserves that field for the effective profile it passes into workflow
@@ -210,9 +209,10 @@ Before running workflows from a changed checkout, run the contract gate:
 npm run check:contracts
 ```
 
-`tychonic run` also loads the installed workflow's `runInput.mjs` before
-starting Temporal. Invalid workflow input or a `--config` profile that does not
-match that workflow fails before any Temporal workflow is created.
+`tychonic run` validates the standard workflow input contract (required `cwd`,
+optional `goal`, optional `promptAdditions`) before starting Temporal. Invalid
+workflow input or a `--config` profile that does not match the config schema
+fails before any Temporal workflow is created.
 
 The gate calls the production config, workflow-input, review, and interaction
 validators. It is a pre-run contract check, not evidence that a specific

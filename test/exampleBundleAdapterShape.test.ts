@@ -97,11 +97,6 @@ describe("example bundle defaultProfile shape", () => {
         expect(existsSync(packagePath), `${bundle.name} should not require per-bundle npm install`).toBe(false);
       });
 
-      it("ships a run-input preflight validator file", () => {
-        const validatorPath = join(process.cwd(), "examples", "workflows", bundle.name, "runInput.mjs");
-        expect(existsSync(validatorPath), `${bundle.name} must ship runInput.mjs`).toBe(true);
-      });
-
       it("exports only defaultProfile and the workflow function from workflow.mjs", () => {
         expect(Object.keys(bundle.module).sort()).toEqual(["defaultProfile", bundle.name].sort());
       });

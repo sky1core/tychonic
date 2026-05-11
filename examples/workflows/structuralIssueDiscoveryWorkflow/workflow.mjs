@@ -2,13 +2,12 @@
 // structural reviews with an explicit finding audit gate.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
-import { validateRunInput } from "./runInput.mjs";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
-  retry: { maximumAttempts: 1 }
+  retry: { maximumAttempts: 3 }
 });
 
 export const defaultProfile = {
@@ -61,7 +60,7 @@ npm run validate:examples`,
 };
 
 export async function structuralIssueDiscoveryWorkflow(input) {
-  validateRunInput(input);
+  validateTaskWorkflowInput(input);
   const reviewStateNames = new Set([
     "workflow_review",
     "adapter_review",

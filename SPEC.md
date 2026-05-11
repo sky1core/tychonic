@@ -142,12 +142,12 @@ SPEC:
   run. No field merge, deep merge, array merge, implicit inheritance, or hidden
   preset fill is allowed.
 - **Run input is narrow and stable.** Public top-level workflow input is
-  `cwd`, optional `goal`, and optional `promptAdditions` only when supported by
-  that workflow. `profile` is reserved for Tychonic's internal handoff.
-- **Run preflight happens before Temporal start.** `tychonic run` must validate
-  the effective profile and call the installed workflow's `runInput.mjs`
-  validator before starting a Temporal workflow. Invalid input must not enter a
-  Temporal workflow task retry loop.
+  `cwd`, optional `goal`, and optional `promptAdditions`. `promptAdditions`
+  keys are auto-derived from the effective profile (states with type `work` or
+  `review`). `profile` is reserved for Tychonic's internal handoff.
+- **Run preflight happens before Temporal start.** `tychonic run` validates the
+  standard workflow input contract before starting a Temporal workflow. Invalid
+  input must not enter a Temporal workflow task retry loop.
 - **Recoverable state failure stays rerunnable.** When a state-producing
   activity fails, times out, or blocks because of an external/transient problem,
   the workflow must preserve the failed state evidence and keep an explicit

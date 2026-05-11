@@ -58,60 +58,11 @@ describe("run workflow dispatch", () => {
     expect(failure.stderr).not.toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
   }, 20_000);
 
-  it("rejects workflow-specific invalid --config before Temporal connection", async () => {
-    const fixture = await createRunDispatchFixture();
-    await runCliExpectSuccess(
-      ["workflows", "install", "examples/workflows/architectBuilderQaWorkflow"],
-      fixture.env
-    );
-    const configPath = join(fixture.repo, "stock-discovery-profile.yaml");
-    await writeFile(
-      configPath,
-      [
-        "version: tychonic.config.v1",
-        "states:",
-        "  architect:",
-        "    type: work",
-        "    command: echo architect",
-        "  builder:",
-        "    type: work",
-        "    command: echo builder",
-        "  qa:",
-        "    type: review",
-        "    command: echo qa",
-        "policies:",
-        "  interaction:",
-        "    mode: auto",
-        "  loop:",
-        "    auto_continue: true",
-        "    max_review_iterations: 2",
-        ""
-      ].join("\n"),
-      "utf8"
-    );
-    const input = JSON.stringify({
-      cwd: fixture.repo,
-      goal: "discover stocks"
-    });
-
-    const failure = await runCliExpectFailure(
-      [
-        "run",
-        "architectBuilderQaWorkflow",
-        "--input",
-        input,
-        "--config",
-        configPath,
-        "--temporal-address",
-        "127.0.0.1:1"
-      ],
-      fixture.env
-    );
-
-    expect(failure.stderr).toMatch(/workflow architectBuilderQaWorkflow preflight failed/);
-    expect(failure.stderr).toMatch(/policies\.loop\.auto_continue is not a recognised key/);
-    expect(failure.stderr).not.toMatch(/Failed to connect before the deadline|127\\.0\\.0\\.1:1|ECONNREFUSED|UNAVAILABLE/i);
-  }, 20_000);
+  // Workflow-specific policy validation (e.g. policies.loop.auto_continue)
+  // is no longer a CLI preflight. With runInput.mjs removed, policy
+  // validation runs inside the Temporal workflow sandbox via
+  // workflowPolicies.mjs. Testing that path requires a running Temporal
+  // and is covered by integration tests.
 });
 
 async function createRunDispatchFixture(): Promise<{
@@ -156,14 +107,6 @@ async function runCliExpectFailure(
     };
   }
   throw new Error(`expected CLI failure for: ${args.join(" ")}`);
-}
-
-async function runCliExpectSuccess(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-  await execFileAsync(process.execPath, ["--import", "tsx", cliPath, ...args], {
-    cwd: projectRoot,
-    env,
-    encoding: "utf8"
-  });
 }
 
 function errorOutput(error: unknown, stream: "stdout" | "stderr"): string {

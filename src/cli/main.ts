@@ -67,10 +67,7 @@ import {
   runtimeWorkflowModulesDir,
   inspectBundle
 } from "../temporal/workflowModules.js";
-import {
-  assertWorkflowRunInputValidator,
-  validateInstalledWorkflowRunInput
-} from "../temporal/runInputPreflight.js";
+import { validateWorkflowRunInput } from "../temporal/runInputPreflight.js";
 import { validateBundleFileShape } from "../temporal/bundleValidator.js";
 import { productVersion } from "../version.js";
 
@@ -209,10 +206,6 @@ workflowsCommand
       const { readdir } = await import("node:fs/promises");
       const entries = await readdir(directory);
       validateBundleFileShape(entries);
-      await assertWorkflowRunInputValidator({
-        workflowName: workflowsBundleDirName(directory),
-        bundleDir: resolveAbsolute(directory)
-      });
       const inspection = await inspectBundle({
         name: workflowsBundleDirName(directory),
         workflowPath: pathJoin(directory, "workflow.mjs")
@@ -1293,13 +1286,12 @@ async function startNamedWorkflowFromCli(workflowName: string, options: RunComma
     ...(options.config ? { configPath: options.config } : {}),
     loadDefaultProfile: async () => loadBundleDefaultProfile(await loadBundleDir())
   });
+  // Always resolve the bundle directory before attempting a Temporal
+  // connection so "no installed workflow" fails fast, even when --config
+  // was supplied (which skips the defaultProfile lookup path).
+  await loadBundleDir();
   if (workflowInput.hasInput) {
-    const installedBundleDir = await loadBundleDir();
-    await validateInstalledWorkflowRunInput({
-      workflowName,
-      bundleDir: installedBundleDir,
-      input: workflowInput.input
-    });
+    validateWorkflowRunInput(workflowInput.input);
   }
   const temporalConfig = temporalConfigFromOptions(options);
   const result = await startNamedTemporalWorkflow({

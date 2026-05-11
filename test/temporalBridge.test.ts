@@ -117,13 +117,11 @@ describe("Temporal bridge", () => {
     await mkdir(alphaDir, { recursive: true });
     await mkdir(betaDir, { recursive: true });
     await writeFile(join(alphaDir, "workflow.mjs"), bundleSource("alphaWorkflow", "a"), "utf8");
-    await writeFile(join(alphaDir, "runInput.mjs"), runInputSource(), "utf8");
     await writeFile(
       join(betaDir, "workflow.mjs"),
       bundleSource("betaWorkflow", "b", "export async function alphaWorkflow() { return 'b-alpha'; }"),
       "utf8"
     );
-    await writeFile(join(betaDir, "runInput.mjs"), runInputSource(), "utf8");
     try {
       await expect(resolveWorkflowModulePath()).rejects.toThrow(/workflow bundle export conflict/);
     } finally {
@@ -165,7 +163,6 @@ describe("Temporal bridge", () => {
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     await mkdir(bundleDir, { recursive: true });
     await writeFile(join(bundleDir, "workflow.mjs"), await readFile(join(sourceDir, "workflow.mjs"), "utf8"), "utf8");
-    await writeFile(join(bundleDir, "runInput.mjs"), await readFile(join(sourceDir, "runInput.mjs"), "utf8"), "utf8");
     await writeFile(join(bundleDir, "README.md"), await readFile(join(sourceDir, "README.md"), "utf8"), "utf8");
     process.env.TYCHONIC_STATE_HOME = join(cwd, "state");
     try {
@@ -194,7 +191,6 @@ async function makePackagedCliFixture(
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "tychonic" }), "utf8");
   await writeFile(cliPath, "#!/usr/bin/env node\n", "utf8");
   await writeFile(join(bundleSourceDir, "workflow.mjs"), packagedContents, "utf8");
-  await writeFile(join(bundleSourceDir, "runInput.mjs"), runInputSource(), "utf8");
   return { packageRoot, cliPath, bundleSourceDir };
 }
 
@@ -210,7 +206,6 @@ async function makeBundleDir(
     bundleSource(name, name, options?.extraExport, options?.localDependency, options?.temporalImport),
     "utf8"
   );
-  await writeFile(join(dir, "runInput.mjs"), runInputSource(), "utf8");
   if (options?.localDependency) {
     await writeFile(
       join(dir, "package.json"),
@@ -237,10 +232,6 @@ async function makeBundleDir(
     await writeFile(join(depDir, "index.js"), "export const helperTag = 'local-helper';\n", "utf8");
   }
   return dir;
-}
-
-function runInputSource(): string {
-  return "export function validateRunInput(input) { if (!input || typeof input !== 'object') throw new Error('workflow input must be an object'); }\n";
 }
 
 function bundleSource(

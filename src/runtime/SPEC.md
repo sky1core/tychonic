@@ -162,7 +162,6 @@ Installed workflow bundles live under `<state>/workflows/modules/<name>/`, where
 Each bundle directory contains at minimum:
 
 - `workflow.mjs`
-- `runInput.mjs`
 
 It may also contain `README.md`, `package.json`, lockfiles, `node_modules`,
 relative support modules, and pre-bundled assets. This mirrors the install-time

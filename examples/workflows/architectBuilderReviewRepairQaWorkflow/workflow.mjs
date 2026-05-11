@@ -2,13 +2,12 @@
 // structured final QA gate.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
-import { validateRunInput } from "./runInput.mjs";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
-  retry: { maximumAttempts: 1 }
+  retry: { maximumAttempts: 3 }
 });
 
 export const defaultProfile = {
@@ -58,7 +57,7 @@ export const defaultProfile = {
 };
 
 export async function architectBuilderReviewRepairQaWorkflow(input) {
-  validateRunInput(input);
+  validateTaskWorkflowInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "architect_builder_review_repair_qa",

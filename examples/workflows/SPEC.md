@@ -11,7 +11,6 @@ Each example workflow directory is a normal workflow bundle source. It must
 contain:
 
 - `workflow.mjs`
-- `runInput.mjs`
 - `README.md`
 
 Example bundle names, state NAMEs, prompts, policies, model strings, and agent

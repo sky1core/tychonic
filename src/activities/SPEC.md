@@ -94,9 +94,8 @@ Review findings and triage inbox items are appended by workflow code after it
 merges the review activity result; the shared activity body does not mutate the
 caller-owned run record to add them.
 
-Workflow activity proxies for state-producing activities use
-`maximumAttempts: 1`. Retries that change product state belong in workflow code
-with explicit state NAMEs, not in Temporal activity proxy retry.
+Retries that change product state belong in workflow code with explicit state
+NAMEs, not in Temporal activity proxy retry.
 
 An explicit state rerun is a new workflow decision to invoke the same state NAME
 again. It appends a new state record and activity attempt record. It does not

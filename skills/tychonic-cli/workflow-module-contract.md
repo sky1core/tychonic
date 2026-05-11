@@ -4,9 +4,9 @@ Use this when writing or changing workflow bundles.
 
 ## Bundle Shape
 
-A workflow bundle is a directory containing `workflow.mjs` and `runInput.mjs`.
-The directory name must equal the exported workflow function name, and that
-name is what users pass to `tychonic run <name>`.
+A workflow bundle is a directory containing `workflow.mjs`. The directory name
+must equal the exported workflow function name, and that name is what users pass
+to `tychonic run <name>`.
 
 `workflow.mjs` must export `defaultProfile`:
 
@@ -26,10 +26,11 @@ npm test`
 };
 ```
 
-`runInput.mjs` must export `validateRunInput(input)`. `tychonic run` calls it
-with the effective input before starting Temporal. Workflow code should import
-and call the same validator at workflow start so CLI preflight and runtime
-validation do not drift.
+`tychonic run` validates the standard workflow input contract (required `cwd`,
+optional `goal`, optional `promptAdditions`) at CLI preflight before starting
+Temporal. `promptAdditions` keys are auto-derived from profile states with type
+`work` or `review`. Workflow code calls `validateTaskWorkflowInput(input)` from
+`tychonic/workflow` at workflow start for runtime validation.
 
 At workflow start, Tychonic injects the effective profile into the workflow
 input's reserved `profile` field. Workflow code passes that profile to
@@ -38,11 +39,10 @@ with `tychonic run --config <file>`, not by putting `profile` in workflow JSON
 input.
 
 Workflow run input must stay task-shaped. Public top-level input fields are
-required `cwd`, optional `goal`, and optional `promptAdditions` only when the
-workflow explicitly supports additive per-state prompt instructions. Workflow
-code defines its own prompts. Reject `promptAdditions` keys that do not match
-promptable state NAMEs in the effective profile. Do not expose top-level prompt
-fields or agent-named input keys.
+required `cwd`, optional `goal`, and optional `promptAdditions`. The host
+auto-derives valid `promptAdditions` keys from profile states with type `work`
+or `review` and rejects unknown keys. Workflow code defines its own prompts.
+Do not expose top-level prompt fields or agent-named input keys.
 
 The bundle may include `README.md`, `package.json`, lockfiles, relative modules
 imported by `workflow.mjs`, assets, and `node_modules`. Tychonic provides
@@ -198,7 +198,7 @@ import { createTychonicWorkflowContext } from "tychonic/workflow";
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
-  retry: { maximumAttempts: 1 }
+  retry: { maximumAttempts: 3 }
 });
 
 export async function myWorkflow(input) {

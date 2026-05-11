@@ -10,15 +10,15 @@
 // focused on orchestration.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
-import { validateRunInput } from "./runInput.mjs";
+import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { validateInteractionPolicy, validateLoopPolicy } from "./workflowPolicies.mjs";
 
 const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
-  retry: { maximumAttempts: 1 }
+  retry: { maximumAttempts: 3 }
 });
 
 export const defaultProfile = {
@@ -58,7 +58,9 @@ export const defaultProfile = {
 };
 
 export async function architectBuilderQaWorkflow(input) {
-  validateRunInput(input);
+  validateTaskWorkflowInput(input);
+  validateInteractionPolicy(input.profile?.policies);
+  validateLoopPolicy(input.profile?.policies);
 
   const ctx = createTychonicWorkflowContext({
     input,

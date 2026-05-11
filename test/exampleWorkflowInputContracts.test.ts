@@ -19,9 +19,10 @@ import { pipelineWorkflow } from "../examples/workflows/pipelineWorkflow/workflo
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { verifyOnlyWorkflow } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
+import { validateTaskWorkflowInput } from "../src/inputValidation.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { validateRunInput as validateStructuralIssueDiscoveryInput } from "../examples/workflows/structuralIssueDiscoveryWorkflow/runInput.mjs";
+import { defaultProfile as structuralIssueDiscoveryProfile } from "../examples/workflows/structuralIssueDiscoveryWorkflow/workflow.mjs";
 
 describe("example workflow input contracts", () => {
   it("rejects task input without cwd before starting activities", async () => {
@@ -75,25 +76,6 @@ describe("example workflow input contracts", () => {
     ).rejects.toThrow(/unsupported input field: kiroPreReviewPrompt/);
   });
 
-  it("rejects prompt additions that are not keyed by an allowed state NAME", async () => {
-    await expect(
-      architectBuilderQaWorkflow({
-        cwd: "/tmp/tychonic-test",
-        promptAdditions: { kiroPreReview: "inspect" }
-      })
-    ).rejects.toThrow(/unsupported promptAdditions state: kiroPreReview/);
-  });
-
-  it("rejects prompt additions that do not match the configured state NAMEs", async () => {
-    await expect(
-      architectBuilderQaWorkflow({
-        cwd: "/tmp/tychonic-test",
-        profile: { states: { architect: {}, builder: {} } },
-        promptAdditions: { qa: "review carefully" }
-      })
-    ).rejects.toThrow(/promptAdditions\.qa does not match a configured state/);
-  });
-
   it("rejects prompt additions when effective profile states are absent", async () => {
     await expect(
       architectBuilderQaWorkflow({
@@ -103,10 +85,46 @@ describe("example workflow input contracts", () => {
     ).rejects.toThrow(/promptAdditions requires effective profile\.states/);
   });
 
+  it("rejects prompt additions that are not keyed by a promptable state NAME", async () => {
+    await expect(
+      architectBuilderQaWorkflow({
+        cwd: "/tmp/tychonic-test",
+        profile: {
+          states: {
+            architect: { type: "work" },
+            builder: { type: "work" },
+            qa: { type: "review" }
+          }
+        },
+        promptAdditions: { kiroPreReview: "inspect" }
+      })
+    ).rejects.toThrow(/unsupported promptAdditions state: kiroPreReview/);
+  });
+
+  it("rejects prompt additions that do not match a configured state", async () => {
+    await expect(
+      architectBuilderQaWorkflow({
+        cwd: "/tmp/tychonic-test",
+        profile: {
+          states: {
+            architect: { type: "work" },
+            builder: { type: "work" }
+          }
+        },
+        promptAdditions: { qa: "review carefully" }
+      })
+    ).rejects.toThrow(/unsupported promptAdditions state: qa/);
+  });
+
   it("rejects non-string prompt addition values", async () => {
     await expect(
       pipelineWorkflow({
         cwd: "/tmp/tychonic-test",
+        profile: {
+          states: {
+            review_1: { type: "review", agent: "claude" }
+          }
+        },
         promptAdditions: { review_1: ["review"] }
       })
     ).rejects.toThrow(/promptAdditions\.review_1 must be a non-empty string/);
@@ -118,16 +136,11 @@ describe("example workflow input contracts", () => {
     ).rejects.toThrow(/unsupported input field: command/);
   });
 
-  it("verifyOnlyWorkflow rejects goal because that workflow exposes no task prompt", async () => {
-    await expect(
-      verifyOnlyWorkflow({ cwd: "/tmp/tychonic-test", goal: "run tests" })
-    ).rejects.toThrow(/unsupported input field: goal/);
-  });
-
   it("structuralIssueDiscoveryWorkflow accepts prompt additions only for promptable state NAMEs", () => {
     expect(() =>
-      validateStructuralIssueDiscoveryInput({
+      validateTaskWorkflowInput({
         cwd: "/tmp/tychonic-test",
+        profile: structuralIssueDiscoveryProfile,
         promptAdditions: {
           workflow_review: "look at recovery",
           adapter_review: "look at parser",
@@ -138,16 +151,17 @@ describe("example workflow input contracts", () => {
     ).not.toThrow();
 
     expect(() =>
-      validateStructuralIssueDiscoveryInput({
+      validateTaskWorkflowInput({
         cwd: "/tmp/tychonic-test",
+        profile: structuralIssueDiscoveryProfile,
         promptAdditions: { claude: "agent names are not state names" }
       })
-    ).toThrow(/unsupported promptAdditions key: claude/);
+    ).toThrow(/unsupported promptAdditions state: claude/);
   });
 
   it("structuralIssueDiscoveryWorkflow rejects undocumented top-level fields", () => {
     expect(() =>
-      validateStructuralIssueDiscoveryInput({
+      validateTaskWorkflowInput({
         cwd: "/tmp/tychonic-test",
         knownIssues: []
       })

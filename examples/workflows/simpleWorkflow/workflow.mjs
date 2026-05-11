@@ -18,9 +18,10 @@ import { proxyActivities } from "@temporalio/workflow";
 import {
   createTychonicInteraction,
   createTychonicRunState,
-  latestStateByName
+  latestStateByName,
+  validateTaskWorkflowInput
 } from "tychonic/workflow";
-import { validateRunInput } from "./runInput.mjs";
+import { validateLoopPolicy } from "./loopPolicy.mjs";
 import {
   applyResult,
   appendReviewFindingsAndInbox,
@@ -34,7 +35,7 @@ import {
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
   heartbeatTimeout: "5 minutes",
-  retry: { maximumAttempts: 1 }
+  retry: { maximumAttempts: 3 }
 });
 
 const {
@@ -86,7 +87,8 @@ npm test`,
  * Host-injected: profile?: TychonicConfig
  */
 export async function simpleWorkflow(input) {
-  validateRunInput(input);
+  validateTaskWorkflowInput(input);
+  validateLoopPolicy(input.profile?.policies);
   // Snapshot the effective profile at workflow start. The cap loop reads
   // caps from this snapshot, never from a re-read of the input — a mid-run
   // "reinstall" of the bundle does not change the running cap values.

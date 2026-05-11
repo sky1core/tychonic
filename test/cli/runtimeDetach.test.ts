@@ -161,11 +161,6 @@ describe("tychonic runtime up --detach (gating)", () => {
       ].join("\n"),
       "utf8"
     );
-    await writeFile(
-      join(bundleDir, "runInput.mjs"),
-      "export function validateRunInput(input) { if (!input || typeof input !== 'object') throw new Error('workflow input must be an object'); }\n",
-      "utf8"
-    );
 
     const install = await runCli(
       ["--instance", instance, "workflows", "install", bundleDir],
@@ -210,11 +205,6 @@ describe("tychonic runtime up --detach (gating)", () => {
         "  return { status: \"succeeded\", input };",
         "}"
       ].join("\n"),
-      "utf8"
-    );
-    await writeFile(
-      join(bundleDir, "runInput.mjs"),
-      "export function validateRunInput(input) { if (!input || typeof input !== 'object') throw new Error('workflow input must be an object'); }\n",
       "utf8"
     );
 
