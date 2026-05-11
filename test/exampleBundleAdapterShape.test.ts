@@ -42,13 +42,6 @@ import { defaultProfile as architectFirstReviewQaDefault } from "../examples/wor
 // @ts-ignore
 import * as architectBuilderFirstReviewQaWorkflowModule from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { defaultProfile as architectReviewRepairQaDefault } from "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as architectReviewRepairQaWorkflowModule from "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import { defaultProfile as verifyOnlyDefault } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -80,11 +73,6 @@ const BUNDLES: readonly Bundle[] = [
     name: "architectBuilderFirstReviewQaWorkflow",
     profile: architectFirstReviewQaDefault,
     module: architectBuilderFirstReviewQaWorkflowModule
-  },
-  {
-    name: "architectBuilderReviewRepairQaWorkflow",
-    profile: architectReviewRepairQaDefault,
-    module: architectReviewRepairQaWorkflowModule
   },
   { name: "verifyOnlyWorkflow", profile: verifyOnlyDefault, module: verifyOnlyWorkflowModule }
 ];
@@ -203,8 +191,7 @@ describe("current example bundle defaultProfile choices", () => {
       [
         "architectBuilderFirstReviewQaWorkflow.final_qa",
         (architectFirstReviewQaDefault as any).states?.final_qa
-      ],
-      ["architectBuilderReviewRepairQaWorkflow.final_qa", (architectReviewRepairQaDefault as any).states?.final_qa]
+      ]
     ];
 
     for (const [name, block] of finalReviewStates) {
@@ -225,7 +212,6 @@ describe("current example bundle defaultProfile choices", () => {
         "architectBuilderFirstReviewQaWorkflow.architect",
         (architectFirstReviewQaDefault as any).states?.architect
       ],
-      ["architectBuilderReviewRepairQaWorkflow.architect", (architectReviewRepairQaDefault as any).states?.architect],
       ["checkpointWorkflow.semantic_review", (checkpointDefault as any).states?.semantic_review],
       ["pipelineWorkflow.review_1", (pipelineDefault as any).states?.review_1]
     ] as Array<[string, any]>) {
@@ -243,9 +229,6 @@ describe("current example bundle defaultProfile choices", () => {
         "architectBuilderFirstReviewQaWorkflow.builder",
         (architectFirstReviewQaDefault as any).states?.builder
       ],
-      ["architectBuilderReviewRepairQaWorkflow.builder", (architectReviewRepairQaDefault as any).states?.builder],
-      ["architectBuilderReviewRepairQaWorkflow.pre_review", (architectReviewRepairQaDefault as any).states?.pre_review],
-      ["architectBuilderReviewRepairQaWorkflow.repair", (architectReviewRepairQaDefault as any).states?.repair],
       ["pipelineWorkflow.work", (pipelineDefault as any).states?.work]
     ] as Array<[string, any]>) {
       expect(block, name).toMatchObject({
@@ -285,29 +268,6 @@ describe("current agent choices in reference examples", () => {
       reasoning_effort: "xhigh"
     });
     expect(qa?.normalizer).toBeUndefined();
-  });
-
-  it("keeps review repair as prose work before a structured final QA gate", () => {
-    const states = (architectReviewRepairQaDefault as any).states;
-    expect(states?.pre_review).toMatchObject({
-      type: "work",
-      agent: "kiro",
-      model: "claude-opus-4.6",
-      trust_all_tools: true
-    });
-    expect(states?.repair).toMatchObject({
-      type: "work",
-      agent: "kiro",
-      model: "claude-opus-4.6",
-      trust_all_tools: true
-    });
-    expect(states?.final_qa).toMatchObject({
-      type: "review",
-      agent: "codex",
-      model: "gpt-5.5",
-      reasoning_effort: "xhigh"
-    });
-    expect(states?.final_qa?.normalizer).toBeUndefined();
   });
 
   it("declares a normalized first structured review before final QA", () => {

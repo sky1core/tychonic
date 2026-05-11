@@ -312,6 +312,24 @@ describe("runReviewActivity adapter dispatch", () => {
     });
   });
 
+  it("block.agent built-in (claude) parses terminal structured_output after large tool output", async () => {
+    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"), undefined, 1_100_000);
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-claude-structured-large-"));
+
+    const result = await runReviewActivity({
+      stateName: REVIEW_NAME,
+      run: baseRun("disp_review_claude_structured_large"),
+      cwd,
+      profile: reviewProfile({ agent: "claude" }),
+      prompt: "review please"
+    });
+
+    expect(result.delta.states?.[0]?.status).toBe("succeeded");
+    expect(result.reviewOutcome?.kind).toBe("parsed");
+    if (result.reviewOutcome?.kind !== "parsed") throw new Error("expected parsed outcome");
+    expect(result.reviewOutcome.result.status).toBe("pass");
+  });
+
   it("fails a Claude review when the reported model differs from the requested model", async () => {
     await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"), "claude-opus-4-5");
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-model-mismatch-"));
@@ -661,7 +679,11 @@ async function writeClaudeModelReportingStubBinary(path: string, reportedModel: 
   await chmod(path, 0o755);
 }
 
-async function writeClaudeStructuredReviewStubBinary(path: string, reportedModel?: string): Promise<void> {
+async function writeClaudeStructuredReviewStubBinary(
+  path: string,
+  reportedModel?: string,
+  largePrefixBytes = 0
+): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
   const systemEvent = JSON.stringify({
     type: "system",
@@ -681,9 +703,26 @@ async function writeClaudeStructuredReviewStubBinary(path: string, reportedModel
     },
     session_id: "structured-session-id"
   });
+  const largePrefixEvent = largePrefixBytes > 0
+    ? JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "x".repeat(largePrefixBytes) }]
+        }
+      })
+    : undefined;
   await writeFile(
     path,
-    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", systemEvent, resultEvent, "JSON"].join("\n"),
+    [
+      "#!/bin/sh",
+      "cat > /dev/null",
+      "cat <<'JSON'",
+      systemEvent,
+      ...(largePrefixEvent ? [largePrefixEvent] : []),
+      resultEvent,
+      "JSON"
+    ].join("\n"),
     "utf8"
   );
   await chmod(path, 0o755);

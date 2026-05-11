@@ -29,8 +29,9 @@ npm test`
 `tychonic run` validates the standard workflow input contract (required `cwd`,
 optional `goal`, optional `promptAdditions`) at CLI preflight before starting
 Temporal. `promptAdditions` keys are auto-derived from profile states with type
-`work` or `review`. Workflow code calls `validateTaskWorkflowInput(input)` from
-`tychonic/workflow` at workflow start for runtime validation.
+`work` or `review`. `createTychonicWorkflowContext` repeats that standard
+validation at workflow start. Workflow modules that bypass the context helper
+call `validateTaskWorkflowInput(input)` from `tychonic/workflow` themselves.
 
 At workflow start, Tychonic injects the effective profile into the workflow
 input's reserved `profile` field. Workflow code passes that profile to
@@ -42,7 +43,10 @@ Workflow run input must stay task-shaped. Public top-level input fields are
 required `cwd`, optional `goal`, and optional `promptAdditions`. The host
 auto-derives valid `promptAdditions` keys from profile states with type `work`
 or `review` and rejects unknown keys. Workflow code defines its own prompts.
-Do not expose top-level prompt fields or agent-named input keys.
+Do not expose top-level prompt fields or agent-named input keys. When using
+`createTychonicWorkflowContext`, pass only the workflow-owned base prompt to
+`ctx.work` or `ctx.review`; the context helper appends any validated
+`promptAdditions[stateName]` entry.
 
 The bundle may include `README.md`, `package.json`, lockfiles, relative modules
 imported by `workflow.mjs`, assets, and `node_modules`. Tychonic provides
@@ -142,7 +146,8 @@ continuation.
 `policies.<name>` entries are workflow-owned values. The host requires the
 top-level `policies` value to be an object, but it does not require each policy
 value to be an object or to use the state NAME grammar. A workflow that consumes
-a policy validates that policy value's shape.
+a policy validates that policy value's shape. The standard interaction helper
+validates the `policies.interaction` shape that it consumes.
 
 ## Activities
 
@@ -235,6 +240,6 @@ return runState.result(run);
 Use `createTychonicInteraction(policy)` directly only when a workflow needs
 custom interactive behavior outside the context helper. It registers the
 standard signal/query names as one unit and exposes the approval gate, modify
-patch application, stray-signal drain, standard inbox item helpers, and standard
-raw payload validation. Do not hand-register the standard interaction names one
-by one.
+patch application, stray-signal drain, standard inbox item helpers,
+`policies.interaction` validation, and standard raw payload validation. Do not
+hand-register the standard interaction names one by one.

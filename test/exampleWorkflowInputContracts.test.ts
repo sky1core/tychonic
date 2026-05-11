@@ -12,9 +12,6 @@ import { architectBuilderFinalQaWorkflow } from "../examples/workflows/architect
 import { architectBuilderFirstReviewQaWorkflow } from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { architectBuilderReviewRepairQaWorkflow } from "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import { pipelineWorkflow } from "../examples/workflows/pipelineWorkflow/workflow.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -29,6 +26,18 @@ describe("example workflow input contracts", () => {
     await expect(
       checkpointWorkflow({ goal: "inspect" })
     ).rejects.toThrow(/cwd must be a non-empty string/);
+  });
+
+  it("checkpointWorkflow rejects non-object input through the standard context guard", async () => {
+    await expect(
+      checkpointWorkflow(undefined as never)
+    ).rejects.toThrow(/workflow input must be an object/);
+  });
+
+  it("architectBuilderQaWorkflow rejects non-object input through the standard context guard", async () => {
+    await expect(
+      architectBuilderQaWorkflow(null as never)
+    ).rejects.toThrow(/workflow input must be an object/);
   });
 
   it("checkpointWorkflow rejects undocumented input fields", async () => {
@@ -55,12 +64,6 @@ describe("example workflow input contracts", () => {
     ).rejects.toThrow(/unsupported input field: reviewerAgent/);
   });
 
-  it("architectBuilderReviewRepairQaWorkflow rejects undocumented input fields", async () => {
-    await expect(
-      architectBuilderReviewRepairQaWorkflow({ cwd: "/tmp/tychonic-test", repairAgent: "kiro" })
-    ).rejects.toThrow(/unsupported input field: repairAgent/);
-  });
-
   it("pipelineWorkflow rejects undocumented input fields", async () => {
     await expect(
       pipelineWorkflow({ cwd: "/tmp/tychonic-test", verifyCommand: "npm test" })
@@ -69,7 +72,7 @@ describe("example workflow input contracts", () => {
 
   it("rejects retired top-level prompt override fields", async () => {
     await expect(
-      architectBuilderReviewRepairQaWorkflow({
+      architectBuilderFirstReviewQaWorkflow({
         cwd: "/tmp/tychonic-test",
         kiroPreReviewPrompt: "inspect"
       })
@@ -134,6 +137,24 @@ describe("example workflow input contracts", () => {
     await expect(
       verifyOnlyWorkflow({ cwd: "/tmp/tychonic-test", command: "npm test" })
     ).rejects.toThrow(/unsupported input field: command/);
+  });
+
+  it("simpleWorkflow accepts prompt additions for its promptable states", () => {
+    expect(() =>
+      validateTaskWorkflowInput({
+        cwd: "/tmp/tychonic-test",
+        profile: {
+          states: {
+            work: { type: "work", agent: "claude" },
+            review: { type: "review", agent: "codex" }
+          }
+        },
+        promptAdditions: {
+          work: "keep the existing session context",
+          review: "focus on public input handling"
+        }
+      })
+    ).not.toThrow();
   });
 
   it("structuralIssueDiscoveryWorkflow accepts prompt additions only for promptable state NAMEs", () => {

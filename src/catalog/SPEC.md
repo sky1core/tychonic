@@ -22,9 +22,10 @@ Configuration has exactly two top-level groups. No others.
   schema treats its entries as opaque workflow-owned values keyed by string; it
   does not require policy values to be objects or to follow the state NAME
   grammar. Each workflow bundle defines, validates, and consumes the policy keys
-  and value shapes it cares about. The example bundles under
-  `examples/workflows/` use `policies.loop`, `policies.integration`, and
-  `policies.interaction`; their shapes are documented in those bundles'
+  and value shapes it cares about. The standard workflow interaction helper
+  validates the `policies.interaction` value shape that it consumes. The example
+  bundles under `examples/workflows/` also use workflow-owned `policies.loop`
+  and `policies.integration`; their shapes are documented in those bundles'
   READMEs.
 
 There is no `agents.<name>` top-level, no `commands.<name>` top-level, no

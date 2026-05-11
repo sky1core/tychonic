@@ -57,9 +57,29 @@ describe("activity heartbeat wiring", () => {
     expect(captured.heartbeat).toEqual(expect.any(Function));
   });
 
+  it("passes heartbeat into runVerifyActivity bodies", async () => {
+    const captured = { heartbeat: undefined as unknown };
+    vi.doMock("../src/bootstrap/deterministicCommandBody.js", () => ({
+      runDeterministicCommandBody: vi.fn(async (options: { resources: { heartbeat?: unknown } }) => {
+        captured.heartbeat = options.resources.heartbeat;
+        return executedResult();
+      })
+    }));
+
+    const { runVerifyActivity } = await import("../src/activities/runVerifyActivity.js");
+    await runVerifyActivity({
+      stateName: "verify_alt",
+      run: baseRun("run_verify_heartbeat"),
+      cwd: await mkdtemp(join(tmpdir(), "tychonic-verify-heartbeat-")),
+      profile: profileWith("verify_alt", "verify")
+    });
+
+    expect(captured.heartbeat).toEqual(expect.any(Function));
+  });
+
 });
 
-function profileWith(name: string, type: "work"): TychonicConfig {
+function profileWith(name: string, type: "work" | "verify"): TychonicConfig {
   return {
     version: "tychonic.config.v1",
     states: {

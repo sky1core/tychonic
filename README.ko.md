@@ -289,7 +289,6 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 - `architectBuilderQaWorkflow`: Claude가 설계하고 Kiro가 build, Codex가 final QA 수행
 - `architectBuilderFinalQaWorkflow`: Kiro-assisted build 뒤 Codex final QA 수행
 - `architectBuilderFirstReviewQaWorkflow`: Claude가 설계하고 Kiro가 build와 1차 normalized review를 수행한 뒤 Codex final QA 수행
-- `architectBuilderReviewRepairQaWorkflow`: Kiro가 build, pre-review, repair를 수행한 뒤 Codex final QA로 넘기는 pattern
 - `structuralIssueDiscoveryWorkflow`: deterministic contract check와 scoped Claude structural review, finding-audit gate를 실행하는 workflow
 
 config shape나 `promptAdditions` state key를 바꾸기 전에 각 workflow

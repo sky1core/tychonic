@@ -75,9 +75,6 @@ const { architectBuilderFinalQaWorkflow } = await import(
 const { architectBuilderFirstReviewQaWorkflow } = await import(
   "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs"
 );
-const { architectBuilderReviewRepairQaWorkflow } = await import(
-  "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs"
-);
 const { tychonicSelfCheckWorkflow } = await import(
   "../tools/workflows/tychonicSelfCheckWorkflow/workflow.mjs"
 );
@@ -251,42 +248,6 @@ describe("agent-pinned QA workflow control flow", () => {
     expect(harness.calls).toContain("finish:");
   });
 
-  it("does not report completion when final QA fails after review repair", async () => {
-    harness.workResults = [
-      { halted: false, passed: true },
-      { halted: false, passed: true },
-      { halted: false, passed: true },
-      { halted: false, passed: true }
-    ];
-    harness.reviewResults = [{ halted: false, passed: false, summary: "final qa failed" }];
-
-    await architectBuilderReviewRepairQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
-
-    expect(harness.calls).toEqual([
-      "start",
-      "createWorktree",
-      "work:architect",
-      "work:builder",
-      "work:pre_review",
-      "work:repair",
-      "review:final_qa",
-      "finish:final qa failed"
-    ]);
-  });
-
-  it("finishes review repair without a forced success summary when final QA passes", async () => {
-    harness.workResults = [
-      { halted: false, passed: true },
-      { halted: false, passed: true },
-      { halted: false, passed: true },
-      { halted: false, passed: true }
-    ];
-    harness.reviewResults = [{ halted: false, passed: true }];
-
-    await architectBuilderReviewRepairQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
-
-    expect(harness.calls).toContain("finish:");
-  });
 });
 
 describe("single-pass workflow completion summaries", () => {
@@ -337,7 +298,6 @@ describe("single-pass workflow completion summaries", () => {
       "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs",
       "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs",
       "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs",
-      "../examples/workflows/architectBuilderReviewRepairQaWorkflow/workflow.mjs",
       "../examples/workflows/checkpointWorkflow/workflow.mjs",
       "../examples/workflows/pipelineWorkflow/workflow.mjs",
       "../examples/workflows/verifyOnlyWorkflow/workflow.mjs",

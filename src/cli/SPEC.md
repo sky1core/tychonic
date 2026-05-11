@@ -98,11 +98,12 @@ standard interaction helper is not interactive from the point of view of
 `createTychonicInteraction(policy)` from `tychonic/workflow` registers the
 standard signal/query handlers as one unit and exposes the workflow-side gate
 for waiting on state approval, applying modify patches, draining stray signals,
-handling explicit state rerun requests, and creating standard inbox items.
-Workflow code must not hand-register these standard names one by one.
+handling explicit state rerun requests, creating standard inbox items, and
+validating the `policies.interaction` shape that the helper consumes. Workflow
+code must not hand-register these standard names one by one.
 
-The host does **not** assign semantics to `policies.interaction`.
-`policies.interaction`, reject accumulation, per-state reject caps, signal
-parking, and whether interaction replaces or composes with auto retry loops are
-workflow-specific contracts documented by the workflow bundle that implements
-them.
+The standard helper owns only the generic interaction mode and reject-cap shape:
+`policies.interaction.mode` and `policies.interaction.max_reject_iterations`.
+How interaction composes with a workflow's own retry loops, auto continuation,
+or terminal recovery path remains workflow-specific and must be documented by
+the workflow bundle that implements it.

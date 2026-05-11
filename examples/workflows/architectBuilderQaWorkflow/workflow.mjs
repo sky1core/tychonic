@@ -10,8 +10,8 @@
 // focused on orchestration.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
-import { validateInteractionPolicy, validateLoopPolicy } from "./workflowPolicies.mjs";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
+import { validateLoopPolicy } from "./workflowPolicies.mjs";
 
 const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
 
@@ -58,22 +58,19 @@ export const defaultProfile = {
 };
 
 export async function architectBuilderQaWorkflow(input) {
-  validateTaskWorkflowInput(input);
-  validateInteractionPolicy(input.profile?.policies);
-  validateLoopPolicy(input.profile?.policies);
-
   const ctx = createTychonicWorkflowContext({
     input,
     template: "architect_builder_qa",
     activities: act
   });
+  validateLoopPolicy(input.profile?.policies);
 
   await ctx.start();
   await ctx.createWorktree();
 
   const architect = await ctx.work(
     "architect",
-    withPromptAddition(architectStageInstructions(input.goal ?? ""), input, "architect")
+    architectStageInstructions(input.goal ?? "")
   );
   if (!architect.passed) return ctx.finish(architect.summary ?? "architect failed");
 
@@ -88,14 +85,10 @@ export async function architectBuilderQaWorkflow(input) {
     const builder = await ctx.work(
       "builder",
       withQaFeedback(
-        withPromptAddition(
-          builderStageInstructions({
-            runId: ctx.run().id,
-            worktreePath: ctx.worktreePath()
-          }),
-          input,
-          "builder"
-        ),
+        builderStageInstructions({
+          runId: ctx.run().id,
+          worktreePath: ctx.worktreePath()
+        }),
         qaFeedbacks
       )
     );
@@ -103,14 +96,10 @@ export async function architectBuilderQaWorkflow(input) {
 
     const qa = await ctx.review(
       "qa",
-      withPromptAddition(
-        qaStageInstructions({
-          runId: ctx.run().id,
-          worktreePath: ctx.worktreePath()
-        }),
-        input,
-        "qa"
-      )
+      qaStageInstructions({
+        runId: ctx.run().id,
+        worktreePath: ctx.worktreePath()
+      })
     );
     if (qa.halted) return ctx.finish(qa.summary);
 
@@ -141,12 +130,6 @@ function withQaFeedback(basePrompt, feedbacks) {
   return `${basePrompt}\n\n[qa findings from previous iteration(s)]\n${feedbacks
     .map((feedback, index) => `${index + 1}. ${feedback}`)
     .join("\n")}\n[/qa findings]`;
-}
-
-function withPromptAddition(basePrompt, input, stateName) {
-  const addition = input.promptAdditions?.[stateName];
-  if (addition === undefined) return basePrompt;
-  return `${basePrompt}\n\n[additional ${stateName} instructions]\n${addition}\n[/additional ${stateName} instructions]`;
 }
 
 function reviewCapInboxItem() {

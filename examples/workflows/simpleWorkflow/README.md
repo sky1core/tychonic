@@ -50,8 +50,10 @@ to the workflow.
 |---|---|---|
 | `cwd` | yes | Git repository used to create the isolated worker worktree. |
 | `goal` | no | Worker goal threaded into this workflow's `work` prompt. |
+| `promptAdditions` | no | Object keyed by state NAME. Appends extra instructions to prompts for `work` or `review`. |
 
-Unknown fields are rejected. `cwd` must be a git repository.
+Unknown fields are rejected. `promptAdditions` keys must be `work` or `review`.
+`cwd` must be a git repository.
 
 ## Minimal Run
 

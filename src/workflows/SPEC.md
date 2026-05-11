@@ -25,7 +25,8 @@ Allowed configuration content:
   schema treats each `policies.<name>` entry as an opaque workflow-owned value
   keyed by string; each workflow bundle defines, validates, and consumes the
   policy keys and value shapes it cares about. Common bundle-defined keys
-  include `policies.loop`, `policies.integration`, and `policies.interaction`.
+  include `policies.loop` and `policies.integration`. The standard interaction
+  helper validates the `policies.interaction` shape that it consumes.
 
 Ordering, branching, loops, fan-out, joins, retry, and multi-activity
 aggregation belong in Temporal workflow code. If a project needs custom

@@ -18,6 +18,7 @@ export interface CommandRunOptions {
   env?: NodeJS.ProcessEnv;
   liveOutputPath?: string;
   maxOutputBytes?: number;
+  outputCapture?: "head" | "tail";
   stdin?: string;
   onProgress?: () => void;
   progressIntervalMs?: number;
@@ -49,6 +50,7 @@ export function sanitizeChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.P
 
 export async function runCommand(options: CommandRunOptions): Promise<CommandRunResult> {
   const maxOutputBytes = options.maxOutputBytes ?? 1_000_000;
+  const outputCapture = options.outputCapture ?? "head";
   const chunks: Buffer[] = [];
   let outputBytes = 0;
   let timedOut = false;
@@ -104,12 +106,17 @@ export async function runCommand(options: CommandRunOptions): Promise<CommandRun
     const appendOutput = (chunk: Buffer): void => {
       options.onProgress?.();
       liveStream?.write(chunk);
-      if (outputBytes < maxOutputBytes) {
+      if (outputCapture === "head") {
+        if (outputBytes >= maxOutputBytes) return;
         const remaining = maxOutputBytes - outputBytes;
         const bounded = chunk.subarray(0, remaining);
         chunks.push(bounded);
         outputBytes += bounded.byteLength;
+        return;
       }
+      chunks.push(chunk);
+      outputBytes += chunk.byteLength;
+      outputBytes = trimCapturedOutputTail(chunks, maxOutputBytes, outputBytes);
     };
 
     child.stdout?.on("data", appendOutput);
@@ -190,6 +197,22 @@ export async function runCommand(options: CommandRunOptions): Promise<CommandRun
       });
     });
   });
+}
+
+function trimCapturedOutputTail(chunks: Buffer[], maxOutputBytes: number, outputBytes: number): number {
+  while (outputBytes > maxOutputBytes && chunks.length > 0) {
+    const excess = outputBytes - maxOutputBytes;
+    const first = chunks[0];
+    if (!first) break;
+    if (excess >= first.byteLength) {
+      chunks.shift();
+      outputBytes -= first.byteLength;
+      continue;
+    }
+    chunks[0] = first.subarray(excess);
+    outputBytes -= excess;
+  }
+  return outputBytes;
 }
 
 export async function withPeriodicProgress<T>(

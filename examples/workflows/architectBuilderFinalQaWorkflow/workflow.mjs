@@ -2,7 +2,7 @@
 // the final structured QA gate.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -41,7 +41,6 @@ export const defaultProfile = {
 };
 
 export async function architectBuilderFinalQaWorkflow(input) {
-  validateTaskWorkflowInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "architect_builder_final_qa",
@@ -53,45 +52,31 @@ export async function architectBuilderFinalQaWorkflow(input) {
 
   const architect = await ctx.work(
     "architect",
-    withPromptAddition(architectStageInstructions(input.goal ?? ""), input, "architect")
+    architectStageInstructions(input.goal ?? "")
   );
   if (!architect.passed) return ctx.finish("architect failed");
 
   const builder = await ctx.work(
     "builder",
-    withPromptAddition(
-      builderStageInstructions({
-        cwd: input.cwd,
-        runId: ctx.run().id,
-        worktreePath: ctx.worktreePath()
-      }),
-      input,
-      "builder"
-    )
+    builderStageInstructions({
+      cwd: input.cwd,
+      runId: ctx.run().id,
+      worktreePath: ctx.worktreePath()
+    })
   );
   if (!builder.passed) return ctx.finish("builder failed");
 
   const qa = await ctx.review(
     "qa",
-    withPromptAddition(
-      qaStageInstructions({
-        cwd: input.cwd,
-        runId: ctx.run().id,
-        worktreePath: ctx.worktreePath()
-      }),
-      input,
-      "qa"
-    )
+    qaStageInstructions({
+      cwd: input.cwd,
+      runId: ctx.run().id,
+      worktreePath: ctx.worktreePath()
+    })
   );
   if (!qa.passed) return ctx.finish(qa.summary ?? "qa did not pass");
 
   return ctx.finish();
-}
-
-function withPromptAddition(basePrompt, input, stateName) {
-  const addition = input.promptAdditions?.[stateName];
-  if (addition === undefined) return basePrompt;
-  return `${basePrompt}\n\n[additional ${stateName} instructions]\n${addition}\n[/additional ${stateName} instructions]`;
 }
 
 function architectStageInstructions(goal) {

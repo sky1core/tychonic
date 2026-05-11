@@ -273,7 +273,7 @@ function makeFailReviewStub(log: CallLog[], findReviewerSession: () => MockSessi
     const stateId = `state_review_iter_${attemptCounter}`;
     const attemptId = `attempt_review_iter_${attemptCounter}`;
     const reviewerSession = findReviewerSession();
-    log.push({ name: "review" });
+    log.push({ name: "review", prompt: callInput.prompt });
 
     // Latest worker session in the run is the cap loop's `currentSession`.
     const lastWorker = [...callInput.run.agent_sessions]
@@ -537,7 +537,14 @@ describe("simpleWorkflow cap loop", () => {
     };
 
     const final = await runAutoContinueLoop({
-      input: { profile, cwd: "/tmp/tychonic-test" },
+      input: {
+        profile,
+        cwd: "/tmp/tychonic-test",
+        promptAdditions: {
+          work: "preserve the session context",
+          review: "check the public input contract"
+        }
+      },
       run,
       worktreePath: "/tmp/tychonic-test/wt",
       workSession: initialWorker,
@@ -548,6 +555,12 @@ describe("simpleWorkflow cap loop", () => {
     // Exactly N resume_work attempts (resume cap = 3).
     const resumeCalls = log.filter((c) => c.name === "resume");
     expect(resumeCalls.length).toBe(3);
+    expect(resumeCalls[0].prompt).toContain("[operator additional instructions for work]");
+    expect(resumeCalls[0].prompt).toContain("preserve the session context");
+
+    const reviewCalls = log.filter((c) => c.name === "review");
+    expect(reviewCalls[0].prompt).toContain("[operator additional instructions for review]");
+    expect(reviewCalls[0].prompt).toContain("check the public input contract");
 
     // The cap loop never calls runWorker in fresh mode — it only resumes the current session.
     const workerCalls = log.filter((c) => c.name === "worker");

@@ -188,8 +188,8 @@ State `type` is exactly one of `work`, `verify`, or `review`:
 - `review` produces a structured pass/fail review verdict.
 
 For architect/builder/QA workflows, architect and builder states are `work`.
-The QA gate is `review`. A prose Kiro pre-review or repair step is still
-`work`; only the structured pass/fail gate is `review`.
+The QA gate is `review`. Non-verdict support steps are still `work`; only the
+structured pass/fail gate is `review`.
 
 State profile shape with environment-specific agent settings omitted:
 

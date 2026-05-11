@@ -78,12 +78,14 @@ effective `profile.states`: every state whose `type` is `work` or `review` is
 a valid `promptAdditions` key. Invalid input never enters a Temporal workflow
 task retry loop.
 
-**Workflow-start guard**: workflow code calls `validateTaskWorkflowInput(input)`
-from `tychonic/workflow` at the first line of the workflow function. This is a
-defense-in-depth gate: the same standard contract check runs inside the
-Temporal sandbox. Workflow-specific policy validation (e.g., `policies.loop`,
-`policies.interaction`) runs at this point, inside the workflow function body,
-not at CLI preflight.
+**Workflow-start guard**: `createTychonicWorkflowContext({ input, ... })`
+validates the same standard contract inside the Temporal sandbox before any
+activity call.
+Workflow modules that bypass the context helper call `validateTaskWorkflowInput`
+from `tychonic/workflow` themselves at workflow start. Workflow-specific policy
+validation (e.g., `policies.loop` and `policies.integration`) runs at this
+point, inside the workflow function body, not at CLI preflight. The standard
+interaction helper validates the `policies.interaction` shape that it consumes.
 
 ## Workflow-default Profile
 

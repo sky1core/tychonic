@@ -2,7 +2,7 @@
 // the first normalized review, Codex runs only the final structured QA gate.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -50,7 +50,6 @@ export const defaultProfile = {
 };
 
 export async function architectBuilderFirstReviewQaWorkflow(input) {
-  validateTaskWorkflowInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "architect_builder_first_review_qa",
@@ -62,35 +61,27 @@ export async function architectBuilderFirstReviewQaWorkflow(input) {
 
   const architect = await ctx.work(
     "architect",
-    withPromptAddition(architectStageInstructions(input.goal ?? ""), input, "architect")
+    architectStageInstructions(input.goal ?? "")
   );
   if (!architect.passed) return ctx.finish(architect.summary ?? "architect failed");
 
   const builder = await ctx.work(
     "builder",
-    withPromptAddition(
-      builderStageInstructions({
-        cwd: input.cwd,
-        runId: ctx.run().id,
-        worktreePath: ctx.worktreePath()
-      }),
-      input,
-      "builder"
-    )
+    builderStageInstructions({
+      cwd: input.cwd,
+      runId: ctx.run().id,
+      worktreePath: ctx.worktreePath()
+    })
   );
   if (!builder.passed) return ctx.finish(builder.summary ?? "builder failed");
 
   const firstReview = await ctx.review(
     "first_review",
-    withPromptAddition(
-      firstReviewStageInstructions({
-        cwd: input.cwd,
-        runId: ctx.run().id,
-        worktreePath: ctx.worktreePath()
-      }),
-      input,
-      "first_review"
-    )
+    firstReviewStageInstructions({
+      cwd: input.cwd,
+      runId: ctx.run().id,
+      worktreePath: ctx.worktreePath()
+    })
   );
   if (firstReview.halted) return ctx.finish(firstReview.summary);
   if (!firstReview.passed) {
@@ -99,25 +90,15 @@ export async function architectBuilderFirstReviewQaWorkflow(input) {
 
   const finalQa = await ctx.review(
     "final_qa",
-    withPromptAddition(
-      finalQaStageInstructions({
-        cwd: input.cwd,
-        runId: ctx.run().id,
-        worktreePath: ctx.worktreePath()
-      }),
-      input,
-      "final_qa"
-    )
+    finalQaStageInstructions({
+      cwd: input.cwd,
+      runId: ctx.run().id,
+      worktreePath: ctx.worktreePath()
+    })
   );
   if (!finalQa.passed) return ctx.finish(finalQa.summary ?? "final_qa did not pass");
 
   return ctx.finish();
-}
-
-function withPromptAddition(basePrompt, input, stateName) {
-  const addition = input.promptAdditions?.[stateName];
-  if (addition === undefined) return basePrompt;
-  return `${basePrompt}\n\n[additional ${stateName} instructions]\n${addition}\n[/additional ${stateName} instructions]`;
 }
 
 function architectStageInstructions(goal) {

@@ -7,10 +7,11 @@ const WORKFLOW_PATH = new URL("../examples/workflows/pipelineWorkflow/workflow.m
 const WORKFLOW_FILE_PATH = fileURLToPath(WORKFLOW_PATH);
 
 describe("pipelineWorkflow bundle example", () => {
-  it("threads goal into this workflow's work prompt and appends state-keyed additions", async () => {
+  it("threads goal into this workflow's work prompt and leaves prompt additions to the context helper", async () => {
     const source = await readFile(WORKFLOW_PATH, "utf8");
-    expect(source).toContain('withPromptAddition(input.goal ?? "", input, "work")');
-    expect(source).toContain('withPromptAddition(structuredReviewPrompt("work stages 1-3"), input, "review_1")');
+    expect(source).toContain('ctx.work(\n    "work",\n    input.goal ?? ""\n  )');
+    expect(source).toContain('ctx.review(\n    "review_1",\n    structuredReviewPrompt("work stages 1-3")\n  )');
+    expect(source).not.toContain("withPromptAddition");
   });
 
   it("routes blocked review stages to triage instead of falling through to success", async () => {

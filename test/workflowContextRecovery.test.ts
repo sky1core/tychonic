@@ -164,6 +164,26 @@ describe("Tychonic workflow context recoverable state rerun", () => {
     expect(ctx.run().activity_attempts.map((attempt) => attempt.status)).toEqual(["timed_out", "succeeded"]);
   });
 
+  it("validates the standard workflow input contract when the context is created", () => {
+    expect(() =>
+      createTychonicWorkflowContext({
+        input: {
+          goal: "missing cwd",
+          profile: {
+            version: "tychonic.config.v1",
+            states: {},
+            policies: {}
+          }
+        } as never,
+        template: "validation_test",
+        activities: {
+          startRunActivity: async () => baseRun(),
+          finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+        }
+      })
+    ).toThrow(/cwd must be a non-empty string/);
+  });
+
   it("does not offer rerun recovery for an ordinary failed verify result", async () => {
     const runVerifyActivity = vi
       .fn()
@@ -349,6 +369,112 @@ describe("Tychonic workflow context interactive approval status", () => {
       state: { name: "work", status: "succeeded" }
     });
     expect(ctx.run().status).toBe("running");
+    expect(runQuery(interactionPendingStateQueryName)).toBeUndefined();
+  });
+
+  it("appends promptAdditions to work prompts inside the context helper", async () => {
+    const runWorkerActivity = vi
+      .fn()
+      .mockResolvedValueOnce(successfulWorkResult("work", "state_work_success", "attempt_work_success"));
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        promptAdditions: { work: "include the migration test" },
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            work: { type: "work", agent: "claude" }
+          },
+          policies: {}
+        }
+      },
+      template: "prompt_addition_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        runWorkerActivity,
+        finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+      }
+    });
+
+    await ctx.start();
+    await ctx.work("work", "implement the task");
+
+    expect(runWorkerActivity).toHaveBeenCalledTimes(1);
+    expect(runWorkerActivity.mock.calls[0]?.[0].prompt).toBe(
+      [
+        "implement the task",
+        "",
+        "[operator additional instructions for work]",
+        "include the migration test",
+        "[/operator additional instructions]"
+      ].join("\n")
+    );
+  });
+
+  it("returns halted when a review activity produces a blocked state", async () => {
+    const runReviewActivity = vi.fn().mockResolvedValueOnce({
+      delta: {
+        states: [
+          {
+            id: "state_review_blocked",
+            name: "review",
+            status: "blocked",
+            reason: "reviewer output did not match tychonic.review.v1",
+            activity_attempt_ids: ["attempt_review_blocked"],
+            artifact_ids: [],
+            finding_ids: [],
+            started_at: "2026-01-01T00:00:01.000Z",
+            finished_at: "2026-01-01T00:00:02.000Z"
+          }
+        ],
+        activityAttempts: [
+          {
+            id: "attempt_review_blocked",
+            state_id: "state_review_blocked",
+            kind: "semantic_review",
+            status: "succeeded",
+            reason: "succeeded",
+            cwd: "/repo",
+            started_at: "2026-01-01T00:00:01.000Z",
+            finished_at: "2026-01-01T00:00:02.000Z"
+          }
+        ]
+      },
+      reviewOutcome: {
+        kind: "unparseable",
+        detail: "reviewer output did not match tychonic.review.v1",
+        artifacts: [],
+        agentSessions: []
+      }
+    } satisfies ActivityResult);
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            review: { type: "review", agent: "claude" }
+          },
+          policies: {}
+        }
+      },
+      template: "blocked_review_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        runReviewActivity,
+        finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+      }
+    });
+
+    await ctx.start();
+    await expect(ctx.review("review", "review this")).resolves.toMatchObject({
+      halted: true,
+      passed: false,
+      summary: "reviewer output did not match tychonic.review.v1",
+      state: { name: "review", status: "blocked" }
+    });
+    expect(runReviewActivity).toHaveBeenCalledTimes(1);
+    expect(ctx.run().status).not.toBe("waiting_user");
     expect(runQuery(interactionPendingStateQueryName)).toBeUndefined();
   });
 

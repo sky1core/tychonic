@@ -7,6 +7,7 @@ import {
 import { activityTimeoutMs, defaultActivityTimeoutMs, optionalStateConfig } from "../catalog/types.js";
 import { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
+import { heartbeatActivity } from "./heartbeat.js";
 
 export type RunVerifyActivityInput = ActivityInput<"verify">;
 export type RunVerifyActivityResult = ActivityResult;
@@ -35,7 +36,8 @@ export async function runVerifyActivity(input: RunVerifyActivityInput): Promise<
     store,
     env: process.env,
     now: () => new Date(),
-    nextId: nextIdFromRun(input.run)
+    nextId: nextIdFromRun(input.run),
+    heartbeat: heartbeatActivity
   };
   const timeoutMs = activityTimeoutMs(input.profile, input.stateName, defaultActivityTimeoutMs("verify"));
   const executionCwd = input.worktreePath ?? input.cwd;

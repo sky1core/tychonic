@@ -242,6 +242,49 @@ describe("runReviewActivity", () => {
       `${ACTIVITY_NAME}_output`
     ]);
   });
+
+  it("fails a review command that rewrites an already dirty tracked file", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-dirty-mutation-"));
+    await initGitRepo(cwd);
+    await writeFile(join(cwd, "README.md"), "dirty before review\n", "utf8");
+    const run = baseRun("run_review_dirty_mutation");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"require('node:fs').writeFileSync('README.md','dirty after review\\n'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("command_failed");
+    expect(result.delta.states[0]?.status).toBe("failed");
+    expect(result.delta.states[0]?.reason).toBe("reviewer command did not succeed");
+  });
+
+  it("does not treat Tychonic run artifacts as review source mutations", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-artifact-mutation-"));
+    await initGitRepo(cwd);
+    const run = baseRun("run_review_artifact_mutation");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("parsed");
+    expect(result.delta.states[0]?.status).toBe("succeeded");
+    expect(result.delta.activityAttempts?.[0]?.status).toBe("succeeded");
+  });
 });
 
 function profileWith(block: { command: string }): TychonicConfig {

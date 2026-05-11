@@ -2,7 +2,7 @@
 // of the same TYPE.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -44,7 +44,6 @@ export const defaultProfile = {
 };
 
 export async function pipelineWorkflow(input) {
-  validateTaskWorkflowInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "pipeline_7stage",
@@ -57,7 +56,7 @@ export async function pipelineWorkflow(input) {
 
   const work = await ctx.work(
     "work",
-    withPromptAddition(input.goal ?? "", input, "work")
+    input.goal ?? ""
   );
   if (!work.passed) return ctx.finish("stage 1 work failed");
 
@@ -68,7 +67,7 @@ export async function pipelineWorkflow(input) {
 
   const review1 = await ctx.review(
     "review_1",
-    withPromptAddition(structuredReviewPrompt("work stages 1-3"), input, "review_1")
+    structuredReviewPrompt("work stages 1-3")
   );
   const review1Gate = gateReviewStage(review1, "review_1");
   if (review1Gate.item) ctx.addInboxItem(review1Gate.item);
@@ -79,11 +78,7 @@ export async function pipelineWorkflow(input) {
 
   const review2 = await ctx.review(
     "review_2",
-    withPromptAddition(
-      structuredReviewPrompt("integration and prior review follow-up"),
-      input,
-      "review_2"
-    )
+    structuredReviewPrompt("integration and prior review follow-up")
   );
   const review2Gate = gateReviewStage(review2, "review_2");
   if (review2Gate.item) ctx.addInboxItem(review2Gate.item);
@@ -122,12 +117,6 @@ function reviewTriageInboxItem(state, detail) {
     action: { kind: "triage", reason: detail },
     created_at: state.finished_at ?? state.started_at ?? new Date().toISOString()
   };
-}
-
-function withPromptAddition(basePrompt, input, stateName) {
-  const addition = input.promptAdditions?.[stateName];
-  if (addition === undefined) return basePrompt;
-  return `${basePrompt}\n\n[additional ${stateName} instructions]\n${addition}\n[/additional ${stateName} instructions]`;
 }
 
 function structuredReviewPrompt(scope) {

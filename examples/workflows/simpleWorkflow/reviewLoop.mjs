@@ -3,7 +3,8 @@ import {
   applyActivityResult,
   latestStateByName,
   recoverableActivityFailureResult,
-  nextRunLocalId
+  nextRunLocalId,
+  promptWithAddition
 } from "tychonic/workflow";
 export { validateLoopPolicy } from "./loopPolicy.mjs";
 
@@ -70,7 +71,7 @@ export async function runAutoContinueLoop({
         cwd: input.cwd,
         worktreePath,
         sessionId: currentSession.id,
-        prompt: buildResumePrompt(currentRun)
+        prompt: promptWithAddition(buildResumePrompt(currentRun), input, "work")
       })
     });
     run = resumeCall.run;
@@ -113,7 +114,7 @@ export async function runAutoContinueLoop({
         ...(profile ? { profile } : {}),
         cwd: input.cwd,
         worktreePath,
-        prompt: buildReviewPrompt(currentRun, "auto-continue iteration"),
+        prompt: promptWithAddition(buildReviewPrompt(currentRun, "auto-continue iteration"), input, "review"),
         verificationCommands: verificationCommands(profile)
       })
     });

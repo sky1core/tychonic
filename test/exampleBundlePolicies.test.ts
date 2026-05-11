@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 // Bundle-side policy validators. The host `TychonicConfigSchema` treats
-// `policies` as an opaque record; each example workflow validates the
-// policy keys it actually consumes during CLI preflight and workflow start. These tests cover
-// those bundle-local validators directly.
+// workflow-owned `policies` entries as opaque records; each example workflow
+// validates the policy keys it actually consumes at workflow start. These tests
+// cover those bundle-local validators directly.
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - bundle modules export plain JS, no TS types.
@@ -11,10 +11,7 @@ import { validateLoopPolicy } from "../examples/workflows/simpleWorkflow/reviewL
 import { validateIntegrationPolicy } from "../examples/workflows/checkpointWorkflow/integrationPolicy.mjs";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import {
-  validateInteractionPolicy as validateAbqInteractionPolicy,
-  validateLoopPolicy as validateAbqLoopPolicy
-} from "../examples/workflows/architectBuilderQaWorkflow/workflowPolicies.mjs";
+import { validateLoopPolicy as validateAbqLoopPolicy } from "../examples/workflows/architectBuilderQaWorkflow/workflowPolicies.mjs";
 
 describe("simpleWorkflow validateLoopPolicy", () => {
   it("accepts an absent policies block", () => {
@@ -107,65 +104,6 @@ describe("checkpointWorkflow validateIntegrationPolicy", () => {
 
   it("requires position when the block is present", () => {
     expect(() => validateIntegrationPolicy({ integration: {} })).toThrow();
-  });
-});
-
-describe("architectBuilderQaWorkflow validateInteractionPolicy", () => {
-  it("accepts an absent block", () => {
-    expect(() => validateAbqInteractionPolicy(undefined)).not.toThrow();
-    expect(() => validateAbqInteractionPolicy({})).not.toThrow();
-  });
-
-  it("accepts mode: auto without a cap", () => {
-    expect(() =>
-      validateAbqInteractionPolicy({ interaction: { mode: "auto" } })
-    ).not.toThrow();
-  });
-
-  it("accepts mode: interactive with or without a cap", () => {
-    expect(() =>
-      validateAbqInteractionPolicy({ interaction: { mode: "interactive" } })
-    ).not.toThrow();
-    expect(() =>
-      validateAbqInteractionPolicy({
-        interaction: { mode: "interactive", max_reject_iterations: 3 }
-      })
-    ).not.toThrow();
-  });
-
-  it("rejects unknown mode", () => {
-    expect(() =>
-      validateAbqInteractionPolicy({ interaction: { mode: "bogus" } })
-    ).toThrow(/policies\.interaction\.mode/);
-  });
-
-  it("rejects max_reject_iterations under mode: auto", () => {
-    expect(() =>
-      validateAbqInteractionPolicy({
-        interaction: { mode: "auto", max_reject_iterations: 3 }
-      })
-    ).toThrow(/only allowed when mode is 'interactive'/);
-  });
-
-  it("rejects non-positive max_reject_iterations under mode: interactive", () => {
-    expect(() =>
-      validateAbqInteractionPolicy({
-        interaction: { mode: "interactive", max_reject_iterations: 0 }
-      })
-    ).toThrow(/positive integer/);
-    expect(() =>
-      validateAbqInteractionPolicy({
-        interaction: { mode: "interactive", max_reject_iterations: -1 }
-      })
-    ).toThrow(/positive integer/);
-  });
-
-  it("rejects unknown keys", () => {
-    expect(() =>
-      validateAbqInteractionPolicy({
-        interaction: { mode: "interactive", bogus: 1 }
-      })
-    ).toThrow(/is not a recognised key/);
   });
 });
 

@@ -101,4 +101,17 @@ describe("runCommand", () => {
     expect(result.output).toContain("before");
     expect(result.output).not.toContain("after");
   });
+
+  it("can retain the tail of large command output", async () => {
+    const result = await runCommand({
+      command: "node -e \"process.stdout.write('a'.repeat(120)); process.stdout.write('TAIL')\"",
+      cwd: process.cwd(),
+      timeoutMs: 1_000,
+      maxOutputBytes: 16,
+      outputCapture: "tail"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.output).toBe("aaaaaaaaaaaaTAIL");
+  });
 });

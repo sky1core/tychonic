@@ -9,9 +9,8 @@ import type { DecisionInboxItemRecord, WorkflowRunRecord } from "../domain/types
 
 /**
  * Workflow-runtime shape of a `policies.interaction` block as consumed by
- * this hook. The host config schema treats `policies` as opaque; each
- * workflow validates the keys it reads at workflow start. This local
- * type captures the fields the hook itself depends on.
+ * this hook. The host config schema treats `policies` as opaque; this helper
+ * validates the standard interaction keys it consumes at workflow start.
  */
 export interface PolicyInteraction {
   mode: "auto" | "interactive";
@@ -204,10 +203,11 @@ export function setInteractionPolicy(policy: PolicyInteraction | undefined): voi
       "setInteractionPolicy was called twice; interaction policy is fixed at workflow start"
     );
   }
+  const parsed = parseInteractionPolicy(policy);
   policyCache = {
     resolved: true,
-    mode: policy?.mode ?? "auto",
-    policy
+    mode: parsed?.mode ?? "auto",
+    policy: parsed
   };
 }
 
@@ -436,13 +436,50 @@ export function isRejectCapReached(
   stateName: string,
   policy: PolicyInteraction | undefined
 ): boolean {
-  if (policy?.mode !== "interactive") {
+  const parsed = parseInteractionPolicy(policy);
+  if (parsed?.mode !== "interactive") {
     return false;
   }
-  const cap = policy.max_reject_iterations ?? INTERACTION_DEFAULT_MAX_REJECT_ITERATIONS;
+  const cap = parsed.max_reject_iterations ?? INTERACTION_DEFAULT_MAX_REJECT_ITERATIONS;
   return (counts.get(stateName) ?? 0) >= cap;
 }
 
 function invalidSignal(payload: unknown, reason: string): QueuedInvalid {
   return { kind: "invalid", state: "<invalid>", payload, reason };
+}
+
+function parseInteractionPolicy(policy: PolicyInteraction | undefined): PolicyInteraction | undefined {
+  if (policy === undefined) {
+    return undefined;
+  }
+  if (typeof policy !== "object" || policy === null || Array.isArray(policy)) {
+    throw new Error("policies.interaction must be an object");
+  }
+
+  const allowedKeys = new Set(["mode", "max_reject_iterations"]);
+  for (const key of Object.keys(policy)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(`policies.interaction.${key} is not a recognised key`);
+    }
+  }
+
+  if (policy.mode === undefined) {
+    throw new Error("policies.interaction.mode is required when the block is present");
+  }
+  if (policy.mode !== "auto" && policy.mode !== "interactive") {
+    throw new Error(
+      `policies.interaction.mode must be 'auto' or 'interactive'; got ${JSON.stringify(policy.mode)}`
+    );
+  }
+
+  if (policy.max_reject_iterations !== undefined) {
+    if (!Number.isInteger(policy.max_reject_iterations) || policy.max_reject_iterations <= 0) {
+      throw new Error("policies.interaction.max_reject_iterations must be a positive integer");
+    }
+    if (policy.mode === "auto") {
+      throw new Error("policies.interaction.max_reject_iterations is only allowed when mode is 'interactive'");
+    }
+  }
+
+  return policy;
 }

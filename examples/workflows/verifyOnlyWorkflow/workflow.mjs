@@ -4,7 +4,7 @@
 // agent dependency.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -25,7 +25,6 @@ git diff --check`
 };
 
 export async function verifyOnlyWorkflow(input) {
-  validateTaskWorkflowInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "verify_only",

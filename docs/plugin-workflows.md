@@ -20,10 +20,12 @@ activities; operators pass workflow input as a JSON object and do not put
 The host validates the standard input contract (`cwd`, `goal`, `profile`,
 `promptAdditions`) at CLI preflight, before Temporal starts. `promptAdditions`
 keys are auto-derived from the effective profile: every state with type `work`
-or `review` is a valid key. Workflow code calls
-`validateTaskWorkflowInput(input)` from `tychonic/workflow` at workflow start
-as a defense-in-depth guard. Workflow-specific policy validation runs inside the
-workflow function body.
+or `review` is a valid key. `createTychonicWorkflowContext` repeats the same
+standard validation inside the Temporal sandbox as a defense-in-depth guard.
+Workflow modules that bypass the context helper call `validateTaskWorkflowInput`
+from `tychonic/workflow` themselves at workflow start. Workflow-specific policy
+validation runs inside the workflow function body. The standard interaction
+helper validates the `policies.interaction` shape that it consumes.
 
 ## Minimal Bundle
 
@@ -34,7 +36,7 @@ mkdir myWorkflow
 ```js
 // myWorkflow/workflow.mjs
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -57,7 +59,6 @@ npm test`
 };
 
 export async function myWorkflow(input) {
-  validateTaskWorkflowInput(input);
   const ctx = createTychonicWorkflowContext({
     input,
     template: "my_workflow",
@@ -112,7 +113,11 @@ Workflow run input must stay task-shaped. Public top-level input fields are
 required `cwd`, optional `goal`, and optional `promptAdditions`. Workflow code
 defines its own prompts. The host auto-rejects `promptAdditions` keys that do
 not name a `work` or `review` state in the effective profile. Do not expose
-top-level prompt fields or agent-named input keys.
+top-level prompt fields or agent-named input keys. When using
+`createTychonicWorkflowContext`, pass the workflow-owned base prompt to
+`ctx.work(stateName, prompt)` or `ctx.review(stateName, prompt)`; the context
+helper appends any validated `promptAdditions[stateName]` entry before invoking
+the activity.
 
 Agent settings belong in the state config block next to `agent`. A workflow
 author may explicitly choose `model` and supported `reasoning_effort` per state
@@ -216,9 +221,9 @@ const decision = await interaction.waitForStateApproval("qa");
 
 The helper registers the standard signal/query names as one unit and exposes
 the workflow-side gate, modify patch application, stray-signal drain, and
-standard inbox item helpers. It also validates the standard raw signal payloads
-inside the workflow. Do not hand-register the standard interaction names one by
-one.
+standard inbox item helpers. It also validates the `policies.interaction` shape
+it consumes and the standard raw signal payloads inside the workflow. Do not
+hand-register the standard interaction names one by one.
 
 ## References
 
@@ -231,5 +236,4 @@ one.
 - [examples/workflows/architectBuilderQaWorkflow](../examples/workflows/architectBuilderQaWorkflow): reference architect/builder/QA example
 - [examples/workflows/architectBuilderFinalQaWorkflow](../examples/workflows/architectBuilderFinalQaWorkflow): Kiro-assisted build with Codex final QA
 - [examples/workflows/architectBuilderFirstReviewQaWorkflow](../examples/workflows/architectBuilderFirstReviewQaWorkflow): Kiro build and first normalized review before Codex final QA
-- [examples/workflows/architectBuilderReviewRepairQaWorkflow](../examples/workflows/architectBuilderReviewRepairQaWorkflow): Kiro build, pre-review, and repair before Codex final QA
 - [examples/workflows/structuralIssueDiscoveryWorkflow](../examples/workflows/structuralIssueDiscoveryWorkflow): contract checks, scoped structural reviews, and finding audit

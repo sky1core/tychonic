@@ -4,32 +4,70 @@ import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-if (process.argv.includes("--help") || process.argv.includes("-h")) {
-  printHelp();
-  process.exit(0);
-}
-if (process.argv.slice(2).length > 0) {
-  throw new Error("unsupported arguments; run `node scripts/tychonic-bootstrap-check.mjs --help`");
-}
+export const PACKAGED_EXAMPLE_WORKFLOWS = [
+  "verifyOnlyWorkflow",
+  "simpleWorkflow",
+  "pipelineWorkflow",
+  "checkpointWorkflow",
+  "architectBuilderQaWorkflow",
+  "architectBuilderFinalQaWorkflow",
+  "architectBuilderFirstReviewQaWorkflow",
+  "structuralIssueDiscoveryWorkflow"
+];
+
+const LIVE_EXAMPLE_WORKFLOWS = [
+  "verifyOnlyWorkflow",
+  "simpleWorkflow",
+  "pipelineWorkflow",
+  "checkpointWorkflow",
+  "architectBuilderQaWorkflow",
+  "architectBuilderFinalQaWorkflow",
+  "architectBuilderFirstReviewQaWorkflow"
+];
+
+const LIVE_SMOKE_WORKFLOWS = [
+  "simpleWorkflow",
+  "architectBuilderQaWorkflow"
+];
 
 const repoRoot = process.cwd();
-const liveScope = resolveLiveScope();
 const verbose = process.env.TYCHONIC_BOOTSTRAP_VERBOSE === "1";
 
 const results = [];
 
-await runStep("repo verify", "npm", ["run", "verify"], { cwd: repoRoot });
-await runStep("install local package", "npm", ["run", "install:local"], { cwd: repoRoot });
-await runStep("secret scan", "gitleaks", ["git", "--no-banner", "--redact", "."], { cwd: repoRoot });
-await runStep("diff whitespace", "git", ["diff", "--check"], { cwd: repoRoot });
-await runPackagedExampleRuntimeSmoke();
-if (liveScope !== "none") {
-  await runLiveExampleWorkflows(liveScope);
+if (isMainModule()) {
+  await main();
 }
-await runDocumentationChecks();
 
-console.log(JSON.stringify({ ok: true, results }, null, 2));
+async function main() {
+  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+    printHelp();
+    process.exit(0);
+  }
+  if (process.argv.slice(2).length > 0) {
+    throw new Error("unsupported arguments; run `node scripts/tychonic-bootstrap-check.mjs --help`");
+  }
+
+  const liveScope = resolveLiveScope();
+
+  await runStep("repo verify", "npm", ["run", "verify"], { cwd: repoRoot });
+  await runStep("install local package", "npm", ["run", "install:local"], { cwd: repoRoot });
+  await runStep("secret scan", "gitleaks", ["git", "--no-banner", "--redact", "."], { cwd: repoRoot });
+  await runStep("diff whitespace", "git", ["diff", "--check"], { cwd: repoRoot });
+  await runPackagedExampleRuntimeSmoke();
+  if (liveScope !== "none") {
+    await runLiveExampleWorkflows(liveScope);
+  }
+  await runDocumentationChecks();
+
+  console.log(JSON.stringify({ ok: true, results }, null, 2));
+}
+
+function isMainModule() {
+  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+}
 
 function printHelp() {
   console.log(`Usage: node scripts/tychonic-bootstrap-check.mjs
@@ -92,7 +130,7 @@ async function runLiveExampleWorkflows(scope) {
         qa: review
       }
     },
-    architectBuilderKiroQaWorkflow: {
+    architectBuilderFinalQaWorkflow: {
       cwd: target,
       goal: prompt,
       promptAdditions: {
@@ -101,14 +139,13 @@ async function runLiveExampleWorkflows(scope) {
         qa: review
       }
     },
-    architectBuilderKiroRepairQaWorkflow: {
+    architectBuilderFirstReviewQaWorkflow: {
       cwd: target,
       goal: prompt,
       promptAdditions: {
         architect: "Produce a concise implementation plan for the already-passing JavaScript fixture. Do not edit files.",
         builder: prompt,
-        pre_review: "Inspect the worktree and write concise prose feedback for this bootstrap mechanics check.",
-        repair: "Apply only necessary fixes from the pre-review. If no fix is needed, report that in the final output only.",
+        first_review: "Inspect the worktree and report only actionable defects for this bootstrap mechanics check.",
         final_qa: review
       }
     }
@@ -141,15 +178,7 @@ async function runLiveExampleWorkflows(scope) {
 async function installAllPackagedExamples(instance) {
   const npmRoot = (await run("npm", ["root", "-g"], { cwd: repoRoot })).stdout.trim();
   const examplesDir = join(npmRoot, "tychonic", "examples", "workflows");
-  for (const name of [
-    "verifyOnlyWorkflow",
-    "simpleWorkflow",
-    "pipelineWorkflow",
-    "checkpointWorkflow",
-    "architectBuilderQaWorkflow",
-    "architectBuilderKiroQaWorkflow",
-    "architectBuilderKiroRepairQaWorkflow"
-  ]) {
+  for (const name of PACKAGED_EXAMPLE_WORKFLOWS) {
     await runStep(`install ${name}`, "tychonic", ["--instance", instance, "workflows", "install", join(examplesDir, name)], {
       cwd: repoRoot
     });
@@ -405,19 +434,11 @@ function resolveLiveScope() {
   throw new Error("TYCHONIC_BOOTSTRAP_LIVE_SCOPE must be one of: none, smoke, examples");
 }
 
-function liveWorkflowNames(scope) {
+export function liveWorkflowNames(scope) {
   if (scope === "smoke") {
-    return ["simpleWorkflow", "architectBuilderKiroQaWorkflow"];
+    return LIVE_SMOKE_WORKFLOWS;
   }
-  return [
-    "verifyOnlyWorkflow",
-    "simpleWorkflow",
-    "pipelineWorkflow",
-    "checkpointWorkflow",
-    "architectBuilderQaWorkflow",
-    "architectBuilderKiroQaWorkflow",
-    "architectBuilderKiroRepairQaWorkflow"
-  ];
+  return LIVE_EXAMPLE_WORKFLOWS;
 }
 
 async function writeJson(path, value) {

@@ -67,7 +67,7 @@ import {
   runtimeWorkflowModulesDir,
   inspectBundle
 } from "../temporal/workflowModules.js";
-import { validateWorkflowRunInput } from "../temporal/runInputPreflight.js";
+import { validateTaskWorkflowInput } from "../inputValidation.js";
 import { validateBundleFileShape } from "../temporal/bundleValidator.js";
 import { productVersion } from "../version.js";
 
@@ -1291,7 +1291,7 @@ async function startNamedWorkflowFromCli(workflowName: string, options: RunComma
   // was supplied (which skips the defaultProfile lookup path).
   await loadBundleDir();
   if (workflowInput.hasInput) {
-    validateWorkflowRunInput(workflowInput.input);
+    validateTaskWorkflowInput(workflowInput.input);
   }
   const temporalConfig = temporalConfigFromOptions(options);
   const result = await startNamedTemporalWorkflow({

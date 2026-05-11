@@ -151,6 +151,19 @@ describe("interactionHook", () => {
       setInteractionPolicy({ mode: "interactive", max_reject_iterations: 2 });
       expect(resolveRejectCap()).toBe(2);
     });
+
+    it("rejects malformed standard interaction policies before a workflow can wait on them", () => {
+      expect(() => setInteractionPolicy({ mode: "bogus" } as never)).toThrow(/policies\.interaction\.mode/);
+      expect(() =>
+        setInteractionPolicy({ mode: "auto", max_reject_iterations: 2 })
+      ).toThrow(/only allowed when mode is 'interactive'/);
+      expect(() =>
+        setInteractionPolicy({ mode: "interactive", max_reject_iterations: 0 })
+      ).toThrow(/positive integer/);
+      expect(() =>
+        setInteractionPolicy({ mode: "interactive", extra: true } as never)
+      ).toThrow(/policies\.interaction\.extra is not a recognised key/);
+    });
   });
 
   describe("createTychonicInteraction", () => {

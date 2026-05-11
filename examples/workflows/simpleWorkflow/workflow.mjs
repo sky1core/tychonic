@@ -19,6 +19,7 @@ import {
   createTychonicInteraction,
   createTychonicRunState,
   latestStateByName,
+  promptWithAddition,
   validateTaskWorkflowInput
 } from "tychonic/workflow";
 import { validateLoopPolicy } from "./loopPolicy.mjs";
@@ -144,7 +145,7 @@ async function runMainPipeline(input, runState, publishRun, interaction) {
       ...(profile ? { profile } : {}),
       cwd: input.cwd,
       worktreePath,
-      prompt: input.goal ?? ""
+      prompt: promptWithAddition(input.goal ?? "", input, "work")
     })
   });
   run = workCall.run;
@@ -193,7 +194,7 @@ async function runMainPipeline(input, runState, publishRun, interaction) {
         ...(profile ? { profile } : {}),
         cwd: input.cwd,
         worktreePath,
-        prompt: buildReviewPrompt(currentRun, "initial work output"),
+        prompt: promptWithAddition(buildReviewPrompt(currentRun, "initial work output"), input, "review"),
         verificationCommands: verificationCommands(profile)
       })
     });

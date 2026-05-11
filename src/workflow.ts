@@ -80,6 +80,7 @@ export type {
   TaskWorkflowInputContract
 } from "./inputValidation.js";
 export { validateTaskWorkflowInput, derivePromptableStates } from "./inputValidation.js";
+import { validateTaskWorkflowInput } from "./inputValidation.js";
 import type { TychonicWorkflowRuntimeInput, TaskWorkflowInputContract } from "./inputValidation.js";
 
 export interface TychonicWorkflowRuntimeActivities {
@@ -98,7 +99,6 @@ export interface TychonicWorkflowRuntimeActivities {
   runReviewActivity?(input: Omit<ActivityInput<"review">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
   finalizeRunActivity(input: { run: WorkflowRunRecord; summary?: string }): Promise<ActivityResult>;
 }
-
 
 type TychonicAgentActivity = (input: {
   stateName: string;
@@ -178,6 +178,7 @@ export function createTychonicWorkflowContext(options: {
   interactionPolicy?: PolicyInteraction;
 }): TychonicWorkflowContext {
   const { input, template, activities } = options;
+  validateTaskWorkflowInput(input);
   const runState = createTychonicRunState();
   const interaction = createTychonicInteraction(
     options.interactionPolicy ?? (input.profile?.policies?.interaction as PolicyInteraction | undefined)
@@ -207,11 +208,12 @@ export function createTychonicWorkflowContext(options: {
     const feedbacks: string[] = [];
     let lastActivityResult: ActivityResult | undefined;
     while (true) {
+      const promptBase = promptWithAddition(basePrompt, input, stateName);
       const prompt = feedbacks.length > 0
-        ? `${basePrompt}\n\n[reviewer feedback from previous attempts]\n${feedbacks
+        ? `${promptBase}\n\n[reviewer feedback from previous attempts]\n${feedbacks
             .map((feedback, index) => `${index + 1}. ${feedback}`)
             .join("\n")}\n[/reviewer feedback]`
-        : basePrompt;
+        : promptBase;
 
       let result: ActivityResult;
       try {
@@ -256,6 +258,10 @@ export function createTychonicWorkflowContext(options: {
       }
       if (recovery?.kind === "result") {
         return recovery.result;
+      }
+      const stateAfterActivity = latestStateByName(requireRun(), stateName);
+      if (stateAfterActivity?.status === "blocked") {
+        return stateResult(stateName, true, stateAfterActivity.reason, lastActivityResult);
       }
 
       if (interaction.mode() === "interactive") {
@@ -470,6 +476,16 @@ export function createTychonicWorkflowContext(options: {
     finish,
     finishWaitingUser
   };
+}
+
+export function promptWithAddition(
+  basePrompt: string,
+  input: Pick<TychonicWorkflowRuntimeInput, "promptAdditions">,
+  stateName: string
+): string {
+  const addition = input.promptAdditions?.[stateName];
+  if (addition === undefined) return basePrompt;
+  return `${basePrompt}\n\n[operator additional instructions for ${stateName}]\n${addition}\n[/operator additional instructions]`;
 }
 
 function nowIso(): string {

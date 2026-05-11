@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -153,6 +154,7 @@ export async function runReviewActivityBody(
       timeoutMs,
       env,
       liveOutputPath,
+      outputCapture: "tail",
       stdin: prompt,
       onProgress: progress
     })
@@ -472,6 +474,7 @@ async function runReviewNormalizer(input: {
         cwd: normalizerCwd,
         timeoutMs: input.timeoutMs,
         env: input.env,
+        outputCapture: "tail",
         stdin: normalizerPrompt,
         onProgress: input.heartbeat
       })
@@ -587,7 +590,7 @@ type ReviewMutationSnapshot =
   | { supported: false }
   | {
       supported: true;
-      status: string;
+      fingerprint: string;
     };
 
 async function snapshotReviewMutationBoundary(
@@ -596,13 +599,18 @@ async function snapshotReviewMutationBoundary(
 ): Promise<ReviewMutationSnapshot> {
   try {
     await execGit(cwd, env, ["rev-parse", "--is-inside-work-tree"]);
-    const status = await execGit(cwd, env, [
-      "status",
-      "--porcelain=v1",
-      "--untracked-files=all",
-      "--ignored=no"
+    const trackedDiff = await execGit(cwd, env, [
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--binary",
+      "HEAD",
+      "--",
+      ".",
+      ":(exclude).tychonic/**"
     ]);
-    return { supported: true, status };
+    const untracked = await snapshotUntrackedFiles(cwd, env);
+    return { supported: true, fingerprint: JSON.stringify({ trackedDiff, untracked }) };
   } catch {
     return { supported: false };
   }
@@ -618,15 +626,50 @@ async function detectReviewMutation(
   if (!after.supported) {
     return "review mutation guard failed: git worktree became unavailable during review";
   }
-  if (after.status === before.status) return undefined;
+  if (after.fingerprint === before.fingerprint) return undefined;
   return [
     "review mutation guard failed: review changed the git worktree.",
     "Review states may inspect files and run checks, but must not modify source files.",
     "Before:",
-    before.status || "<clean>",
+    before.fingerprint,
     "After:",
-    after.status || "<clean>"
+    after.fingerprint
   ].join("\n");
+}
+
+async function snapshotUntrackedFiles(
+  cwd: string,
+  env: NodeJS.ProcessEnv | undefined
+): Promise<Array<{ path: string; kind: string; hash: string }>> {
+  const output = await execGit(cwd, env, [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ".",
+    ":(exclude).tychonic/**"
+  ]);
+  const paths = output.split("\0").filter((path) => path.length > 0).sort();
+  const entries: Array<{ path: string; kind: string; hash: string }> = [];
+  for (const path of paths) {
+    const fullPath = join(cwd, path);
+    const stat = await lstat(fullPath);
+    if (stat.isSymbolicLink()) {
+      entries.push({ path, kind: "symlink", hash: hashBuffer(Buffer.from(await readlink(fullPath))) });
+      continue;
+    }
+    if (stat.isFile()) {
+      entries.push({ path, kind: "file", hash: hashBuffer(await readFile(fullPath)) });
+      continue;
+    }
+    entries.push({ path, kind: "other", hash: String(stat.mode) });
+  }
+  return entries;
+}
+
+function hashBuffer(value: Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function execGit(

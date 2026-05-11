@@ -290,8 +290,6 @@ and fails the review if tracked files change during the review turn.
 - `architectBuilderFinalQaWorkflow`: Kiro-assisted build with Codex final QA.
 - `architectBuilderFirstReviewQaWorkflow`: Claude plans, Kiro builds and runs the
   first normalized review, then Codex performs final QA.
-- `architectBuilderReviewRepairQaWorkflow`: Kiro builds, pre-reviews, and repairs
-  before Codex final QA.
 - `structuralIssueDiscoveryWorkflow`: deterministic contract checks plus scoped
   Claude structural reviews and a finding-audit gate.
 

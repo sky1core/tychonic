@@ -2,7 +2,7 @@
 // structural reviews with an explicit finding audit gate.
 
 import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext, validateTaskWorkflowInput } from "tychonic/workflow";
+import { createTychonicWorkflowContext } from "tychonic/workflow";
 
 const act = proxyActivities({
   startToCloseTimeout: "24 hours",
@@ -60,7 +60,6 @@ npm run validate:examples`,
 };
 
 export async function structuralIssueDiscoveryWorkflow(input) {
-  validateTaskWorkflowInput(input);
   const reviewStateNames = new Set([
     "workflow_review",
     "adapter_review",
@@ -80,57 +79,41 @@ export async function structuralIssueDiscoveryWorkflow(input) {
 
   const workflowReview = await ctx.review(
     "workflow_review",
-    withPromptAddition(
-      workflowReviewInstructions({
-        goal: input.goal,
-        checkSummary,
-        priorFindings: findingsForReviewStates(ctx.run(), reviewStateNames)
-      }),
-      input,
-      "workflow_review"
-    )
+    workflowReviewInstructions({
+      goal: input.goal,
+      checkSummary,
+      priorFindings: findingsForReviewStates(ctx.run(), reviewStateNames)
+    })
   );
   if (workflowReview.halted) return ctx.finish(haltedSummary("workflow_review", workflowReview));
 
   const adapterReview = await ctx.review(
     "adapter_review",
-    withPromptAddition(
-      adapterReviewInstructions({
-        goal: input.goal,
-        checkSummary,
-        priorFindings: findingsForReviewStates(ctx.run(), reviewStateNames)
-      }),
-      input,
-      "adapter_review"
-    )
+    adapterReviewInstructions({
+      goal: input.goal,
+      checkSummary,
+      priorFindings: findingsForReviewStates(ctx.run(), reviewStateNames)
+    })
   );
   if (adapterReview.halted) return ctx.finish(haltedSummary("adapter_review", adapterReview));
 
   const docsReview = await ctx.review(
     "docs_review",
-    withPromptAddition(
-      docsReviewInstructions({
-        goal: input.goal,
-        checkSummary,
-        priorFindings: findingsForReviewStates(ctx.run(), reviewStateNames)
-      }),
-      input,
-      "docs_review"
-    )
+    docsReviewInstructions({
+      goal: input.goal,
+      checkSummary,
+      priorFindings: findingsForReviewStates(ctx.run(), reviewStateNames)
+    })
   );
   if (docsReview.halted) return ctx.finish(haltedSummary("docs_review", docsReview));
 
   const audit = await ctx.review(
     "finding_audit",
-    withPromptAddition(
-      findingAuditPrompt({
-        goal: input.goal,
-        checkSummary,
-        findings: findingsForReviewStates(ctx.run(), reviewStateNames)
-      }),
-      input,
-      "finding_audit"
-    )
+    findingAuditPrompt({
+      goal: input.goal,
+      checkSummary,
+      findings: findingsForReviewStates(ctx.run(), reviewStateNames)
+    })
   );
   if (audit.halted) return ctx.finish(haltedSummary("finding_audit", audit));
 
@@ -148,12 +131,6 @@ function summarizeChecks(checks) {
 
 function haltedSummary(stateName, result) {
   return result.summary ?? result.state?.reason ?? `${stateName} halted`;
-}
-
-function withPromptAddition(basePrompt, input, stateName) {
-  const addition = input.promptAdditions?.[stateName];
-  if (addition === undefined) return basePrompt;
-  return `${basePrompt}\n\n[operator additional instructions for ${stateName}]\n${addition}\n[/operator additional instructions]`;
 }
 
 function workflowReviewInstructions({ goal, checkSummary, priorFindings }) {
