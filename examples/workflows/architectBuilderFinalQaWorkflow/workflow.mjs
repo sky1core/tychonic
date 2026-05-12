@@ -86,6 +86,11 @@ function architectStageInstructions(goal) {
     "Goal:",
     goal || "(no explicit goal supplied; infer from the project state)",
     "",
+    "Before planning, inspect the target project's applicable rules,",
+    "specifications, and guardrails. Treat relevant constraints as part of",
+    "the plan input, and mention the constraints you applied in the plan.",
+    "Do not invent constraints that are not present.",
+    "",
     "Write a concrete implementation plan for the builder. Do not implement."
   ].join("\n");
 }
@@ -97,6 +102,11 @@ function builderStageInstructions({ cwd, runId, worktreePath }) {
     `Worktree: ${worktreePath}`,
     `Artifacts: ${cwd}/.tychonic/runs/${runId}/artifacts/`,
     "",
+    "Before editing, inspect the target project's applicable rules and",
+    "specifications. Follow relevant constraints while implementing, and",
+    "include the constraints you checked plus compliance status in your",
+    "final note.",
+    "",
     "Apply the plan as code changes and tests. Do not expand scope beyond the plan."
   ].join("\n");
 }
@@ -106,6 +116,12 @@ function qaStageInstructions({ cwd, runId, worktreePath }) {
     "You are the final Codex QA reviewer for this run.",
     `Check the builder output in ${worktreePath}.`,
     `Use artifacts under ${cwd}/.tychonic/runs/${runId}/artifacts/ as context.`,
+    "",
+    "Include compliance with the target project's applicable rules,",
+    "specifications, and guardrails in the review scope. Verify that the",
+    "goal, plan, implementation, and tests follow relevant constraints.",
+    "Findings for violations must identify the violated constraint and",
+    "concrete evidence.",
     "",
     "Report concrete correctness issues, regressions, missing tests, and risky assumptions.",
     "Return the structured pass/fail review verdict for this workflow."

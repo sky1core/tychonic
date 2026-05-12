@@ -283,6 +283,7 @@ function buildResumePrompt(run) {
     : "(no findings recorded)";
   return [
     "The previous review surfaced unresolved findings. Continue working on them in this same agent session.",
+    "Keep following the target project's applicable rules and specifications while resolving them.",
     "",
     "Findings:",
     findingLines
@@ -320,6 +321,10 @@ export function buildReviewPrompt(run, scope) {
     "",
     "Prior findings on this run (oldest first):",
     findingsLine,
+    "",
+    "Include compliance with the target project's applicable rules,",
+    "specifications, and guardrails in the review scope. Findings for",
+    "violations must identify the violated constraint and concrete evidence.",
     "",
     "Inspect the worktree, validate the worker's claimed result, and decide pass/fail.",
     "Report a semantic review verdict with status, summary, and findings.",

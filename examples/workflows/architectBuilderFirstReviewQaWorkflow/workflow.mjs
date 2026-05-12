@@ -108,6 +108,11 @@ function architectStageInstructions(goal) {
     "Goal:",
     goal || "(no explicit goal supplied; infer from the project state)",
     "",
+    "Before planning, inspect the target project's applicable rules,",
+    "specifications, and guardrails. Treat relevant constraints as part of",
+    "the plan input, and mention the constraints you applied in the plan.",
+    "Do not invent constraints that are not present.",
+    "",
     "Write a concrete implementation plan for the Kiro builder. Do not implement."
   ].join("\n");
 }
@@ -119,6 +124,11 @@ function builderStageInstructions({ cwd, runId, worktreePath }) {
     `Worktree: ${worktreePath}`,
     `Artifacts: ${cwd}/.tychonic/runs/${runId}/artifacts/`,
     "",
+    "Before editing, inspect the target project's applicable rules and",
+    "specifications. Follow relevant constraints while implementing, and",
+    "include the constraints you checked plus compliance status in your",
+    "final note.",
+    "",
     "Apply the architect plan as code changes and tests. Do not expand scope beyond the plan."
   ].join("\n");
 }
@@ -128,6 +138,12 @@ function firstReviewStageInstructions({ cwd, runId, worktreePath }) {
     "You are the first QA reviewer for this run.",
     `Review the Kiro builder output in ${worktreePath}.`,
     `Use artifacts under ${cwd}/.tychonic/runs/${runId}/artifacts/ as context.`,
+    "",
+    "Include compliance with the target project's applicable rules,",
+    "specifications, and guardrails in the review scope. Verify that the",
+    "goal, plan, implementation, and tests follow relevant constraints.",
+    "Findings for violations must identify the violated constraint and",
+    "concrete evidence.",
     "",
     "Filter out clear correctness issues before Codex final QA runs.",
     "Report concrete regressions, missing tests, unsafe assumptions, and scope drift.",
@@ -140,6 +156,12 @@ function finalQaStageInstructions({ cwd, runId, worktreePath }) {
     "You are the final Codex QA reviewer for this run.",
     `Check the final worktree in ${worktreePath}.`,
     `Use artifacts under ${cwd}/.tychonic/runs/${runId}/artifacts/ as context, including Kiro's first review.`,
+    "",
+    "Include compliance with the target project's applicable rules,",
+    "specifications, and guardrails in the review scope. Verify that the",
+    "goal, plan, implementation, first review result, and tests follow",
+    "relevant constraints. Findings for violations must identify the",
+    "violated constraint and concrete evidence.",
     "",
     "Report a semantic review verdict with status, summary, and findings.",
     "Each finding needs severity, title, and actionable detail.",

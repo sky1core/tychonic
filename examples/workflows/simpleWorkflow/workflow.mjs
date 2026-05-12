@@ -145,7 +145,7 @@ async function runMainPipeline(input, runState, publishRun, interaction) {
       ...(profile ? { profile } : {}),
       cwd: input.cwd,
       worktreePath,
-      prompt: promptWithAddition(input.goal ?? "", input, "work")
+      prompt: promptWithAddition(buildWorkPrompt(input.goal), input, "work")
     })
   });
   run = workCall.run;
@@ -230,6 +230,19 @@ function defaultActivities() {
     runVerify: runVerifyActivity,
     runReview: runReviewActivity
   };
+}
+
+function buildWorkPrompt(goal) {
+  return [
+    "Complete the requested work in the target project.",
+    "",
+    "Goal:",
+    goal || "(no explicit goal supplied; infer from the project state)",
+    "",
+    "Before editing, inspect the target project's applicable rules and",
+    "specifications. Follow relevant constraints while working, and include",
+    "the constraints you checked plus compliance status in your final note."
+  ].join("\n");
 }
 
 async function finalize(run, cwd, worktreePath, runState, summary) {

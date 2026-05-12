@@ -56,7 +56,7 @@ export async function pipelineWorkflow(input) {
 
   const work = await ctx.work(
     "work",
-    input.goal ?? ""
+    workPrompt(input.goal)
   );
   if (!work.passed) return ctx.finish("stage 1 work failed");
 
@@ -123,9 +123,26 @@ function structuredReviewPrompt(scope) {
   return [
     `Review ${scope} for correctness, regressions, missing tests, and risky assumptions.`,
     "",
+    "Include compliance with the target project's applicable rules,",
+    "specifications, and guardrails in the review scope. Findings for",
+    "violations must identify the violated constraint and concrete evidence.",
+    "",
     "Report a semantic review verdict with status, summary, and findings.",
     "Each finding needs severity, title, and actionable detail.",
     "Add target or target_session_id only when you can identify one.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
+  ].join("\n");
+}
+
+function workPrompt(goal) {
+  return [
+    "Complete the requested work in the target project.",
+    "",
+    "Goal:",
+    goal || "(no explicit goal supplied; infer from the project state)",
+    "",
+    "Before editing, inspect the target project's applicable rules and",
+    "specifications. Follow relevant constraints while working, and include",
+    "the constraints you checked plus compliance status in your final note."
   ].join("\n");
 }
