@@ -207,37 +207,41 @@ export async function describeTychonicTemporalWorkflow(
 ): Promise<TychonicTemporalWorkflowStatus> {
   const config = normalizeTemporalConfig(options);
   const connection = await Connection.connect({ address: config.address });
-  const client = new Client({ connection, namespace: config.namespace });
-  const handle = client.workflow.getHandle(options.workflowId, options.runId);
-  const description = await handle.describe();
-  const status = summarizeTemporalWorkflowDescription(description);
+  try {
+    const client = new Client({ connection, namespace: config.namespace });
+    const handle = client.workflow.getHandle(options.workflowId, options.runId);
+    const description = await handle.describe();
+    const status = summarizeTemporalWorkflowDescription(description);
 
-  if (!options.includeResult) {
-    return status;
-  }
-
-  if (status.status === "RUNNING") {
-    if (!shouldQueryRunningWorkflowState(status)) {
+    if (!options.includeResult) {
       return status;
     }
-    const queriedState = await queryTychonicWorkflowState(handle);
-    return {
-      ...status,
-      ...(queriedState.result ? { result: queriedState.result } : {}),
-      ...(queriedState.resultError ? { resultError: queriedState.resultError } : {})
-    };
-  }
 
-  try {
-    return {
-      ...status,
-      result: await handle.result()
-    };
-  } catch (error) {
-    return {
-      ...status,
-      resultError: error instanceof Error ? error.message : String(error)
-    };
+    if (status.status === "RUNNING") {
+      if (!shouldQueryRunningWorkflowState(status)) {
+        return status;
+      }
+      const queriedState = await queryTychonicWorkflowState(handle);
+      return {
+        ...status,
+        ...(queriedState.result ? { result: queriedState.result } : {}),
+        ...(queriedState.resultError ? { resultError: queriedState.resultError } : {})
+      };
+    }
+
+    try {
+      return {
+        ...status,
+        result: await handle.result()
+      };
+    } catch (error) {
+      return {
+        ...status,
+        resultError: error instanceof Error ? error.message : String(error)
+      };
+    }
+  } finally {
+    await connection.close();
   }
 }
 
@@ -465,29 +469,33 @@ export async function listTychonicTemporalWorkflows(
 ): Promise<TychonicTemporalWorkflowList> {
   const config = normalizeTemporalConfig(options);
   const connection = await Connection.connect({ address: config.address });
-  const client = new Client({ connection, namespace: config.namespace });
-  const limit = Math.max(1, options.limit ?? 20);
-  const workflows: TychonicTemporalWorkflowSummary[] = [];
+  try {
+    const client = new Client({ connection, namespace: config.namespace });
+    const limit = Math.max(1, options.limit ?? 20);
+    const workflows: TychonicTemporalWorkflowSummary[] = [];
 
-  for await (const info of client.workflow.list({
-    pageSize: Math.max(limit, 1),
-    ...(options.query ? { query: options.query } : {})
-  })) {
-    if (!options.query && !isTychonicWorkflow(info)) {
-      continue;
+    for await (const info of client.workflow.list({
+      pageSize: Math.max(limit, 1),
+      ...(options.query ? { query: options.query } : {})
+    })) {
+      if (!options.query && !isTychonicWorkflow(info)) {
+        continue;
+      }
+      workflows.push(summarizeTemporalWorkflowInfo(info));
+      if (workflows.length >= limit) {
+        break;
+      }
     }
-    workflows.push(summarizeTemporalWorkflowInfo(info));
-    if (workflows.length >= limit) {
-      break;
-    }
+
+    return {
+      address: config.address,
+      namespace: config.namespace,
+      taskQueue: config.taskQueue,
+      workflows
+    };
+  } finally {
+    await connection.close();
   }
-
-  return {
-    address: config.address,
-    namespace: config.namespace,
-    taskQueue: config.taskQueue,
-    workflows
-  };
 }
 
 export function summarizeTemporalWorkflowDescription(

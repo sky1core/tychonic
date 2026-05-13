@@ -52,6 +52,7 @@ describe("documentation consistency", () => {
       "src/runtime/SPEC.md",
       "src/service/SPEC.md",
       "src/storage/SPEC.md",
+      "src/web/SPEC.md",
       "examples/workflows/SPEC.md"
     ];
 

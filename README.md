@@ -36,7 +36,9 @@ default workflow profile that should be reused unchanged.
 - Temporal CLI on `PATH`
 - Installed and authenticated agent CLIs for the agents your workflow uses
 
-Tychonic does not currently ship a public web UI/API surface. Use the CLI.
+Tychonic does not ship a public web UI/API surface. The CLI is the primary
+machine interface. A local-only workflow status UI is available with
+`tychonic web` for single-operator inspection on the same machine.
 
 ## Install
 
@@ -158,6 +160,15 @@ tychonic sessions --workflow-id <id>
 
 Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
 it returns the evidence needed to decide the next operator action.
+
+To inspect the same workflow status in a browser, start the local UI:
+
+```sh
+tychonic web
+```
+
+The command binds to `127.0.0.1` by default and serves a local status view over
+Temporal-backed workflow summaries. It is not a team service or public API.
 
 After the no-agent smoke passes, install an agent workflow such as
 `simpleWorkflow`. Its `defaultProfile` uses external agent CLIs and verifies

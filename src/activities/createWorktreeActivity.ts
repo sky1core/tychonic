@@ -10,6 +10,7 @@ export interface CreateWorktreeActivityResult {
   worktreePath: string;
   mode: "git_worktree" | "directory_copy_no_head";
   reason: string;
+  baseHead: string;
 }
 
 /**
@@ -30,6 +31,7 @@ export async function createWorktreeActivity(
   return {
     worktreePath: isolated.path,
     mode: isolated.mode,
-    reason: isolated.reason
+    reason: isolated.reason,
+    baseHead: isolated.baseHead
   };
 }

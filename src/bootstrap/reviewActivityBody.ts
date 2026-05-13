@@ -599,6 +599,7 @@ async function snapshotReviewMutationBoundary(
 ): Promise<ReviewMutationSnapshot> {
   try {
     await execGit(cwd, env, ["rev-parse", "--is-inside-work-tree"]);
+    const head = await execGit(cwd, env, ["rev-parse", "HEAD"]);
     const trackedDiff = await execGit(cwd, env, [
       "diff",
       "--no-ext-diff",
@@ -610,7 +611,7 @@ async function snapshotReviewMutationBoundary(
       ":(exclude).tychonic/**"
     ]);
     const untracked = await snapshotUntrackedFiles(cwd, env);
-    return { supported: true, fingerprint: JSON.stringify({ trackedDiff, untracked }) };
+    return { supported: true, fingerprint: JSON.stringify({ head, trackedDiff, untracked }) };
   } catch {
     return { supported: false };
   }

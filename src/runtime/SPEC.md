@@ -27,9 +27,10 @@ files. macOS defaults are:
 - logs: `~/Library/Logs/Tychonic`
 - LaunchAgents: `~/Library/LaunchAgents/com.tychonic.*.plist`
 
-Project `.tychonic/` files may hold artifacts, live output, patches, temporary
-worktrees, and rebuildable projections. They must not become workflow state
-databases.
+Project `.tychonic/` files may hold artifacts, live output, patches, and
+rebuildable projections. Temporary worktrees live outside the project tree under
+`/tmp` so repo-local inspection and review do not traverse accumulated worker
+checkouts. Project `.tychonic/` files must not become workflow state databases.
 
 ## Isolated Dev Instances
 

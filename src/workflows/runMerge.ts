@@ -18,7 +18,7 @@ import type { ActivityResult, StateRecordPatch } from "../temporal/types.js";
  * An activity call returns:
  * - `result.delta` — changes to `states`, `activity_attempts`, `facts`,
  *   `status`, `summary` (merged by `applyRunDelta`).
- * - `result.reviewOutcome`, `result.commandOutcome`, `result.workerOutcome`
+ * - `result.reviewOutcome`, `result.commandOutcome`, `result.cleanupOutcome`, `result.workerOutcome`
  *   — TYPE-specific payloads carrying `ArtifactRecord` / `AgentSessionRecord`
  *   that the caller appends to `run.artifacts` / `run.agent_sessions`. The
  *   body never pushes into `input.run` itself (src/activities/SPEC.md §Activity Result And
@@ -38,6 +38,13 @@ export function applyActivityResult(
     next = {
       ...next,
       artifacts: [...next.artifacts, result.commandOutcome.artifact]
+    };
+  }
+
+  if (result.cleanupOutcome) {
+    next = {
+      ...next,
+      artifacts: [...next.artifacts, ...result.cleanupOutcome.artifacts]
     };
   }
 

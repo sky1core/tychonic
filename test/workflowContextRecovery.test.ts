@@ -63,7 +63,8 @@ const {
   interactionRejectStateSignalName,
   interactionModifyStateSignalName,
   interactionPendingStateQueryName,
-  interactionRerunStateSignalName
+  interactionRerunStateSignalName,
+  tychonicWorkflowStateQueryName
 } = await import("../src/temporal/types.js");
 
 describe("Tychonic workflow context recoverable state rerun", () => {
@@ -182,6 +183,52 @@ describe("Tychonic workflow context recoverable state rerun", () => {
         }
       })
     ).toThrow(/cwd must be a non-empty string/);
+  });
+
+  it("does not publish terminal status before worktree cleanup finishes", async () => {
+    let releaseCleanup!: () => void;
+    let cleanupStarted = false;
+    const cleanupWorktreeActivity = vi.fn(async (): Promise<ActivityResult & { cleaned: true }> => {
+      cleanupStarted = true;
+      await new Promise<void>((resolve) => {
+        releaseCleanup = resolve;
+      });
+      return { cleaned: true, delta: {}, cleanupOutcome: { artifacts: [] } };
+    });
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {},
+          policies: {}
+        }
+      },
+      template: "cleanup_publish_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        createWorktreeActivity: async () => ({
+          worktreePath: "/tmp/tychonic-worktree-run_recovery-test/worktree",
+          baseHead: "0123456789abcdef0123456789abcdef01234567"
+        }),
+        cleanupWorktreeActivity,
+        finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+      }
+    });
+
+    await ctx.start();
+    await ctx.createWorktree();
+    const pending = ctx.finish();
+    await flushMicrotasks();
+
+    expect(cleanupStarted).toBe(true);
+    expect((runQuery(tychonicWorkflowStateQueryName) as any).status).toBe("running");
+
+    releaseCleanup();
+    await expect(pending).resolves.toMatchObject({ status: "succeeded" });
+    const published = runQuery(tychonicWorkflowStateQueryName) as any;
+    expect(published.status).toBe("succeeded");
+    expect(published.worktreePath).toBeUndefined();
   });
 
   it("does not offer rerun recovery for an ordinary failed verify result", async () => {

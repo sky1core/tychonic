@@ -116,7 +116,7 @@ function fakeResult(cwd: string): TychonicWorkflowResult {
     runId: "run_temporal_view",
     status: "waiting_user",
     artifactRoot: join(cwd, ".tychonic", "runs", "run_temporal_view"),
-    worktreePath: join(cwd, ".tychonic", "worktrees", "run_temporal_view"),
+    worktreePath: join("/tmp", "tychonic-worktree-run_temporal_view-fixture", "worktree"),
     run: {
       schema_version: "tychonic.run.v1",
       id: "run_temporal_view",

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import type { Server } from "node:http";
 import { Command, Option } from "commander";
 import { stringify } from "yaml";
 import {
@@ -59,6 +60,7 @@ import type { WorkflowStateRecord } from "../domain/types.js";
 import { TemporalManager, tychonicRuntimeDirs, type TemporalConfig } from "../temporal/manager.js";
 import type { StateRecordPatch } from "../temporal/types.js";
 import { buildWorkflowBundle, runTemporalWorker } from "../temporal/worker.js";
+import { startStatusUiServer } from "../web/statusUiServer.js";
 import { join as pathJoin } from "node:path";
 import {
   installRuntimeWorkflowModule,
@@ -739,6 +741,45 @@ program
           2
         )
       );
+    }
+  );
+
+program
+  .command("web")
+  .option("--host <host>", "local bind host", "127.0.0.1")
+  .option("--port <port>", "local status UI port", (value) => Number(value), 19733)
+  .option("--static-dir <dir>", "status UI static asset directory")
+  .addOption(hiddenTemporalModeOption())
+  .addOption(hiddenTemporalPortOption())
+  .addOption(hiddenTemporalAddressOption())
+  .addOption(hiddenTemporalNamespaceOption())
+  .addOption(hiddenTemporalTaskQueueOption())
+  .description("Start the local workflow status UI")
+  .action(
+    async (options: TemporalCliOptions & { host: string; port: number; staticDir?: string }) => {
+      if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
+        throw new Error("--port must be an integer between 1 and 65535");
+      }
+      const handle = await startStatusUiServer({
+        uiHost: options.host,
+        uiPort: options.port,
+        ...(options.staticDir ? { staticDir: resolveAbsolute(options.staticDir) } : {}),
+        ...temporalConfigFromOptions(options)
+      });
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            message: `Tychonic status UI listening at ${handle.url}`,
+            url: handle.url,
+            staticDir: handle.staticDir,
+            _meta: cliInstanceMeta()
+          },
+          null,
+          2
+        )
+      );
+      await waitForServerCloseSignal(handle.server);
     }
   );
 
@@ -1480,6 +1521,18 @@ async function loadTemporalWorkflowResult(options: RequiredTemporalResultCommand
   }
   assertTychonicWorkflowResult(workflow.result);
   return workflow.result;
+}
+
+async function waitForServerCloseSignal(server: Server): Promise<void> {
+  await new Promise<void>((resolveClose) => {
+    const close = (): void => {
+      process.off("SIGINT", close);
+      process.off("SIGTERM", close);
+      server.close(() => resolveClose());
+    };
+    process.once("SIGINT", close);
+    process.once("SIGTERM", close);
+  });
 }
 
 function workflowsBundleDirName(directory: string): string {

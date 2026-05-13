@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { access, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { startRunActivity } from "../src/activities/startRunActivity.js";
 import { collectGitFactsActivity } from "../src/activities/collectGitFactsActivity.js";
+import { cleanupWorktreeActivity } from "../src/activities/cleanupWorktreeActivity.js";
 import { createWorktreeActivity } from "../src/activities/createWorktreeActivity.js";
 import { finalizeRunActivity } from "../src/activities/finalizeRunActivity.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
@@ -103,10 +105,87 @@ describe("bootstrap activities", () => {
 
       const run = baseRun("run_wt_1");
       const result = await createWorktreeActivity({ run, cwd });
-      expect(result.worktreePath).toBe(join(cwd, ".tychonic", "worktrees", run.id));
+      expect(result.worktreePath).toMatch(/tychonic-worktree-run_wt_1-.+[\\/]worktree$/);
+      expect((await realpath(result.worktreePath)).startsWith(`${realpathSync("/tmp")}/`)).toBe(true);
+      await expect(access(join(cwd, ".tychonic", "worktrees", run.id))).rejects.toThrow();
       expect(result.mode).toBe("git_worktree");
+      expect(result.baseHead).toMatch(/[0-9a-f]{40}/);
       const entries = await readdir(result.worktreePath);
       expect(entries).toContain("seed.txt");
+    });
+  });
+
+  describe("cleanupWorktreeActivity", () => {
+    it("removes a Tychonic-created worktree path", async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-activity-"));
+      await execFileAsync("git", ["init"], { cwd });
+      await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+      await execFileAsync("git", ["add", "seed.txt"], { cwd });
+      await execFileAsync(
+        "git",
+        ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+        { cwd }
+      );
+
+      const run = baseRun("run_wt_cleanup");
+      const created = await createWorktreeActivity({ run, cwd });
+      const worktreeRoot = dirname(created.worktreePath);
+      await writeFile(join(created.worktreePath, "seed.txt"), "changed\n", "utf8");
+      const cleanup = await cleanupWorktreeActivity({
+        run,
+        cwd,
+        worktreePath: created.worktreePath,
+        baseHead: created.baseHead
+      });
+
+      await expect(access(created.worktreePath)).rejects.toThrow();
+      await expect(access(worktreeRoot)).rejects.toThrow();
+      expect(cleanup.cleanupOutcome.artifacts).toHaveLength(1);
+      const patchPath = join(cwd, cleanup.cleanupOutcome.artifacts[0]?.path ?? "");
+      await expect(readFile(patchPath, "utf8")).resolves.toContain("+changed");
+      const retryCleanup = await cleanupWorktreeActivity({
+        run,
+        cwd,
+        worktreePath: created.worktreePath,
+        baseHead: created.baseHead
+      });
+      expect(retryCleanup.cleanupOutcome.artifacts).toHaveLength(1);
+      expect(retryCleanup.cleanupOutcome.artifacts[0]?.path).toBe(cleanup.cleanupOutcome.artifacts[0]?.path);
+      const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
+        cwd,
+        encoding: "utf8"
+      });
+      expect(stdout).not.toContain(created.worktreePath);
+      expect(stdout).not.toContain(run.id);
+    });
+
+    it("rejects non-Tychonic paths before staging a patch", async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "ordinary-worktree-"));
+      await execFileAsync("git", ["init"], { cwd });
+      await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+      await execFileAsync("git", ["add", "seed.txt"], { cwd });
+      await execFileAsync(
+        "git",
+        ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+        { cwd }
+      );
+      const { stdout: baseHead } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" });
+      await writeFile(join(cwd, "seed.txt"), "changed\n", "utf8");
+
+      await expect(
+        cleanupWorktreeActivity({
+          run: baseRun("run_reject_cleanup"),
+          cwd,
+          worktreePath: cwd,
+          baseHead: baseHead.trim()
+        })
+      ).rejects.toThrow(/refusing to remove non-Tychonic worktree path/);
+
+      const { stdout } = await execFileAsync("git", ["diff", "--cached", "--name-only"], {
+        cwd,
+        encoding: "utf8"
+      });
+      expect(stdout).toBe("");
     });
   });
 

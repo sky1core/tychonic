@@ -1,0 +1,987 @@
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react"
+import {
+  Background,
+  Controls,
+  MarkerType,
+  Position,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeMouseHandler,
+} from "@xyflow/react"
+import {
+  AlertCircleIcon,
+  ArrowLeftIcon,
+  ClockIcon,
+  FileTextIcon,
+  InboxIcon,
+  ListRestartIcon,
+  RefreshCcwIcon,
+  SearchXIcon,
+  TerminalIcon,
+  TimerIcon,
+  UserRoundIcon,
+} from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
+
+type WorkflowSummary = {
+  workflowId: string
+  runId: string
+  type: string
+  taskQueue: string
+  status: string
+  historyLength?: number
+  startTime: string
+  executionTime?: string
+  closeTime?: string
+}
+
+type WorkflowStateRecord = {
+  id: string
+  name: string
+  status: string
+  reason: string
+  activity_attempt_ids: string[]
+  artifact_ids: string[]
+  finding_ids: string[]
+  started_at?: string
+  finished_at?: string
+}
+
+type WorkflowEvidence = {
+  runId: string
+  template: string
+  status: string
+  summary?: string
+  latest_state?: WorkflowStateRecord
+  states: WorkflowStateRecord[]
+  counts: Record<"states" | "attempts" | "artifacts" | "logs" | "inbox" | "sessions" | "findings", number>
+  inbox: Array<{
+    id: string
+    status: string
+    title: string
+    detail: string
+    created_at: string
+  }>
+  artifacts: Array<{
+    id: string
+    kind: string
+    path: string
+    created_at: string
+    read_command: string
+  }>
+  logs: Array<{
+    id: string
+    state_name?: string
+    kind: string
+    status: string
+    reason: string
+    duration_ms?: number
+    read_command: string
+  }>
+  sessions: Array<{
+    id: string
+    agent: string
+    role: string
+    status: string
+    resumable?: boolean
+    started_at: string
+    finished_at?: string
+  }>
+  findings: Array<{
+    id: string
+    status: string
+    severity: string
+    title: string
+    detail: string
+    target?: string
+    created_at: string
+  }>
+  timing: {
+    run_ms?: number
+    activity_ms: number
+    non_activity_ms?: number
+    activity_count: number
+    by_kind: Array<{ kind: string; count: number; duration_ms: number }>
+    slowest_attempts: Array<{
+      id: string
+      state_name?: string
+      kind: string
+      status: string
+      duration_ms: number
+    }>
+  }
+}
+
+type WorkflowDetail = {
+  ok: boolean
+  request: {
+    workflowId: string
+    runId: string
+  }
+  workflow: WorkflowSummary & {
+    pendingActivityCount?: number
+    pendingActivities?: unknown[]
+    resultError?: string
+  }
+  evidence?: WorkflowEvidence
+  evidenceError?: string
+  error?: string
+}
+
+type WorkflowList = {
+  ok: boolean
+  address: string
+  namespace: string
+  taskQueue: string
+  workflows: WorkflowSummary[]
+  error?: string
+}
+
+type BadgeTone = "default" | "secondary" | "destructive" | "outline"
+
+const statusTone: Record<string, BadgeTone> = {
+  RUNNING: "default",
+  running: "default",
+  succeeded: "secondary",
+  COMPLETED: "secondary",
+  failed: "destructive",
+  FAILED: "destructive",
+  blocked: "destructive",
+  timed_out: "destructive",
+  TIMED_OUT: "destructive",
+  TERMINATED: "destructive",
+  waiting_user: "outline",
+  cancelled: "outline",
+  CANCELED: "outline",
+  CONTINUED_AS_NEW: "outline",
+}
+
+const findingSeverityTone: Record<string, BadgeTone> = {
+  blocker: "destructive",
+  critical: "destructive",
+  high: "destructive",
+  medium: "default",
+  low: "secondary",
+  info: "outline",
+}
+
+const inboxStatusTone: Record<string, BadgeTone> = {
+  open: "destructive",
+  pending: "default",
+  waiting: "default",
+  waiting_user: "default",
+  resolved: "secondary",
+  closed: "secondary",
+  dismissed: "outline",
+}
+
+function App() {
+  const selectedRunRef = useRef<{ workflowId?: string; runId?: string }>({})
+  const detailRequestSeqRef = useRef(0)
+  const selectedStateRunRef = useRef<string | undefined>(undefined)
+  const [workflowList, setWorkflowList] = useState<WorkflowList>()
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>()
+  const [selectedRunId, setSelectedRunId] = useState<string>()
+  const [selectedStateId, setSelectedStateId] = useState<string>()
+  const [workflowDetail, setWorkflowDetail] = useState<WorkflowDetail>()
+  const [activeView, setActiveView] = useState<"runs" | "detail">("runs")
+  const [listLoading, setListLoading] = useState(true)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [error, setError] = useState<string>()
+  const selectedWorkflow = workflowList?.workflows.find(
+    (workflow) => workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId,
+  )
+
+  function applySelection(selection: { workflowId: string; runId: string } | undefined) {
+    const previous = selectedRunRef.current
+    if (previous.workflowId !== selection?.workflowId || previous.runId !== selection?.runId) {
+      detailRequestSeqRef.current += 1
+      setWorkflowDetail(undefined)
+    }
+    selectedRunRef.current = selection ?? {}
+    setSelectedWorkflowId(selection?.workflowId)
+    setSelectedRunId(selection?.runId)
+  }
+
+  async function loadWorkflows(nextSelection?: { workflowId: string; runId: string }, reloadCurrentDetail = false) {
+    setListLoading(true)
+    setError(undefined)
+    try {
+      const response = await fetch("/api/workflows?limit=30")
+      const body = (await response.json()) as WorkflowList
+      if (!response.ok || !body.ok) {
+        throw new Error(body.error ?? `workflow list request failed with ${response.status}`)
+      }
+      setWorkflowList(body)
+      const explicitSelection = nextSelection
+      const currentRunSelection = selectedRunRef.current
+      const currentSelection =
+        currentRunSelection.workflowId && currentRunSelection.runId
+          ? { workflowId: currentRunSelection.workflowId, runId: currentRunSelection.runId }
+          : undefined
+      const currentSelectionInList = currentSelection
+        ? body.workflows.some(
+            (workflow) =>
+              workflow.workflowId === currentSelection.workflowId && workflow.runId === currentSelection.runId,
+          )
+        : false
+      const next =
+        explicitSelection ??
+        (currentSelectionInList ? currentSelection : undefined)
+      const selectionChanged = next?.workflowId !== currentSelection?.workflowId || next?.runId !== currentSelection?.runId
+      applySelection(next)
+      if (!next) {
+        setWorkflowDetail(undefined)
+        setDetailLoading(false)
+        setActiveView("runs")
+      } else if (reloadCurrentDetail && !selectionChanged) {
+        await loadWorkflowDetail(next.workflowId, next.runId)
+      }
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError))
+    } finally {
+      setListLoading(false)
+    }
+  }
+
+  async function loadWorkflowDetail(workflowId: string, runId: string) {
+    const requestSeq = detailRequestSeqRef.current + 1
+    detailRequestSeqRef.current = requestSeq
+    setDetailLoading(true)
+    setError(undefined)
+    setWorkflowDetail((current) =>
+      current?.request.workflowId === workflowId && current.request.runId === runId ? current : undefined,
+    )
+    try {
+      const response = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}?runId=${encodeURIComponent(runId)}`)
+      const body = (await response.json()) as WorkflowDetail
+      if (!response.ok || !body.ok) {
+        throw new Error(body.error ?? `workflow detail request failed with ${response.status}`)
+      }
+      const currentSelection = selectedRunRef.current
+      if (currentSelection.workflowId !== workflowId || currentSelection.runId !== runId) {
+        return
+      }
+      if (detailRequestSeqRef.current !== requestSeq) {
+        return
+      }
+      setWorkflowDetail({ ...body, request: { workflowId, runId } })
+    } catch (loadError) {
+      const currentSelection = selectedRunRef.current
+      if (
+        currentSelection.workflowId === workflowId &&
+        currentSelection.runId === runId &&
+        detailRequestSeqRef.current === requestSeq
+      ) {
+        setWorkflowDetail(undefined)
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      }
+    } finally {
+      if (detailRequestSeqRef.current === requestSeq) {
+        setDetailLoading(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      setListLoading(true)
+      setError(undefined)
+      try {
+        const response = await fetch("/api/workflows?limit=30")
+        const body = (await response.json()) as WorkflowList
+        if (!response.ok || !body.ok) {
+          throw new Error(body.error ?? `workflow list request failed with ${response.status}`)
+        }
+        if (!active) return
+        setWorkflowList(body)
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : String(loadError))
+      } finally {
+        if (active) setListLoading(false)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!selectedWorkflowId || !selectedRunId) return
+    void loadWorkflowDetail(selectedWorkflowId, selectedRunId)
+  }, [selectedWorkflowId, selectedRunId])
+
+  const workflowDetailWorkflowId = workflowDetail?.request.workflowId
+  const workflowDetailRunId = workflowDetail?.request.runId
+  const workflowDetailStates = workflowDetail?.evidence?.states
+
+  useEffect(() => {
+    const runKey = workflowDetailWorkflowId && workflowDetailRunId ? `${workflowDetailWorkflowId}:${workflowDetailRunId}` : undefined
+    const states = workflowDetailStates ?? []
+    const runChanged = selectedStateRunRef.current !== runKey
+    selectedStateRunRef.current = runKey
+    if (!runKey || states.length === 0) {
+      setSelectedStateId(undefined)
+      return
+    }
+    setSelectedStateId((current) => {
+      if (!runChanged && current && states.some((state) => state.id === current)) {
+        return current
+      }
+      return states[states.length - 1]?.id
+    })
+  }, [workflowDetailWorkflowId, workflowDetailRunId, workflowDetailStates])
+
+  const stateGraph = useMemo(() => workflowStateGraph(workflowDetail?.evidence?.states ?? []), [workflowDetail])
+  const selectedState = useMemo(
+    () => workflowDetail?.evidence?.states.find((state) => state.id === selectedStateId),
+    [selectedStateId, workflowDetail],
+  )
+  const workflows = useMemo(() => workflowList?.workflows ?? [], [workflowList])
+  const onStateNodeClick: NodeMouseHandler = (_, node) => {
+    setSelectedStateId(node.id)
+  }
+  function openWorkflow(workflow: WorkflowSummary) {
+    const currentSelection = selectedRunRef.current
+    const sameSelection = currentSelection.workflowId === workflow.workflowId && currentSelection.runId === workflow.runId
+    applySelection({ workflowId: workflow.workflowId, runId: workflow.runId })
+    setActiveView("detail")
+    if (sameSelection) {
+      void loadWorkflowDetail(workflow.workflowId, workflow.runId)
+    }
+  }
+
+  return (
+    <TooltipProvider>
+      <main className="grid min-h-dvh grid-rows-[auto_1fr] bg-background text-foreground">
+        <header className="border-b bg-card">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
+            <div className="flex min-w-0 flex-col gap-1">
+              <h1 className="truncate text-xl font-semibold">Tychonic Workflows</h1>
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>{workflowList ? workflowList.address : "Temporal connection pending"}</span>
+                {workflowList ? <Badge variant="outline">{workflowList.taskQueue}</Badge> : null}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={() => void loadWorkflows(undefined, true)}
+                    disabled={listLoading || detailLoading}
+                  >
+                    <RefreshCcwIcon data-icon="inline-start" />
+                    Refresh
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Reload workflow list and selected evidence</TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
+        </header>
+
+        <section
+          className={cn(
+            "mx-auto w-full max-w-7xl px-4 py-4 md:px-6",
+            activeView === "detail" ? "grid grid-cols-1 gap-4 md:grid-cols-[360px_minmax(0,1fr)]" : "flex flex-col gap-4",
+          )}
+        >
+          {activeView === "runs" ? (
+            <>
+              {error ? (
+                <Alert variant="destructive">
+                  <AlertCircleIcon />
+                  <AlertTitle>Status UI error</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recent Runs</CardTitle>
+                  <CardDescription>{workflowList ? `${workflowList.workflows.length} workflows` : "Loading workflows"}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {listLoading ? (
+                    <div className="flex flex-col gap-3">
+                      <Skeleton className="h-12 w-full" />
+                      <Skeleton className="h-12 w-full" />
+                      <Skeleton className="h-12 w-full" />
+                    </div>
+                  ) : workflowList && workflows.length === 0 ? (
+                    <Empty>
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <SearchXIcon />
+                        </EmptyMedia>
+                        <EmptyTitle>No workflows</EmptyTitle>
+                        <EmptyDescription>Temporal did not return Tychonic workflow executions.</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : !workflowList ? (
+                    <Empty>
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <AlertCircleIcon />
+                        </EmptyMedia>
+                        <EmptyTitle>Workflow list unavailable</EmptyTitle>
+                        <EmptyDescription>Check the status UI error above, then refresh the workflow list.</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : (
+                    <ScrollArea className="h-[calc(100dvh-260px)] min-h-[420px]">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Execution</TableHead>
+                            <TableHead>Workflow</TableHead>
+                            <TableHead>Task Queue</TableHead>
+                            <TableHead>Started</TableHead>
+                            <TableHead>Duration</TableHead>
+                            <TableHead>History</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {workflows.map((workflow) => (
+                            <TableRow key={`${workflow.workflowId}:${workflow.runId}`}>
+                              <TableCell className="w-[150px]">{statusBadgeCell(workflow.status)}</TableCell>
+                              <TableCell className="max-w-[420px]">
+                                <Button
+                                  variant="ghost"
+                                  className="h-auto w-full justify-start px-2 py-2 text-left"
+                                  onClick={() => openWorkflow(workflow)}
+                                >
+                                  <div className="flex min-w-0 flex-col gap-1">
+                                    <span className="truncate font-medium">{workflow.type}</span>
+                                    <span className="truncate text-xs text-muted-foreground">{workflow.workflowId}</span>
+                                  </div>
+                                </Button>
+                              </TableCell>
+                              <TableCell>{workflow.taskQueue}</TableCell>
+                              <TableCell>{formatDate(workflow.startTime)}</TableCell>
+                              <TableCell>{formatWorkflowDuration(workflow)}</TableCell>
+                              <TableCell>{workflow.historyLength !== undefined ? workflow.historyLength : "not reported"}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </ScrollArea>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <>
+              <Card className="min-h-[420px]">
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <CardTitle>Recent Runs</CardTitle>
+                      <CardDescription>{workflowList ? `${workflowList.workflows.length} workflows` : "Loading workflows"}</CardDescription>
+                    </div>
+                    <Button variant="outline" onClick={() => setActiveView("runs")}>
+                      <ArrowLeftIcon data-icon="inline-start" />
+                      Runs
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {listLoading ? (
+                    <div className="flex flex-col gap-3">
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
+                    </div>
+                  ) : workflowList && workflowList.workflows.length === 0 ? (
+                    <Empty>
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <SearchXIcon />
+                        </EmptyMedia>
+                        <EmptyTitle>No workflows</EmptyTitle>
+                        <EmptyDescription>Temporal did not return Tychonic workflow executions.</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : (
+                    <ScrollArea className="h-[calc(100dvh-260px)] min-h-[320px]">
+                      <div className="flex flex-col gap-2 pr-3">
+                        {workflowList?.workflows.map((workflow) => {
+                          const selected = workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId
+                          return (
+                            <Button
+                              key={`${workflow.workflowId}:${workflow.runId}`}
+                              variant={selected ? "secondary" : "ghost"}
+                              className="h-auto justify-start px-3 py-3 text-left"
+                              onClick={() => openWorkflow(workflow)}
+                            >
+                              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                                <div className="flex min-w-0 items-center justify-between gap-2">
+                                  <span className="truncate font-medium">{workflow.type}</span>
+                                  <Badge variant={statusTone[workflow.status] ?? "outline"}>{workflow.status}</Badge>
+                                </div>
+                                <span className="truncate text-xs text-muted-foreground">{workflow.workflowId}</span>
+                                <span className="text-xs text-muted-foreground">{formatDate(workflow.startTime)}</span>
+                              </div>
+                            </Button>
+                          )
+                        })}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="flex min-w-0 flex-col gap-4">
+            {error ? (
+              <Alert variant="destructive">
+                <AlertCircleIcon />
+                <AlertTitle>Status UI error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {!selectedWorkflow ? (
+              <Card>
+                <CardContent>
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <InboxIcon />
+                      </EmptyMedia>
+                      <EmptyTitle>Select a workflow</EmptyTitle>
+                      <EmptyDescription>Choose a run from the recent workflow list.</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <Card>
+                  <CardHeader>
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="flex min-w-0 flex-col gap-2">
+                        <CardTitle className="truncate">{selectedWorkflow.type}</CardTitle>
+                        <CardDescription className="truncate">{selectedWorkflow.workflowId}</CardDescription>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {statusBadgeCell(workflowDetail?.workflow.status ?? selectedWorkflow.status)}
+                        {workflowDetail?.evidence ? (
+                          <Badge variant={statusTone[workflowDetail.evidence.status] ?? "outline"}>
+                            {workflowDetail.evidence.status}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {detailLoading ? (
+                      <div className="flex flex-col gap-3">
+                        <Skeleton className="h-8 w-full" />
+                        <Skeleton className="h-[420px] w-full" />
+                      </div>
+                    ) : (
+                      <div className="flex min-w-0 flex-col gap-4">
+                        <div className="flex min-w-0 flex-col gap-3">
+                          <p className="text-sm text-muted-foreground">
+                            {workflowDetail?.evidence?.summary !== undefined
+                              ? workflowDetail.evidence.summary
+                              : workflowDetail?.workflow.resultError !== undefined
+                                ? workflowDetail.workflow.resultError
+                                : "No workflow evidence summary is available yet."}
+                          </p>
+                          <Separator />
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            {workflowDetail?.evidence
+                              ? Object.entries(workflowDetail.evidence.counts).map(([key, value]) => (
+                                  <div key={key} className="rounded-md border p-3">
+                                    <div className="text-xs text-muted-foreground">{key}</div>
+                                    <div className="text-lg font-semibold">{value}</div>
+                                  </div>
+                                ))
+                              : null}
+                          </div>
+                        </div>
+
+                        <Separator />
+
+                        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+                          {workflowDetail?.evidence && workflowDetail.evidence.states.length > 0 ? (
+                            <div className="h-[420px] min-w-0 overflow-hidden rounded-md border">
+                              <ReactFlow
+                                nodes={stateGraph.nodes}
+                                edges={stateGraph.edges}
+                                onNodeClick={onStateNodeClick}
+                                nodesConnectable={false}
+                                nodesDraggable={false}
+                                fitView
+                                fitViewOptions={{ padding: 0.16 }}
+                              >
+                                <Background />
+                                <Controls showInteractive={false} />
+                              </ReactFlow>
+                            </div>
+                          ) : (
+                            <div className="rounded-md border">
+                              {emptyPanel(ListRestartIcon, "No state graph", "The workflow has not exposed state records.")}
+                            </div>
+                          )}
+
+                          <div className="rounded-md border p-3">
+                            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+                              <ClockIcon />
+                              Selected state
+                            </div>
+                            {selectedState ? (
+                              <div className="flex min-w-0 flex-col gap-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate text-sm">{selectedState.name}</span>
+                                  <Badge variant={statusTone[selectedState.status] ?? "outline"}>{selectedState.status}</Badge>
+                                </div>
+                                <p className="line-clamp-6 text-xs text-muted-foreground">{selectedState.reason}</p>
+                                <Separator />
+                                <div className="grid grid-cols-3 gap-2 text-center">
+                                  <div className="rounded-md border p-2">
+                                    <div className="text-xs text-muted-foreground">attempts</div>
+                                    <div className="text-sm font-semibold">{selectedState.activity_attempt_ids.length}</div>
+                                  </div>
+                                  <div className="rounded-md border p-2">
+                                    <div className="text-xs text-muted-foreground">artifacts</div>
+                                    <div className="text-sm font-semibold">{selectedState.artifact_ids.length}</div>
+                                  </div>
+                                  <div className="rounded-md border p-2">
+                                    <div className="text-xs text-muted-foreground">findings</div>
+                                    <div className="text-sm font-semibold">{selectedState.finding_ids.length}</div>
+                                  </div>
+                                </div>
+                                <div className="grid gap-2 text-xs text-muted-foreground">
+                                  {selectedState.started_at ? (
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span>started</span>
+                                      <span>{formatDate(selectedState.started_at)}</span>
+                                    </div>
+                                  ) : null}
+                                  {selectedState.finished_at ? (
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span>finished</span>
+                                      <span>{formatDate(selectedState.finished_at)}</span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No state selected.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Evidence</CardTitle>
+                    <CardDescription>Inbox, findings, logs, artifacts, sessions, and timing</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {workflowDetail?.evidenceError ? (
+                      <Alert>
+                        <AlertCircleIcon />
+                        <AlertTitle>Evidence unavailable</AlertTitle>
+                        <AlertDescription>{workflowDetail.evidenceError}</AlertDescription>
+                      </Alert>
+                    ) : workflowDetail?.evidence ? (
+                      <Tabs defaultValue="inbox">
+                        <TabsList className="flex h-auto flex-wrap justify-start">
+                          <TabsTrigger value="inbox">Inbox</TabsTrigger>
+                          <TabsTrigger value="findings">Findings</TabsTrigger>
+                          <TabsTrigger value="logs">Logs</TabsTrigger>
+                          <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
+                          <TabsTrigger value="sessions">Sessions</TabsTrigger>
+                          <TabsTrigger value="timing">Timing</TabsTrigger>
+                        </TabsList>
+                        <TabsContent value="inbox">
+                          {workflowDetail.evidence.inbox.length === 0 ? (
+                            emptyPanel(InboxIcon, "No inbox items", "There are no open or historical decision items.")
+                          ) : (
+                            simpleTable(
+                              ["Status", "Title", "Created"],
+                              workflowDetail.evidence.inbox.map((item) => [
+                                inboxStatusBadgeCell(item.status),
+                                textCell(item.title, item.detail),
+                                formatDate(item.created_at),
+                              ]),
+                            )
+                          )}
+                        </TabsContent>
+                        <TabsContent value="findings">
+                          {workflowDetail.evidence.findings.length === 0 ? (
+                            emptyPanel(AlertCircleIcon, "No findings", "The evidence view has no recorded findings.")
+                          ) : (
+                            simpleTable(
+                              ["Severity", "Title", "Target"],
+                              workflowDetail.evidence.findings.map((finding) => [
+                                findingSeverityBadgeCell(finding.severity),
+                                textCell(finding.title, finding.detail),
+                                finding.target !== undefined ? finding.target : "not reported",
+                              ]),
+                            )
+                          )}
+                        </TabsContent>
+                        <TabsContent value="logs">
+                          {workflowDetail.evidence.logs.length === 0 ? (
+                            emptyPanel(TerminalIcon, "No logs", "No live output attempts are attached.")
+                          ) : (
+                            simpleTable(
+                              ["State", "Status", "Command"],
+                              workflowDetail.evidence.logs.map((log) => [
+                                log.state_name !== undefined ? log.state_name : log.kind,
+                                statusBadgeCell(log.status),
+                                textCell(log.reason, log.read_command),
+                              ]),
+                            )
+                          )}
+                        </TabsContent>
+                        <TabsContent value="artifacts">
+                          {workflowDetail.evidence.artifacts.length === 0 ? (
+                            emptyPanel(FileTextIcon, "No artifacts", "No artifacts are attached to this workflow.")
+                          ) : (
+                            simpleTable(
+                              ["Kind", "Path", "Read"],
+                              workflowDetail.evidence.artifacts.map((artifact) => [
+                                artifact.kind,
+                                artifact.path,
+                                artifact.read_command,
+                              ]),
+                            )
+                          )}
+                        </TabsContent>
+                        <TabsContent value="sessions">
+                          {workflowDetail.evidence.sessions.length === 0 ? (
+                            emptyPanel(UserRoundIcon, "No sessions", "No agent sessions are attached.")
+                          ) : (
+                            simpleTable(
+                              ["Agent", "Role", "Status"],
+                              workflowDetail.evidence.sessions.map((session) => [
+                                session.agent,
+                                session.role,
+                                statusBadgeCell(session.status),
+                              ]),
+                            )
+                          )}
+                        </TabsContent>
+                        <TabsContent value="timing">
+                          {simpleTable(
+                            ["Kind", "Count", "Duration"],
+                            workflowDetail.evidence.timing.by_kind.map((timing) => [
+                              timing.kind,
+                              String(timing.count),
+                              formatDuration(timing.duration_ms),
+                            ]),
+                          )}
+                          <Separator className="my-4" />
+                          {workflowDetail.evidence.timing.slowest_attempts.length === 0
+                            ? emptyPanel(TimerIcon, "No completed attempts", "Timing is available after attempts finish.")
+                            : simpleTable(
+                                ["Attempt", "Status", "Duration"],
+                                workflowDetail.evidence.timing.slowest_attempts.map((attempt) => [
+                                  attempt.state_name !== undefined ? attempt.state_name : attempt.kind,
+                                  statusBadgeCell(attempt.status),
+                                  formatDuration(attempt.duration_ms),
+                                ]),
+                              )}
+                        </TabsContent>
+                      </Tabs>
+                    ) : (
+                      emptyPanel(ListRestartIcon, "No evidence snapshot", "The workflow has not exposed a Tychonic result yet.")
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+              </div>
+            </>
+          )}
+        </section>
+      </main>
+    </TooltipProvider>
+  )
+}
+
+function statusBadgeCell(value: string) {
+  return <Badge variant={statusTone[value] ?? "outline"}>{value}</Badge>
+}
+
+function findingSeverityBadgeCell(value: string) {
+  return <Badge variant={findingSeverityTone[value.toLowerCase()] ?? "outline"}>{value}</Badge>
+}
+
+function inboxStatusBadgeCell(value: string) {
+  return <Badge variant={inboxStatusTone[value.toLowerCase()] ?? "outline"}>{value}</Badge>
+}
+
+function formatWorkflowDuration(workflow: WorkflowSummary) {
+  if (!workflow.closeTime) return "open"
+  const startMs = Date.parse(workflow.startTime)
+  const closeMs = Date.parse(workflow.closeTime)
+  if (!Number.isFinite(startMs) || !Number.isFinite(closeMs) || closeMs < startMs) return "not reported"
+  return formatDuration(closeMs - startMs)
+}
+
+type StateGraphNode = Node<{ label: ReactNode }>
+
+function workflowStateGraph(states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
+  const columns = Math.min(Math.max(states.length, 1), 5)
+  const nodes = states.map((state, index) => {
+    const row = Math.floor(index / columns)
+    const column = index % columns
+    return {
+      id: state.id,
+      type: "default",
+      position: { x: column * 230, y: row * 140 },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      className: cn("tychonic-state-node", `tychonic-state-node-${stateToneClass(state.status)}`),
+      data: {
+        label: (
+          <div className="flex min-w-0 flex-col gap-1 text-left">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-xs text-muted-foreground">{index + 1}</span>
+              <span className="truncate text-sm font-medium">{state.name}</span>
+            </div>
+            <span className="text-xs text-muted-foreground">{state.status}</span>
+          </div>
+        ),
+      },
+    } satisfies StateGraphNode
+  })
+  const edges = states.slice(1).map((state, index) => {
+    const previous = states[index]
+    return {
+      id: `${previous.id}:${state.id}:${index}`,
+      source: previous.id,
+      target: state.id,
+      type: "smoothstep",
+      markerEnd: { type: MarkerType.ArrowClosed },
+      className: cn("tychonic-state-edge", `tychonic-state-edge-${stateToneClass(state.status)}`),
+      animated: state.status === "running",
+    } satisfies Edge
+  })
+  return { nodes, edges }
+}
+
+function stateToneClass(status: string) {
+  if (status === "succeeded" || status === "COMPLETED") return "succeeded"
+  if (status === "failed" || status === "blocked" || status === "timed_out" || status === "FAILED") return "failed"
+  if (status === "running" || status === "RUNNING") return "running"
+  return "neutral"
+}
+
+function textCell(title: string, detail: string) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="truncate">{title}</span>
+      <span className="line-clamp-2 text-xs text-muted-foreground">{detail}</span>
+    </div>
+  )
+}
+
+function simpleTable(headers: string[], rows: Array<Array<ReactNode>>) {
+  return (
+    <ScrollArea className="h-[360px]">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            {headers.map((header) => (
+              <TableHead key={header}>{header}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row, rowIndex) => (
+            <TableRow key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <TableCell key={`${rowIndex}:${cellIndex}`} className={cn(cellIndex === 0 ? "w-[140px]" : "max-w-[520px]")}>
+                  {cell}
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </ScrollArea>
+  )
+}
+
+function emptyPanel(Icon: ComponentType, title: string, description: string) {
+  return (
+    <Empty>
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <Icon />
+        </EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent />
+    </Empty>
+  )
+}
+
+function formatDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${ms} ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`
+  return `${Math.round(ms / 60_000)} min`
+}
+
+export default App

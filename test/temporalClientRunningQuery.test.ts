@@ -26,7 +26,7 @@ describe("describeTychonicTemporalWorkflow running result queries", () => {
       staticSummary: async () => undefined
     }));
     const getHandle = vi.fn(() => ({ describe: describeWorkflow, query }));
-    const connect = vi.fn(async () => ({}));
+    const connect = vi.fn(async () => ({ close: vi.fn() }));
 
     vi.doMock("@temporalio/client", async () => {
       const actual = await vi.importActual<typeof import("@temporalio/client")>("@temporalio/client");
@@ -83,7 +83,7 @@ describe("describeTychonicTemporalWorkflow running result queries", () => {
       staticSummary: async () => undefined
     }));
     const getHandle = vi.fn(() => ({ describe: describeWorkflow, query }));
-    const connect = vi.fn(async () => ({}));
+    const connect = vi.fn(async () => ({ close: vi.fn() }));
 
     vi.doMock("@temporalio/client", async () => {
       const actual = await vi.importActual<typeof import("@temporalio/client")>("@temporalio/client");
@@ -142,7 +142,7 @@ describe("describeTychonicTemporalWorkflow running result queries", () => {
       staticSummary: async () => undefined
     }));
     const getHandle = vi.fn(() => ({ describe: describeWorkflow, query }));
-    const connect = vi.fn(async () => ({}));
+    const connect = vi.fn(async () => ({ close: vi.fn() }));
 
     vi.doMock("@temporalio/client", async () => {
       const actual = await vi.importActual<typeof import("@temporalio/client")>("@temporalio/client");

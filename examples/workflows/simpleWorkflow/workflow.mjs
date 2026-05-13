@@ -45,6 +45,7 @@ const {
   runWorkerActivity,
   runVerifyActivity,
   runReviewActivity,
+  cleanupWorktreeActivity,
   finalizeRunActivity
 } = act;
 
@@ -118,6 +119,7 @@ export async function simpleWorkflow(input) {
 async function runMainPipeline(input, runState, publishRun, interaction) {
   const profile = input.profile;
   let worktreePath;
+  let worktreeBaseHead;
   const updateRun = (next) => publishRun(next, worktreePath);
   let run = await startRunActivity({
     template: "simple_workflow",
@@ -129,6 +131,7 @@ async function runMainPipeline(input, runState, publishRun, interaction) {
 
   const wt = await createWorktreeActivity({ run, cwd: input.cwd });
   worktreePath = wt.worktreePath;
+  worktreeBaseHead = wt.baseHead;
   run = updateRun(run);
 
   // Stage: work
@@ -155,7 +158,7 @@ async function runMainPipeline(input, runState, publishRun, interaction) {
     : undefined;
 
   if (latestStateByName(run, "work")?.status !== "succeeded") {
-    return finalize(run, input.cwd, worktreePath, runState, "work failed");
+    return finalize(run, input.cwd, worktreePath, worktreeBaseHead, runState, "work failed");
   }
 
   // Stage: verify
@@ -176,7 +179,7 @@ async function runMainPipeline(input, runState, publishRun, interaction) {
   });
   run = verifyCall.run;
   if (latestStateByName(run, "verify")?.status !== "succeeded") {
-    return finalize(run, input.cwd, worktreePath, runState, "verify failed");
+    return finalize(run, input.cwd, worktreePath, worktreeBaseHead, runState, "verify failed");
   }
 
   // Stage: review (optional)
@@ -221,7 +224,7 @@ async function runMainPipeline(input, runState, publishRun, interaction) {
     }
   }
 
-  return finalize(run, input.cwd, worktreePath, runState);
+  return finalize(run, input.cwd, worktreePath, worktreeBaseHead, runState);
 }
 
 function defaultActivities() {
@@ -245,8 +248,14 @@ function buildWorkPrompt(goal) {
   ].join("\n");
 }
 
-async function finalize(run, cwd, worktreePath, runState, summary) {
+async function finalize(run, cwd, worktreePath, worktreeBaseHead, runState, summary) {
   const fin = await finalizeRunActivity({ run, ...(summary ? { summary } : {}) });
   run = applyResult(run, fin);
+  if (worktreePath) {
+    if (!worktreeBaseHead) throw new Error("cleanupWorktreeActivity requires baseHead");
+    const cleanup = await cleanupWorktreeActivity({ run, cwd, worktreePath, baseHead: worktreeBaseHead });
+    run = applyResult(run, cleanup);
+    worktreePath = undefined;
+  }
   return runState.result(run, { artifactRoot: `${cwd}/.tychonic/runs/${run.id}`, worktreePath });
 }

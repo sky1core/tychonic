@@ -17,6 +17,7 @@ export { runReviewActivity } from "./runReviewActivity.js";
 export { startRunActivity } from "./startRunActivity.js";
 export { collectGitFactsActivity } from "./collectGitFactsActivity.js";
 export { createWorktreeActivity } from "./createWorktreeActivity.js";
+export { cleanupWorktreeActivity } from "./cleanupWorktreeActivity.js";
 export { finalizeRunActivity } from "./finalizeRunActivity.js";
 
 /**

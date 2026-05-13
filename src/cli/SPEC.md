@@ -48,6 +48,12 @@ Focused commands such as `tychonic artifacts --artifact <id>` and
 `tychonic logs --attempt <id>` print raw content only when the caller asks for
 that specific evidence item.
 
+`tychonic web` starts the local workflow status UI. It is a convenience view
+over the same Temporal-backed workflow list and evidence summary data used by
+`tychonic status`. The command binds to `127.0.0.1` by default and must not
+create a public API, remote service, or secondary state store. Raw artifact and
+log content remains behind focused CLI read commands.
+
 ## Interaction Signal Contract
 
 Tychonic CLI exposes four convenience commands for workflows that choose to use

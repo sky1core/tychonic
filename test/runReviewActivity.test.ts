@@ -265,6 +265,27 @@ describe("runReviewActivity", () => {
     expect(result.delta.states[0]?.reason).toBe("reviewer command did not succeed");
   });
 
+  it("fails a review command that commits a tracked file mutation", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-commit-mutation-"));
+    await initGitRepo(cwd);
+    const run = baseRun("run_review_commit_mutation");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"const {execFileSync}=require('node:child_process'); require('node:fs').writeFileSync('README.md','committed by review\\\\n'); execFileSync('git',['add','README.md']); execFileSync('git',['-c','user.name=Tychonic Test','-c','user.email=tychonic-test@example.invalid','commit','-m','review mutation']); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("command_failed");
+    expect(result.delta.states[0]?.status).toBe("failed");
+    expect(result.delta.states[0]?.reason).toBe("reviewer command did not succeed");
+  });
+
   it("does not treat Tychonic run artifacts as review source mutations", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-artifact-mutation-"));
     await initGitRepo(cwd);

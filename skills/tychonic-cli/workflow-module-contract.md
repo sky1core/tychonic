@@ -158,6 +158,7 @@ Available activities:
 - `startRunActivity`
 - `collectGitFactsActivity`
 - `createWorktreeActivity`
+- `cleanupWorktreeActivity`
 - `runVerifyActivity`
 - `runWorkerActivity`
 - `runReviewActivity`

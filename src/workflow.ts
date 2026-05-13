@@ -93,7 +93,13 @@ export interface TychonicWorkflowRuntimeActivities {
   createWorktreeActivity?(input: {
     run: WorkflowRunRecord;
     cwd: string;
-  }): Promise<{ worktreePath: string }>;
+  }): Promise<{ worktreePath: string; baseHead: string }>;
+  cleanupWorktreeActivity?(input: {
+    run: WorkflowRunRecord;
+    cwd: string;
+    worktreePath: string;
+    baseHead: string;
+  }): Promise<ActivityResult & { cleaned: true }>;
   runWorkerActivity?(input: Omit<ActivityInput<"work">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
   runVerifyActivity?(input: Omit<ActivityInput<"verify">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
   runReviewActivity?(input: Omit<ActivityInput<"review">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
@@ -186,6 +192,7 @@ export function createTychonicWorkflowContext(options: {
   const rejectCounts = new Map<string, number>();
   let currentRun: WorkflowRunRecord | undefined;
   let currentWorktreePath: string | undefined;
+  let currentWorktreeBaseHead: string | undefined;
 
   function requireRun(): WorkflowRunRecord {
     if (!currentRun) {
@@ -367,12 +374,32 @@ export function createTychonicWorkflowContext(options: {
         })
       );
     });
-    update(run);
+    currentRun = run;
     const result = await activities.finalizeRunActivity({
       run: requireRun(),
       ...(summary !== undefined ? { summary } : {})
     });
-    update(applyActivityResult(requireRun(), result));
+    const finalizedRun = applyActivityResult(requireRun(), result);
+    const cleanupWorktreePath = currentWorktreePath;
+    if (cleanupWorktreePath) {
+      if (!activities.cleanupWorktreeActivity) {
+        throw new Error("cleanupWorktreeActivity is required after ctx.createWorktree()");
+      }
+      if (!currentWorktreeBaseHead) {
+        throw new Error("internal error: cleanup worktree baseHead is missing");
+      }
+      const cleanupResult = await activities.cleanupWorktreeActivity({
+        run: finalizedRun,
+        cwd: input.cwd,
+        worktreePath: cleanupWorktreePath,
+        baseHead: currentWorktreeBaseHead
+      });
+      currentWorktreePath = undefined;
+      currentWorktreeBaseHead = undefined;
+      update(applyActivityResult(finalizedRun, cleanupResult));
+    } else {
+      update(finalizedRun);
+    }
     return runState.result(requireRun(), {
       artifactRoot: `${input.cwd}/.tychonic/runs/${requireRun().id}`,
       ...(currentWorktreePath ? { worktreePath: currentWorktreePath } : {})
@@ -385,7 +412,7 @@ export function createTychonicWorkflowContext(options: {
   ): Promise<TychonicWorkflowResult> {
     let run = requireRun();
     run = addRunInboxItem(run, item);
-    update({ ...run, status: "waiting_user" });
+    currentRun = { ...run, status: "waiting_user" };
     return finish(summary);
   }
 
@@ -412,6 +439,7 @@ export function createTychonicWorkflowContext(options: {
       }
       const wt = await activities.createWorktreeActivity({ run: requireRun(), cwd: input.cwd });
       currentWorktreePath = wt.worktreePath;
+      currentWorktreeBaseHead = wt.baseHead;
       update(requireRun());
       return currentWorktreePath;
     },

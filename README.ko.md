@@ -34,7 +34,9 @@ organization policy가 operator마다 다르므로 Tychonic은 그대로 재사�
 - `PATH`에서 실행 가능한 Temporal CLI
 - workflow가 사용할 agent CLI 설치 및 인증
 
-Tychonic은 현재 public web UI/API surface를 제공하지 않습니다. CLI를 사용하십시오.
+Tychonic은 public web UI/API surface를 제공하지 않습니다. CLI가 기본 machine
+interface입니다. 같은 머신에서 단일 operator가 workflow 상태를 볼 수 있는
+local-only status UI는 `tychonic web`으로 실행할 수 있습니다.
 
 ## 설치
 
@@ -158,6 +160,15 @@ tychonic sessions --workflow-id <id>
 `--workflow-id` 없이 `status`를 실행하면 최근 workflow 목록을 보여줍니다.
 `--workflow-id`를 붙이면 다음 operator action을 판단하는 데 필요한 evidence를
 반환합니다.
+
+같은 workflow 상태를 브라우저에서 보려면 local UI를 시작합니다.
+
+```sh
+tychonic web
+```
+
+이 명령은 기본적으로 `127.0.0.1`에 bind하며 Temporal-backed workflow summary를
+보여주는 로컬 상태 화면만 제공합니다. team service나 public API가 아닙니다.
 
 no-agent smoke가 통과한 뒤에는 `simpleWorkflow` 같은 agent workflow를 설치합니다.
 그 workflow의 `defaultProfile`은 외부 agent CLI를 사용하고 `npm run typecheck`,

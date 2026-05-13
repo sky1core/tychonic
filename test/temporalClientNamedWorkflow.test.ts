@@ -7,7 +7,7 @@ describe("named workflow Temporal client behavior", () => {
   });
 
   it("starts all workflows through the same generic client path", async () => {
-    const connect = vi.fn(async () => ({}));
+    const connect = vi.fn(async () => ({ close: vi.fn() }));
     const start = vi.fn(async (_workflowType: string, options: { workflowId: string }) => ({
       workflowId: options.workflowId,
       firstExecutionRunId: `run-${options.workflowId}`,
@@ -63,7 +63,7 @@ describe("named workflow Temporal client behavior", () => {
   });
 
   it("filters workflow visibility by tychonic workflow id prefix only", async () => {
-    const connect = vi.fn(async () => ({}));
+    const connect = vi.fn(async () => ({ close: vi.fn() }));
     const list = vi.fn(async function* () {
       yield {
         workflowId: "temporal-generated-id",

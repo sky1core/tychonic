@@ -21,6 +21,11 @@ User / foreground agent
 The product value is reliable orchestration of unreliable AI workers, not a new
 coding model.
 
+The local status UI is an operator view over the same Temporal-backed workflow
+status and evidence summaries exposed by `tychonic status`. It is local-only and
+does not make Tychonic a remote service, public API, dashboard product, or
+team/multi-user system.
+
 ## Public Alpha Scope
 
 Supported:
@@ -31,6 +36,7 @@ Supported:
 - TypeScript product path
 - Temporal managed-local mode and explicit external Temporal connection
 - CLI as the primary machine interface
+- local-only workflow status UI served by `tychonic web`
 - workflow config catalog plus runtime workflow module registry
 - deterministic command activities for project checks through the `verify`
   activity TYPE
@@ -41,7 +47,7 @@ Not supported:
 
 - remote/team deployment
 - multi-user or multi-tenant operation
-- local or public Web UI/API product surface
+- public Web UI/API product surface
 - organization worker pools, team quota pooling, or task queue tenancy
 - project working tree mutation by background automation
 - unsafe auto-fix
@@ -97,6 +103,7 @@ not contradict this root file.
 | local runtime operations | [src/runtime/SPEC.md](src/runtime/SPEC.md) |
 | launchd service helpers | [src/service/SPEC.md](src/service/SPEC.md) |
 | artifact file storage | [src/storage/SPEC.md](src/storage/SPEC.md) |
+| local workflow status UI | [src/web/SPEC.md](src/web/SPEC.md) |
 | reference workflow examples | [examples/workflows/SPEC.md](examples/workflows/SPEC.md) |
 
 ## Product Boundaries

@@ -436,9 +436,11 @@ npm run verify:agents-live
 ## Project Setup
 
 Before running a Tychonic workflow on a project, add `.tychonic/` to the
-project's root `.gitignore`. Tychonic creates `.tychonic/` for worktrees and
-working files; without the ignore entry those files appear as untracked in
-`git status`.
+project's root `.gitignore`. Tychonic writes evidence and run working files
+under `.tychonic/runs/<run-id>/`; mutable workflow worktrees are created under
+`/tmp/tychonic-worktree-*`, not under the project `.tychonic/` directory.
+Tychonic owns terminal patch capture and cleanup for those temporary worktrees.
+Without the ignore entry, evidence files appear as untracked in `git status`.
 
 Agents must not create files or directories at the project root. All scratch
 files, temporary files, notes, analysis outputs, and working state belong
