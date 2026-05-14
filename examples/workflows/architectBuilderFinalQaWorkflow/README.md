@@ -1,12 +1,15 @@
 # architectBuilderFinalQaWorkflow
 
 `architectBuilderFinalQaWorkflow` runs architect → builder → QA with Claude
-planning, Kiro building, and Codex as the final structured reviewer.
+planning, Kiro building, and Codex as the final structured reviewer. Its
+YAML state machine has a bounded builder/QA loop.
 
 ## Purpose
 
 Use this when Kiro should handle the implementation middle of a staged workflow,
 while the final pass/fail gate stays on Codex for structured QA output.
+When QA does not pass, the workflow sends review feedback back to `builder`
+until QA passes or `max_steps` is reached.
 
 This example profile sets `architect` to Claude `claude-opus-4-7` with
 `reasoning_effort: max`, `builder` to Kiro `claude-opus-4.6`, and `qa` to
@@ -21,15 +24,26 @@ documented Kiro model id is globally invalid.
 
 ## States
 
-| State | TYPE | Role |
-|---|---|---|
-| `architect` | `work` | Produce the implementation plan. |
-| `builder` | `work` | Kiro implements the plan in the isolated worktree. |
-| `qa` | `review` | Codex returns the structured pass/fail review verdict. |
+| State | TYPE | Failed review returns to | Role |
+|---|---|---|---|
+| `architect` | `work` | - | Produce the implementation plan. |
+| `builder` | `work` | - | Kiro implements the plan in the isolated worktree. |
+| `qa` | `review` | `builder` | Codex returns the structured pass/fail review verdict. |
 
 `builder` uses `trust_all_tools: true` because Kiro ACP needs tool trust for
 non-interactive implementation work. QA is a structured Codex review state; it
 may run checks but must not silently repair code.
+
+## Run Mode
+
+Use `tychonic run architectBuilderFinalQaWorkflow --input-file <file> --wait`
+when the caller should wait for the pipeline result before doing anything else.
+
+QA failure loops back into `builder` with prior QA feedback until QA passes or
+the YAML `max_steps` cap is reached.
+
+After the run reaches a terminal `waiting_user` status, interaction signals no
+longer resume it. Recovery is a fresh run with adjusted input or config.
 
 ## Input
 
@@ -72,5 +86,5 @@ environment.
 
 ## Config Override
 
-`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+`--config <file>` replaces the bundle YAML-derived profile as one whole object. It
 does not merge with the bundle default.

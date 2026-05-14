@@ -1,6 +1,6 @@
 {
   "name": "tychonic",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "macOS-local AI work operations manager built on Temporal",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
     "dist",
     "docs",
     "examples/workflows/*/README.md",
-    "examples/workflows/*/*.mjs",
+    "examples/workflows/*/*.yaml",
     "skills",
     "README.md",
     "README.ko.md",
@@ -61,8 +61,9 @@
     "test": "vitest run --exclude '**/.tychonic/**'",
     "smoke:package": "node scripts/smoke-pack-install.mjs",
     "verify:agents-live": "npm run build && node scripts/verify-agent-resume-live.mjs",
+    "verify:workflow-review-loop": "npm run build && node scripts/verify-workflow-review-loop.mjs",
     "verify:worker": "npm run typecheck && npm run check:contracts && npm run build && npm test && npm run validate:examples",
-    "verify": "npm run verify:worker && npm audit --omit=dev && npm publish --dry-run --access public && npm run smoke:package",
+    "verify": "npm run verify:worker && npm run verify:workflow-review-loop && npm audit --omit=dev && npm publish --dry-run --access public && npm run smoke:package",
     "start": "node dist/cli/main.js"
   },
   "dependencies": {

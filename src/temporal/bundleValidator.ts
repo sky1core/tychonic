@@ -5,12 +5,10 @@
  * `void` on success.
  */
 
-const REQUIRED_BUNDLE_ENTRIES = ["workflow.mjs"] as const;
 /**
- * Asserts a bundle directory contains the workflow entrypoint. Other entries
- * are allowed because a workflow bundle may be a normal package directory:
- * `package.json`, lockfiles, `node_modules`, helper modules, and pre-bundled
- * assets all resolve through standard package mechanisms.
+ * Asserts a source bundle directory contains exactly one authoring entrypoint:
+ * declarative `workflow.yaml`. `workflow.mjs` is an install-generated runtime
+ * artifact, not an operator-authored source file.
  */
 export function validateBundleFileShape(entries: readonly string[]): void {
   const seen = new Set<string>();
@@ -20,9 +18,14 @@ export function validateBundleFileShape(entries: readonly string[]): void {
     }
     seen.add(entry);
   }
-  for (const required of REQUIRED_BUNDLE_ENTRIES) {
-    if (!seen.has(required)) {
-      throw new Error(`bundle is missing required file '${required}'`);
-    }
+  const hasWorkflowModule = seen.has("workflow.mjs");
+  const hasWorkflowSpec = seen.has("workflow.yaml");
+  if (hasWorkflowModule) {
+    throw new Error(
+      "source bundle must not contain hand-written 'workflow.mjs'; author workflow.yaml and let install generate workflow.mjs"
+    );
+  }
+  if (!hasWorkflowSpec) {
+    throw new Error("source bundle is missing required file 'workflow.yaml'");
   }
 }

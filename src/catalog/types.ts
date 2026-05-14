@@ -2,7 +2,7 @@ import { z } from "zod";
 import { hasInlineSecrets } from "./inlineSecrets.js";
 import { BUILTIN_AGENT_NAMES, isBuiltInAgentName } from "../adapters/index.js";
 
-const ActivityNameSchema = z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);
+export const ActivityNameSchema = z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);
 const AgentLabelSchema = z.string().min(1);
 const ReviewNormalizerSchema = z.enum(["claude", "codex"]);
 const AgentModelSchema = z.string().min(1);
@@ -47,8 +47,10 @@ export const activityTypeContracts = {
     allowed: ["agent", "command", "model", "reasoning_effort", "resume", "timeout", ...ADAPTER_EXECUTION_FIELDS]
   },
   review: {
+    required: ["on_fail_return_to"],
     requiredOneOf: [["command", "agent"]],
     allowed: [
+      "on_fail_return_to",
       "agent",
       "normalizer",
       "command",
@@ -69,6 +71,7 @@ export const activityTypeContracts = {
 >;
 
 type ActivityBlockField =
+  | "on_fail_return_to"
   | "agent"
   | "normalizer"
   | "command"
@@ -109,6 +112,7 @@ const PermissionModeSchema = z.enum(["plan", "default", "acceptEdits", "bypassPe
 export const StateConfigBlockSchema = z
   .object({
     type: ActivityTypeSchema,
+    on_fail_return_to: ActivityNameSchema.optional(),
     agent: AgentLabelSchema.optional(),
     normalizer: ReviewNormalizerSchema.optional(),
     command: CommandStringSchema.optional(),
@@ -137,7 +141,8 @@ export const TychonicConfigSchema = z
     states: z.record(ActivityNameSchema, StateConfigBlockSchema).optional(),
     policies: PoliciesSchema.optional()
   })
-  .strict();
+  .strict()
+  .superRefine(validateStateReferences);
 
 export type ActivityBlock = z.infer<typeof StateConfigBlockSchema>;
 export type TychonicConfig = z.infer<typeof TychonicConfigSchema>;
@@ -287,6 +292,33 @@ function validateActivityBlock(block: ActivityBlock, ctx: z.RefinementCtx): void
   validateAdapterExecutionSettings(block, ctx);
 }
 
+function validateStateReferences(config: { states?: Record<string, ActivityBlock> | undefined }, ctx: z.RefinementCtx): void {
+  const states = config.states ?? {};
+  for (const [name, block] of Object.entries(states)) {
+    if (block.type !== "review" || block.on_fail_return_to === undefined) continue;
+    const target = states[block.on_fail_return_to];
+    if (target === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `states.${name}.on_fail_return_to must name an existing state, ` +
+          `got ${JSON.stringify(block.on_fail_return_to)}`,
+        path: ["states", name, "on_fail_return_to"]
+      });
+      continue;
+    }
+    if (target.type === "review") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `states.${name}.on_fail_return_to must name a non-review state, ` +
+          `got review state ${JSON.stringify(block.on_fail_return_to)}`,
+        path: ["states", name, "on_fail_return_to"]
+      });
+    }
+  }
+}
+
 /**
  * Built-in adapters that need a review normalizer. They can produce prose
  * review output, but not the structured payload the host accepts directly.
@@ -421,6 +453,7 @@ function validatePrimaryAgentSetting(
 function activityBlockFieldNames(): ActivityBlockField[] {
   return [
     "agent",
+    "on_fail_return_to",
     "normalizer",
     "command",
     "model",

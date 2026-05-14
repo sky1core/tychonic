@@ -6,34 +6,38 @@ modules; Tychonic core contains none.
 
 ## Workflow Model
 
-Workflows are TypeScript Temporal workflow code. They invoke the activity
-function for each state they enter, passing the state NAME and the effective
-profile. They do not read YAML and they do not branch on activity TYPE.
+Installed workflows are Temporal workflow code. Declarative bundles start from
+`workflow.yaml`, but install translates that source into an explicit
+`workflow.mjs` module before the worker loads it. The installed module invokes
+the activity function for each state it enters, passing the state NAME and the
+effective profile.
 
-Configuration declares named state config blocks and named policies.
-Configuration does not define workflow graphs, node order, edges, join policies,
-arbitrary branching, new activity kinds, task queue lifecycle, or local state
-storage.
+Runtime configuration declares named state config blocks and named policies.
+Runtime configuration does not define workflow graphs, node order, edges, join
+policies, arbitrary branching, new activity kinds, task queue lifecycle, or
+local state storage. Declarative `workflow.yaml` is workflow source, not a
+runtime configuration replacement.
 
 Allowed configuration content:
 
 - state config blocks keyed by state NAME (`states.<name>`), each carrying a
   `type` field that binds the state to an activity function and the settings
-  that TYPE requires
+  that TYPE requires. Every `review` state also carries `on_fail_return_to`,
+  the explicit non-review state NAME that failed review feedback returns to
+  when the workflow loops. Generated YAML workflow code appends failed review
+  summaries and structured findings to that return state's next prompt when
+  the return state is prompt-bearing.
 - named policy values (`policies.<name>`) for workflow-level orchestration
   knobs. The top-level `policies` value must be an object. The host config
   schema treats each `policies.<name>` entry as an opaque workflow-owned value
   keyed by string; each workflow bundle defines, validates, and consumes the
-  policy keys and value shapes it cares about. Common bundle-defined keys
-  include `policies.loop` and `policies.integration`. The standard interaction
-  helper validates the `policies.interaction` shape that it consumes.
+  policy keys and value shapes it cares about. The standard interaction helper
+  validates the `policies.interaction` shape that it consumes.
 
 Ordering, branching, loops, fan-out, joins, retry, and multi-activity
-aggregation belong in Temporal workflow code. If a project needs custom
-ordering, write or generate a compiled, self-contained ESM workflow module that
-exports Temporal workflow functions, install it into the runtime workflow
-module registry, and make the relevant runtime load that registry through its
-documented runtime path.
+aggregation belong in workflow source and in the installed Temporal workflow
+code generated from that source. If a project needs custom ordering, express it
+in `workflow.yaml` and install it into the runtime workflow module registry.
 
 Workflow authoring must stay simple. A workflow module should expose the
 workflow's state order, branches, loops, prompts, and stop conditions without
@@ -43,12 +47,13 @@ activity results, attaching artifacts and parsed review findings, publishing
 run-state snapshots, standard interaction-gate retry plumbing, and finalizing a
 run. Those helpers must remain NAME-parameterized and must not decide which
 state runs next, encode workflow graphs, rotate candidates, or branch by TYPE.
+Install-time code generation may use TYPE only to emit the explicit activity
+call for each declared state.
 
-A workflow module's `defaultProfile` export pulls the state and policy contract
-into the workflow code itself: it is the workflow's author-supplied
-`TychonicConfig` that ships with the bundle and is validated once at install
-time. Workflow start still validates the effective config under
-`TychonicConfigSchema`.
+A workflow bundle's default profile comes from `workflow.yaml`. Bundles derive
+the profile from their validated state-machine spec and generate the Temporal
+wrapper at install time. Workflow start still validates the effective config
+under `TychonicConfigSchema`.
 
 The public `createTychonicWorkflowContext` helper exposes the current Temporal
 workflow id through `ctx.workflowId()` so workflow-owned prompts can point
@@ -88,12 +93,10 @@ through the state NAME the workflow passes to the activity call.
 ## Plugin Composition Path
 
 A custom workflow is a bundle directory installed through the runtime workflow
-module registry with `tychonic workflows install <directory>`. The bundle's
-`workflow.mjs` composes exported activities in whatever order, loop structure,
-or conditional shape its implementation needs, using NAME literals it chooses,
-and exports a `defaultProfile` object that declares the matching state blocks.
-No Tychonic source change is required to add a new workflow, introduce a new
-NAME, or run the same TYPE any number of times.
+module registry with `tychonic workflows install <directory>`. Declarative
+bundles use `workflow.yaml` to define state order, pass/fail transitions,
+prompts, and config in one source. No Tychonic source change is required to add
+a new workflow, introduce a new NAME, or run the same TYPE any number of times.
 
 Adding a new TYPE (extending the product contract) does require a Tychonic
 release and is explicitly out of scope for plugin authors. Plugins consume the
@@ -103,15 +106,20 @@ TYPE set Tychonic exposes.
 
 Workflow loop shape — whether a workflow loops at all, how it caps that loop,
 which activity it retries on review `fail`, and how it transitions to
-`waiting_user` — is defined inside each bundle's `workflow.mjs`. This section
-states only the host-side invariants every workflow must respect. Per-workflow
-loop contracts (counters, signal payloads, inbox titles) live in the bundle's
-`README.md`.
+`waiting_user` — is defined inside `workflow.yaml`. This section states only
+the host-side invariants every workflow must respect. Per-workflow loop contracts
+(counters, signal payloads, inbox titles) live in the bundle's `README.md`.
 
 Host-side invariants:
 
 - A workflow continuation appends new Temporal workflow history. It does not
   rewrite earlier attempts.
+- Each `type: review` state in the effective profile must declare
+  `on_fail_return_to`. When workflow code routes failed review feedback, the
+  destination must match that declaration and must be a non-review state; a
+  workflow with a fixed review loop should assert the declared target before
+  entering the loop. Declarative YAML workflows generated by install perform
+  this routing for review fail transitions declared with `on_fail.goto`.
 - Review findings must target the relevant prior activity attempt, file, or
   agent session when possible.
 - Deterministic verification should run before semantic review when the
@@ -121,9 +129,9 @@ Host-side invariants:
 - `waiting_user` means the run needs human attention. It does not by itself
   mean the Temporal workflow execution is still open.
 - A workflow that keeps execution open for operator-driven continuation must
-  expose a workflow-owned signal/query surface: either the standard Tychonic
-  interaction helper or custom signals documented by that bundle. The workflow
-  start input must opt into that hold-open behavior.
+  expose a workflow-owned signal/query surface through the declarative contract
+  and generated wrapper. The workflow start input must opt into that hold-open
+  behavior.
 - A terminal `waiting_user` result may require a fresh run with adjusted input
   or config. That recovery path must be documented by the bundle.
 

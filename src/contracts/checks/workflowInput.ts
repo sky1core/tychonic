@@ -14,7 +14,7 @@ export const workflowInputContractChecks: readonly ContractCheck[] = [
           profile: {
             states: {
               work: { type: "work", agent: "claude" },
-              review: { type: "review", agent: "claude" }
+              review: { type: "review", on_fail_return_to: "work", agent: "claude" }
             }
           },
           promptAdditions: {
@@ -58,7 +58,7 @@ export const workflowInputContractChecks: readonly ContractCheck[] = [
             profile: {
               states: {
                 work: { type: "work", agent: "claude" },
-                review: { type: "review", agent: "claude" }
+                review: { type: "review", on_fail_return_to: "work", agent: "claude" }
               }
             },
             promptAdditions: { kiroPreReview: "inspect" }

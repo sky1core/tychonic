@@ -121,9 +121,8 @@ export class RunArtifactStore {
 
   private resolveStoredPath(run: WorkflowRunRecord, storedPath: string): string {
     if (!isAbsolute(storedPath) && (storedPath === ".tychonic" || storedPath.startsWith(".tychonic/"))) {
-      return resolveLegacyProjectPath(run, storedPath);
+      throw new Error("stored path uses removed project .tychonic evidence path");
     }
-
     const resolved = isAbsolute(storedPath)
       ? resolve(storedPath)
       : resolve(this.runDir(run.id), storedPath);
@@ -131,11 +130,6 @@ export class RunArtifactStore {
     if (isInside(resolved, allowedRoot)) {
       return resolved;
     }
-
-    if (isAbsolute(storedPath)) {
-      return resolveLegacyProjectPath(run, storedPath);
-    }
-
     throw new Error("stored path escapes Tychonic run root");
   }
 }
@@ -145,29 +139,20 @@ export function newRunArtifactStore(): RunArtifactStore {
 }
 
 export function runArtifactStoreForRun(run: WorkflowRunRecord): RunArtifactStore {
-  if (run.artifact_root) {
-    if (!isAbsolute(run.artifact_root)) {
-      throw new Error(`run.artifact_root must be an absolute path: ${run.artifact_root}`);
-    }
-    const artifactRoot = resolve(run.artifact_root);
-    return new RunArtifactStore(dirname(artifactRoot), new Map([[run.id, artifactRoot]]));
+  if (!run.artifact_root) {
+    throw new Error("run.artifact_root is required for artifact storage");
   }
-  return newRunArtifactStore();
+  if (!isAbsolute(run.artifact_root)) {
+    throw new Error(`run.artifact_root must be an absolute path: ${run.artifact_root}`);
+  }
+  const artifactRoot = resolve(run.artifact_root);
+  return new RunArtifactStore(dirname(artifactRoot), new Map([[run.id, artifactRoot]]));
 }
 
 function assertRunIdPathSegment(runId: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(runId)) {
     throw new Error(`run id must be a single path segment: ${runId}`);
   }
-}
-
-function resolveLegacyProjectPath(run: WorkflowRunRecord, storedPath: string): string {
-  const resolved = isAbsolute(storedPath) ? resolve(storedPath) : resolve(run.cwd, storedPath);
-  const legacyRoot = resolve(run.cwd, ".tychonic");
-  if (!isInside(resolved, legacyRoot)) {
-    throw new Error("stored path escapes Tychonic root");
-  }
-  return resolved;
 }
 
 function isInside(path: string, root: string): boolean {

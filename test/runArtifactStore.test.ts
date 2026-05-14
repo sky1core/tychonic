@@ -49,16 +49,18 @@ describe("RunArtifactStore path resolution", () => {
     expect(store.liveOutputPath(run, "attempt_1")).toBe(join(runsParent, "run_store/live/attempt_1.log"));
   });
 
-  it("still resolves legacy project .tychonic evidence paths for existing Temporal records", async () => {
-    const runsParent = await mkdtemp(join(tmpdir(), "tychonic-store-runs-legacy-"));
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-store-cwd-legacy-"));
+  it("rejects project .tychonic evidence paths outside the run root", async () => {
+    const runsParent = await mkdtemp(join(tmpdir(), "tychonic-store-runs-"));
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-store-cwd-"));
     const store = new RunArtifactStore(runsParent);
+    const artifactRoot = join(runsParent, "run_store");
     const run: WorkflowRunRecord = {
       schema_version: "tychonic.run.v1",
-      id: "run_legacy",
+      id: "run_store",
       template: "checkpoint",
       status: "succeeded",
       cwd,
+      artifact_root: artifactRoot,
       created_at: "2026-04-19T00:00:00.000Z",
       updated_at: "2026-04-19T00:00:00.000Z",
       states: [],
@@ -70,7 +72,7 @@ describe("RunArtifactStore path resolution", () => {
           status: "succeeded",
           reason: "ok",
           cwd,
-          live_output_path: ".tychonic/runs/run_legacy/live/attempt_1.log",
+          live_output_path: ".tychonic/runs/run_store/live/attempt_1.log",
           started_at: "2026-04-19T00:00:00.000Z"
         }
       ],
@@ -79,7 +81,7 @@ describe("RunArtifactStore path resolution", () => {
         {
           id: "artifact_1",
           kind: "output",
-          path: ".tychonic/runs/run_legacy/artifacts/output.txt",
+          path: ".tychonic/runs/run_store/artifacts/output.txt",
           created_at: "2026-04-19T00:00:00.000Z"
         }
       ],
@@ -87,19 +89,41 @@ describe("RunArtifactStore path resolution", () => {
       inbox: []
     };
 
-    expect(store.artifactPath(run, "artifact_1")).toBe(join(cwd, ".tychonic/runs/run_legacy/artifacts/output.txt"));
-    expect(store.liveOutputPath(run, "attempt_1")).toBe(join(cwd, ".tychonic/runs/run_legacy/live/attempt_1.log"));
+    expect(() => store.artifactPath(run, "artifact_1")).toThrow(/removed project \.tychonic/);
+    expect(() => store.liveOutputPath(run, "attempt_1")).toThrow(/removed project \.tychonic/);
+  });
+
+  it("requires artifact_root for run-specific artifact storage", () => {
+    const run = {
+      schema_version: "tychonic.run.v1",
+      id: "run_missing_root",
+      template: "checkpoint",
+      status: "succeeded",
+      cwd: "/repo",
+      created_at: "2026-04-19T00:00:00.000Z",
+      updated_at: "2026-04-19T00:00:00.000Z",
+      states: [],
+      activity_attempts: [],
+      agent_sessions: [],
+      artifacts: [],
+      findings: [],
+      inbox: []
+    } as unknown as WorkflowRunRecord;
+
+    expect(() => runArtifactStoreForRun(run)).toThrow(/artifact_root is required/);
   });
 
   it("rejects stored paths that escape the Tychonic root", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-store-escape-"));
-    const store = new RunArtifactStore(join(cwd, ".tychonic", "runs"));
+    const runsParent = await mkdtemp(join(tmpdir(), "tychonic-store-runs-escape-"));
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-store-cwd-escape-"));
+    const store = new RunArtifactStore(runsParent);
     const run: WorkflowRunRecord = {
       schema_version: "tychonic.run.v1",
       id: "run_store",
       template: "checkpoint",
       status: "succeeded",
       cwd,
+      artifact_root: join(runsParent, "run_store"),
       created_at: "2026-04-19T00:00:00.000Z",
       updated_at: "2026-04-19T00:00:00.000Z",
       states: [],

@@ -317,6 +317,7 @@ function profileWith(block: { command: string }): TychonicConfig {
     states: {
       [ACTIVITY_NAME]: {
         type: "review",
+        on_fail_return_to: "work",
         command: block.command
       }
     }
@@ -330,6 +331,7 @@ function baseRun(id: string): WorkflowRunRecord {
     template: "checkpoint",
     status: "running",
     cwd: "/ignored",
+    artifact_root: join(tmpdir(), "tychonic-test-runs", id),
     created_at: "2026-04-19T00:00:00.000Z",
     updated_at: "2026-04-19T00:00:00.000Z",
     states: [],

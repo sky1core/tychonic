@@ -12,7 +12,8 @@ export interface EffectiveBundleConfig {
 }
 
 /**
- * Load the bundle's `defaultProfile` export from its `workflow.mjs` and
+ * Load the installed bundle's generated `defaultProfile` export from
+ * `workflow.mjs` and
  * validate it through `TychonicConfigSchema`. This is the only path
  * product code uses to read a bundle's configuration. No merge, no
  * alternate lookup, no discovery.

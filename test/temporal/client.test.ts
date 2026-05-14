@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("normalizeTemporalConfig + active instance", () => {
-  it("keeps the legacy defaults when no instance is active", () => {
+  it("keeps operational defaults when no instance is active", () => {
     const cfg = normalizeTemporalConfig({});
     expect(cfg.address).toBe("127.0.0.1:7233");
     expect(cfg.taskQueue).toBe("tychonic");
@@ -57,7 +57,6 @@ describe("normalizeTemporalConfig + active instance", () => {
   });
 
   it("leaves every field at operational defaults when no instance is active and no explicit values are supplied", () => {
-    // Regression guard: byte-identical legacy behavior when instance is unset.
     const cfg = normalizeTemporalConfig({});
     expect(cfg).toMatchObject({
       address: "127.0.0.1:7233",

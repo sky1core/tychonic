@@ -1,15 +1,12 @@
 # architectBuilderQaWorkflow
 
-`architectBuilderQaWorkflow` runs an architect → builder → QA pipeline. It can
-run with interactive gates or straight through in auto mode, depending on
-`policies.interaction`.
+`architectBuilderQaWorkflow` runs an architect → builder → QA pipeline.
 
 ## Purpose
 
 Use this as an example staged delegation pipeline: one agent plans,
-another agent builds, and QA reviews. This workflow's `defaultProfile`
-runs in auto mode with a bounded builder/QA loop. Switch `policies.interaction.mode` to
-`interactive` when an operator should approve each stage.
+another agent builds, and QA reviews. The YAML state machine loops failed QA
+verdicts back to `builder` until QA passes or `max_steps` is exhausted.
 
 This example profile sets `architect` to Claude `claude-opus-4-7` with
 `reasoning_effort: max`, `builder` to Kiro `claude-opus-4.6`, and `qa` to
@@ -23,11 +20,11 @@ documented Kiro model id is globally invalid.
 
 ## States
 
-| State | TYPE | Role |
-|---|---|---|
-| `architect` | `work` | Produce the implementation plan. |
-| `builder` | `work` | Kiro implements the plan in the isolated worktree. |
-| `qa` | `review` | Codex returns the structured pass/fail review verdict. |
+| State | TYPE | Failed review returns to | Role |
+|---|---|---|---|
+| `architect` | `work` | - | Produce the implementation plan. |
+| `builder` | `work` | - | Kiro implements the plan in the isolated worktree. |
+| `qa` | `review` | `builder` | Codex returns the structured pass/fail review verdict. |
 
 ## Input
 
@@ -70,20 +67,8 @@ Omit `--wait` when the caller should start the pipeline and continue with other
 work. The no-wait response returns a `workflowId`; pass that value to
 `tychonic wait <workflow-id>` when you need the next result or action point.
 
-In `auto` interaction mode, `--wait` returns when the workflow succeeds, fails,
-is cancelled, or needs attention. In `interactive` mode, it may return with a
-message naming the waiting stage; follow that message and use the standard
-interaction command for that stage.
-
-## Policies
-
-The workflow reads:
-
-| Key | Purpose |
-|---|---|
-| `policies.interaction.mode` | `auto` runs without external gates; `interactive` gates each stage. |
-| `policies.interaction.max_reject_iterations` | Reject retry cap per interactive stage. Omit it in auto mode. |
-| `policies.loop.max_review_iterations` | Auto-mode builder/QA review-loop cap. |
+`--wait` returns when the workflow succeeds, fails, is cancelled, or needs
+attention.
 
 ## Interactive Signals
 
@@ -97,14 +82,13 @@ tychonic modify <workflow-id> --state <state> --note "..."
 tychonic rerun <workflow-id> --state <state> --reason "..."
 ```
 
-Use `rerun` to retry the same state without adding new feedback or incrementing
-the reject cap. Use `reject` when the next attempt should receive explicit
-feedback and count toward `policies.interaction.max_reject_iterations`.
+Use `rerun` to retry the same state without adding new feedback. Use `reject`
+when the next attempt should receive explicit feedback.
 
 After the run reaches a terminal `waiting_user` status, those signals no longer
 resume it. Recovery is a fresh run with adjusted input or config.
 
 ## Config Override
 
-`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+`--config <file>` replaces the bundle YAML-derived profile as one whole object. It
 does not merge with the bundle default.

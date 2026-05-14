@@ -1,0 +1,102 @@
+version: tychonic.workflow.v1
+name: pipelineWorkflow
+worktree: true
+max_steps: 14
+start: work
+states:
+  work:
+    type: work
+    agent: kiro
+    model: claude-opus-4.6
+    trust_all_tools: true
+    sandbox: workspace-write
+    approval: never
+    prompt: |
+      Complete the requested work in the target project.
+
+      Goal:
+      {{goal}}
+
+      Before editing, inspect the target project's applicable rules and
+      specifications. Follow relevant constraints while working, and include
+      the constraints you checked plus compliance status in your final note.
+    on_pass:
+      goto: static
+    on_fail:
+      finish: work failed
+  static:
+    type: verify
+    command: npm run lint
+    on_pass:
+      goto: unit
+    on_fail:
+      finish: static failed
+  unit:
+    type: verify
+    command: npm test
+    on_pass:
+      goto: review_1
+    on_fail:
+      finish: unit failed
+  review_1:
+    type: review
+    on_fail_return_to: work
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+    prompt: |
+      Review work stages 1-3 for correctness, regressions, missing tests, and risky assumptions.
+
+      Goal:
+      {{goal}}
+
+      Include compliance with the target project's applicable rules,
+      specifications, and guardrails in the review scope. Findings for
+      violations must identify the violated constraint and concrete evidence.
+
+      Report a semantic review verdict with status, summary, and findings.
+      Each finding needs severity, title, and actionable detail.
+      Use status pass only when findings is empty. Use status fail when any actionable finding exists.
+    on_pass:
+      goto: integration
+    on_fail:
+      goto: work
+  integration:
+    type: verify
+    command: npm run test:integration
+    on_pass:
+      goto: review_2
+    on_fail:
+      finish: integration failed
+  review_2:
+    type: review
+    on_fail_return_to: work
+    agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
+    approval: never
+    prompt: |
+      Review integration and prior review follow-up for correctness, regressions, missing tests, and risky assumptions.
+
+      Goal:
+      {{goal}}
+
+      Include compliance with the target project's applicable rules,
+      specifications, and guardrails in the review scope. Findings for
+      violations must identify the violated constraint and concrete evidence.
+
+      Report a semantic review verdict with status, summary, and findings.
+      Each finding needs severity, title, and actionable detail.
+      Use status pass only when findings is empty. Use status fail when any actionable finding exists.
+    on_pass:
+      goto: security
+    on_fail:
+      goto: work
+  security:
+    type: verify
+    command: ./scripts/security-gate.sh
+    on_pass:
+      finish: true
+    on_fail:
+      finish: security failed

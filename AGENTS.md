@@ -31,9 +31,13 @@ type system.
 
 ## Workflow Principle
 
-Workflow behavior belongs in TypeScript Temporal workflow code.
+Workflow behavior runs as Temporal workflow code generated from declarative
+`workflow.yaml` bundle source. Install validates that source and generates an
+explicit Temporal `workflow.mjs` wrapper plus `workflow.generated.mmd`.
+Operators author `workflow.yaml`; hand-written `workflow.mjs` is not a source
+bundle entrypoint.
 
-Workflow authoring must stay simple. Workflow code should make the workflow's
+Workflow authoring must stay simple. `workflow.yaml` should make the workflow's
 state order, branches, loops, prompts, and stop conditions obvious at a glance.
 Common run-record bookkeeping — applying activity results, attaching artifacts
 and findings, publishing status snapshots, finalizing runs, and standard
@@ -45,9 +49,17 @@ bundles installed via
 `tychonic workflows install`. Reference example bundles live under
 `examples/workflows/` and are explicitly opt-in installs, not host defaults.
 
-Configuration provides named activity instances and named policies for existing
-workflows. It does not define workflow graphs, ordering, branching, fan-out,
-joins, or loops.
+Runtime configuration provides named activity instances and named policies for
+existing workflows. It does not define workflow graphs, ordering, branching,
+fan-out, joins, or loops. Declarative `workflow.yaml` is a workflow bundle
+source, not a runtime config override.
+
+Every `type: review` state must declare `on_fail_return_to`, naming the state
+that failed review feedback returns to. Workflow code still owns the loop and
+must not invent a different failure destination at runtime.
+Declarative YAML wrappers generated at install time append failed review
+summaries and structured findings to the declared return state's next prompt
+when that return state is prompt-bearing.
 
 Review failure is part of the workflow state machine: when review does not pass,
 the workflow should continue back into fix work until it passes, reaches a
@@ -67,16 +79,17 @@ external agent CLI owns (model, reasoning effort, thinking budget, and
 similar) must stay optional; omission propagates to flag omission in the
 generated command.
 
-Configuration has one source per workflow: the installed bundle's
-`defaultProfile` export from `workflow.mjs` (see
-[src/catalog/SPEC.md](src/catalog/SPEC.md)).
+Configuration has one default source per workflow: bundles derive it from
+`workflow.yaml` (see [src/catalog/SPEC.md](src/catalog/SPEC.md)).
 
 A `--config <file>` override or a Temporal signal payload replaces the
 bundle's `defaultProfile` as a single whole object for that one invocation.
 No deep merge, no array merge, no implicit inheritance, no presets that
 silently fill fields.
 
-Workflow behavior is TypeScript code. Configuration never defines workflow
+Workflow behavior must be explicit in the installed Temporal workflow module.
+Declarative YAML bundles satisfy this by generating explicit state-NAME
+workflow code at install time. Runtime configuration never defines workflow
 graphs, branching, retry, or type-based orchestration.
 Workflows reference activities by name and call each activity explicitly.
 Helpers may reduce boilerplate around a named activity call, but they must not
@@ -179,7 +192,7 @@ author already pinned.
 Workflow run input must not make callers memorize workflow-internal prompt
 field names. Public top-level input fields are required `cwd`, optional `goal`,
 and optional `promptAdditions` only when the workflow explicitly supports
-additive per-state prompt instructions. Prompt text is owned by workflow code.
+additive per-state prompt instructions. Prompt text is owned by workflow source.
 `promptAdditions` keys must match promptable state NAMEs in the effective
 profile. Top-level prompt fields and agent-named input keys are forbidden.
 
@@ -240,11 +253,13 @@ configuration.
 
 ### 5. Configuration is data; orchestration is code.
 
-Configuration declares named instances and values. Workflow code decides
-order, retry, aggregation, branching, and every other control-flow concern.
-The line is sharp. Do not encode control flow in YAML, schema, or layered
-defaults. Do not let configuration silently influence which activity runs
-next.
+Runtime configuration declares named instances and values. Workflow source
+decides order, retry, aggregation, branching, and every other control-flow
+concern. The line is sharp. Do not encode control flow in runtime config,
+schema defaults, or layered defaults. Declarative `workflow.yaml` is the
+workflow source and must be translated into explicit Temporal workflow code at
+install time; it is not a config file that silently influences which activity
+runs next.
 
 ### 6. Do not invent concepts.
 

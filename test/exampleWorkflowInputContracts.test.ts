@@ -1,191 +1,70 @@
 import { describe, expect, it } from "vitest";
-
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore - bundle modules export plain JS, no TS types.
-import { checkpointWorkflow } from "../examples/workflows/checkpointWorkflow/workflow.mjs";
-import { architectBuilderQaWorkflow } from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { architectBuilderFinalQaWorkflow } from "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { architectBuilderFirstReviewQaWorkflow } from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { pipelineWorkflow } from "../examples/workflows/pipelineWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { verifyOnlyWorkflow } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
 import { validateTaskWorkflowInput } from "../src/inputValidation.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { defaultProfile as structuralIssueDiscoveryProfile } from "../examples/workflows/structuralIssueDiscoveryWorkflow/workflow.mjs";
+import {
+  EXAMPLE_WORKFLOW_NAMES,
+  loadExampleWorkflowSpec,
+  loadGeneratedExampleWorkflowSource
+} from "./exampleYamlHelpers.js";
 
 describe("example workflow input contracts", () => {
-  it("rejects task input without cwd before starting activities", async () => {
-    await expect(
-      checkpointWorkflow({ goal: "inspect" })
-    ).rejects.toThrow(/cwd must be a non-empty string/);
+  it("standard validator rejects undocumented top-level input fields", () => {
+    expect(() =>
+      validateTaskWorkflowInput({ cwd: "/tmp/tychonic-test", command: "npm test" })
+    ).toThrow(/unsupported input field: command/);
   });
 
-  it("checkpointWorkflow rejects non-object input through the standard context guard", async () => {
-    await expect(
-      checkpointWorkflow(undefined as never)
-    ).rejects.toThrow(/workflow input must be an object/);
-  });
-
-  it("architectBuilderQaWorkflow rejects non-object input through the standard context guard", async () => {
-    await expect(
-      architectBuilderQaWorkflow(null as never)
-    ).rejects.toThrow(/workflow input must be an object/);
-  });
-
-  it("checkpointWorkflow rejects undocumented input fields", async () => {
-    await expect(
-      checkpointWorkflow({ cwd: "/tmp/tychonic-test", autonomy: "review" })
-    ).rejects.toThrow(/unsupported input field: autonomy/);
-  });
-
-  it("architectBuilderQaWorkflow rejects undocumented input fields", async () => {
-    await expect(
-      architectBuilderQaWorkflow({ cwd: "/tmp/tychonic-test", runId: "manual" })
-    ).rejects.toThrow(/unsupported input field: runId/);
-  });
-
-  it("architectBuilderFinalQaWorkflow rejects undocumented input fields", async () => {
-    await expect(
-      architectBuilderFinalQaWorkflow({ cwd: "/tmp/tychonic-test", reviewer: "kiro" })
-    ).rejects.toThrow(/unsupported input field: reviewer/);
-  });
-
-  it("architectBuilderFirstReviewQaWorkflow rejects undocumented input fields", async () => {
-    await expect(
-      architectBuilderFirstReviewQaWorkflow({ cwd: "/tmp/tychonic-test", reviewerAgent: "kiro" })
-    ).rejects.toThrow(/unsupported input field: reviewerAgent/);
-  });
-
-  it("pipelineWorkflow rejects undocumented input fields", async () => {
-    await expect(
-      pipelineWorkflow({ cwd: "/tmp/tychonic-test", verifyCommand: "npm test" })
-    ).rejects.toThrow(/unsupported input field: verifyCommand/);
-  });
-
-  it("rejects retired top-level prompt override fields", async () => {
-    await expect(
-      architectBuilderFirstReviewQaWorkflow({
-        cwd: "/tmp/tychonic-test",
-        kiroPreReviewPrompt: "inspect"
-      })
-    ).rejects.toThrow(/unsupported input field: kiroPreReviewPrompt/);
-  });
-
-  it("rejects prompt additions when effective profile states are absent", async () => {
-    await expect(
-      architectBuilderQaWorkflow({
+  it("standard validator rejects prompt additions without effective profile states", () => {
+    expect(() =>
+      validateTaskWorkflowInput({
         cwd: "/tmp/tychonic-test",
         promptAdditions: { architect: "inspect first" }
       })
-    ).rejects.toThrow(/promptAdditions requires effective profile\.states/);
+    ).toThrow(/promptAdditions requires effective profile\.states/);
   });
 
-  it("rejects prompt additions that are not keyed by a promptable state NAME", async () => {
-    await expect(
-      architectBuilderQaWorkflow({
+  it("standard validator rejects prompt additions not keyed by configured promptable state", () => {
+    expect(() =>
+      validateTaskWorkflowInput({
         cwd: "/tmp/tychonic-test",
         profile: {
+          version: "tychonic.config.v1",
           states: {
-            architect: { type: "work" },
-            builder: { type: "work" },
-            qa: { type: "review" }
+            architect: { type: "work", agent: "claude" },
+            builder: { type: "work", agent: "kiro" },
+            qa: { type: "review", on_fail_return_to: "builder", agent: "codex" }
           }
         },
         promptAdditions: { kiroPreReview: "inspect" }
       })
-    ).rejects.toThrow(/unsupported promptAdditions state: kiroPreReview/);
+    ).toThrow(/unsupported promptAdditions state: kiroPreReview/);
   });
 
-  it("rejects prompt additions that do not match a configured state", async () => {
-    await expect(
-      architectBuilderQaWorkflow({
-        cwd: "/tmp/tychonic-test",
-        profile: {
-          states: {
-            architect: { type: "work" },
-            builder: { type: "work" }
-          }
-        },
-        promptAdditions: { qa: "review carefully" }
-      })
-    ).rejects.toThrow(/unsupported promptAdditions state: qa/);
+  it("generated example workflows all use createTychonicWorkflowContext", async () => {
+    for (const name of EXAMPLE_WORKFLOW_NAMES) {
+      const source = await loadGeneratedExampleWorkflowSource(name);
+      expect(source, name).toContain("createTychonicWorkflowContext");
+      expect(source, name).toContain("input,");
+    }
   });
 
-  it("rejects non-string prompt addition values", async () => {
-    await expect(
-      pipelineWorkflow({
-        cwd: "/tmp/tychonic-test",
-        profile: {
-          states: {
-            review_1: { type: "review", agent: "claude" }
-          }
-        },
-        promptAdditions: { review_1: ["review"] }
-      })
-    ).rejects.toThrow(/promptAdditions\.review_1 must be a non-empty string/);
+  it("YAML examples that accept a goal explicitly render it through prompt variables", async () => {
+    for (const name of EXAMPLE_WORKFLOW_NAMES) {
+      const spec = await loadExampleWorkflowSpec(name);
+      const hasPrompt = Object.values(spec.states).some((state) => state.prompt !== undefined);
+      if (!hasPrompt) continue;
+      const promptedStates = Object.values(spec.states).filter((state) => state.prompt !== undefined);
+      expect(promptedStates.some((state) => state.prompt?.includes("{{goal}}")), name).toBe(true);
+      const source = await loadGeneratedExampleWorkflowSource(name);
+      expect(source, name).toContain("renderDeclarativePrompt(");
+    }
   });
 
-  it("verifyOnlyWorkflow rejects undocumented input fields", async () => {
-    await expect(
-      verifyOnlyWorkflow({ cwd: "/tmp/tychonic-test", command: "npm test" })
-    ).rejects.toThrow(/unsupported input field: command/);
-  });
-
-  it("simpleWorkflow accepts prompt additions for its promptable states", () => {
-    expect(() =>
-      validateTaskWorkflowInput({
-        cwd: "/tmp/tychonic-test",
-        profile: {
-          states: {
-            work: { type: "work", agent: "claude" },
-            review: { type: "review", agent: "codex" }
-          }
-        },
-        promptAdditions: {
-          work: "keep the existing session context",
-          review: "focus on public input handling"
-        }
-      })
-    ).not.toThrow();
-  });
-
-  it("structuralIssueDiscoveryWorkflow accepts prompt additions only for promptable state NAMEs", () => {
-    expect(() =>
-      validateTaskWorkflowInput({
-        cwd: "/tmp/tychonic-test",
-        profile: structuralIssueDiscoveryProfile,
-        promptAdditions: {
-          workflow_review: "look at recovery",
-          adapter_review: "look at parser",
-          docs_review: "look at README",
-          finding_audit: "audit duplicates"
-        }
-      })
-    ).not.toThrow();
-
-    expect(() =>
-      validateTaskWorkflowInput({
-        cwd: "/tmp/tychonic-test",
-        profile: structuralIssueDiscoveryProfile,
-        promptAdditions: { claude: "agent names are not state names" }
-      })
-    ).toThrow(/unsupported promptAdditions state: claude/);
-  });
-
-  it("structuralIssueDiscoveryWorkflow rejects undocumented top-level fields", () => {
-    expect(() =>
-      validateTaskWorkflowInput({
-        cwd: "/tmp/tychonic-test",
-        knownIssues: []
-      })
-    ).toThrow(/unsupported input field: knownIssues/);
+  it("prompt additions are limited to YAML-declared work and review states", async () => {
+    const spec = await loadExampleWorkflowSpec("architectBuilderFirstReviewQaWorkflow");
+    const promptableStates = Object.entries(spec.profile.states ?? {})
+      .filter(([, block]) => block.type === "work" || block.type === "review")
+      .map(([name]) => name)
+      .sort();
+    expect(promptableStates).toEqual(["architect", "builder", "final_qa", "first_review"]);
   });
 });

@@ -1,11 +1,17 @@
 import { constants as fsConstants } from "node:fs";
-import { cp, access, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { cp, access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Parser, type Node as AcornNode } from "acorn";
 import { tychonicRuntimeDirs } from "./manager.js";
 import { TychonicConfigSchema, type TychonicConfig } from "../catalog/types.js";
 import { validateBundleFileShape } from "./bundleValidator.js";
+import {
+  generateDeclarativeWorkflowMermaid,
+  generateDeclarativeWorkflowModule,
+  parseDeclarativeWorkflowSpecYaml,
+  type DeclarativeWorkflowSpec
+} from "../declarative/workflowSpec.js";
 
 export interface InstalledWorkflowModule {
   name: string;
@@ -20,7 +26,16 @@ export interface WorkflowBundleInspection {
 }
 
 const BUNDLE_WORKFLOW_FILE = "workflow.mjs";
+const BUNDLE_WORKFLOW_SPEC_FILE = "workflow.yaml";
+const BUNDLE_GENERATED_MERMAID_FILE = "workflow.generated.mmd";
 const BUNDLE_README_FILE = "README.md";
+
+interface WorkflowBundleSourceInspection extends WorkflowBundleInspection {
+  kind: "declarative";
+  generatedWorkflowSource: string;
+  generatedMermaid: string;
+  workflowSpec: DeclarativeWorkflowSpec;
+}
 
 export async function resolveTychonicPackageRootFromCli(cliPath: string): Promise<string> {
   let dir = dirname(resolve(cliPath));
@@ -40,10 +55,10 @@ export async function resolveTychonicPackageRootFromCli(cliPath: string): Promis
 
 /**
  * Install a workflow bundle directory under
- * `<state>/workflows/modules/<name>/`. The source must be a directory
- * containing `workflow.mjs` and may also be a standard package directory
- * with separately installed dependencies (see src/temporal/SPEC.md §Workflow Modules →
- * Install-time validation).
+ * `<state>/workflows/modules/<name>/`. The source must be a directory with
+ * exactly one authoring entrypoint, `workflow.yaml`. Install generates the
+ * Temporal runtime `workflow.mjs` and Mermaid graph into the installed copy
+ * (see src/temporal/SPEC.md §Workflow Modules → Install-time validation).
  *
  * Validation runs fully before any copy: file shape, exported workflow
  * function name, `defaultProfile` schema parse, and cross-bundle export
@@ -69,12 +84,7 @@ export async function installRuntimeWorkflowModule(options: {
   }
   const name = safeWorkflowModuleName(basename(sourcePath));
 
-  const entries = await readdir(sourcePath);
-  validateBundleFileShape(entries);
-
-  const workflowSourcePath = join(sourcePath, BUNDLE_WORKFLOW_FILE);
-
-  const inspection = await inspectWorkflowModuleExports({ name, workflowPath: workflowSourcePath });
+  const inspection = await inspectWorkflowBundleSource({ name, sourcePath });
   assertBundleExportsWorkflowFunctionNamed(name, inspection.workflowFunctionNames);
 
   const installedBundles = (await listRuntimeWorkflowModules()).filter((bundle) => bundle.name !== name);
@@ -92,7 +102,7 @@ export async function installRuntimeWorkflowModule(options: {
     if (installedWorkflowNames.has(exportName) && exportName !== name) {
       throw new Error(
         `workflow export name conflict: bundle ${JSON.stringify(name)} exports ${JSON.stringify(exportName)} but an installed bundle already owns that workflow name. ` +
-          "Rename the export in workflow.mjs before installing this bundle."
+          "Remove or rename the conflicting installed workflow before installing this bundle."
       );
     }
   }
@@ -109,6 +119,16 @@ export async function installRuntimeWorkflowModule(options: {
   // half-copied bundle is never observed during ordinary operation.
   await rm(stagingDir, { recursive: true, force: true });
   await cp(sourcePath, stagingDir, { recursive: true });
+  await writeFile(
+    join(stagingDir, BUNDLE_WORKFLOW_FILE),
+    inspection.generatedWorkflowSource,
+    "utf8"
+  );
+  await writeFile(
+    join(stagingDir, BUNDLE_GENERATED_MERMAID_FILE),
+    inspection.generatedMermaid,
+    "utf8"
+  );
   await rm(targetDir, { recursive: true, force: true });
   await rename(stagingDir, targetDir);
 
@@ -189,6 +209,36 @@ export async function inspectBundle(bundle: { name: string; workflowPath: string
   return inspection;
 }
 
+export async function inspectWorkflowBundleDirectory(input: {
+  name: string;
+  sourcePath: string;
+}): Promise<WorkflowBundleInspection> {
+  return inspectWorkflowBundleSource(input);
+}
+
+async function inspectWorkflowBundleSource(input: {
+  name: string;
+  sourcePath: string;
+}): Promise<WorkflowBundleSourceInspection> {
+  const entries = await readdir(input.sourcePath);
+  validateBundleFileShape(entries);
+  const specPath = join(input.sourcePath, BUNDLE_WORKFLOW_SPEC_FILE);
+  const spec = parseDeclarativeWorkflowSpecYaml({
+    source: await readFile(specPath, "utf8"),
+    bundleName: input.name,
+    sourcePath: specPath
+  });
+  return {
+    kind: "declarative",
+    exportNames: ["defaultProfile", "workflowDefinition", input.name].sort((left, right) => left.localeCompare(right)),
+    workflowFunctionNames: [input.name],
+    defaultProfile: spec.profile,
+    workflowSpec: spec,
+    generatedWorkflowSource: generateDeclarativeWorkflowModule({ bundleName: input.name, spec }),
+    generatedMermaid: generateDeclarativeWorkflowMermaid(spec)
+  };
+}
+
 /**
  * Reject the case where two installed bundles would contribute the same
  * exported workflow function name. The invariant "bundle directory name
@@ -247,14 +297,15 @@ function basename(path: string): string {
 function assertBundleExportsWorkflowFunctionNamed(bundleName: string, workflowFunctionNames: string[]): void {
   if (!workflowFunctionNames.includes(bundleName)) {
     throw new Error(
-      `bundle directory name ${JSON.stringify(bundleName)} does not match any exported workflow function in workflow.mjs. ` +
-       "The bundle's directory name must equal the exported workflow function name."
+      `installed bundle directory name ${JSON.stringify(bundleName)} does not match any exported workflow function in generated workflow.mjs. ` +
+       "The installed bundle's directory name must equal the generated workflow function name."
     );
   }
 }
 
 /**
- * Extract exported names and the `defaultProfile` value from `workflow.mjs`
+ * Extract exported names, `defaultProfile`, and the generated
+ * `workflowDefinition` marker from installed generated `workflow.mjs`
  * by parsing it as an ES module AST — no staging directory, no
  * `node_modules` symlink, no child-process `import()`. This satisfies
  * AGENTS.md §16 by using a standard JavaScript parser instead of
@@ -265,7 +316,7 @@ function assertBundleExportsWorkflowFunctionNamed(bundleName: string, workflowFu
  *    `export class`, `export const|let|var <id>`, or `export { ... }`.
  *  - `export default` is ignored (bundles must export a named function
  *    whose name matches the bundle directory).
- *  - `defaultProfile` must be an object literal with JSON-like values
+ *  - `defaultProfile` and `workflowDefinition` must be object literals with JSON-like values
  *    (object / array / string / number / boolean / null /
  *    non-interpolated template literals). Any expression requiring
  *    runtime evaluation is rejected with a clear error. The extracted
@@ -297,6 +348,8 @@ async function inspectWorkflowModuleExports(bundle: {
   const topLevelFunctionNames = new Set<string>();
   let defaultProfileRaw: unknown;
   let defaultProfileFound = false;
+  let workflowDefinitionRaw: unknown;
+  let workflowDefinitionFound = false;
 
   // acorn ast.body is Node[]. We use `any` locally for the walker —
   // acorn's TS types use generic estree unions that require extra casts
@@ -336,6 +389,10 @@ async function inspectWorkflowModuleExports(bundle: {
               defaultProfileRaw = evalBundleStaticExpression(v.init, bundle);
               defaultProfileFound = true;
             }
+            if (v.id.name === "workflowDefinition" && v.init) {
+              workflowDefinitionRaw = evalBundleStaticExpression(v.init, bundle);
+              workflowDefinitionFound = true;
+            }
           }
         }
       }
@@ -356,6 +413,13 @@ async function inspectWorkflowModuleExports(bundle: {
               defaultProfileFound = true;
             }
           }
+          if (exportedName === "workflowDefinition" && localName) {
+            const init = topLevelInitializers.get(localName);
+            if (init) {
+              workflowDefinitionRaw = evalBundleStaticExpression(init, bundle);
+              workflowDefinitionFound = true;
+            }
+          }
         }
       }
     }
@@ -364,9 +428,15 @@ async function inspectWorkflowModuleExports(bundle: {
 
   if (!defaultProfileFound) {
     throw new Error(
-      `bundle ${JSON.stringify(bundle.name)} does not export a 'defaultProfile' object. Declare it in workflow.mjs per src/temporal/SPEC.md §Workflow-default Profile.`
+      `installed bundle ${JSON.stringify(bundle.name)} does not export a generated 'defaultProfile' object from workflow.mjs. Reinstall the workflow.yaml bundle.`
     );
   }
+  if (!workflowDefinitionFound) {
+    throw new Error(
+      `installed bundle ${JSON.stringify(bundle.name)} does not export a generated 'workflowDefinition' object from workflow.mjs. Reinstall the workflow.yaml bundle.`
+    );
+  }
+  assertGeneratedWorkflowDefinition({ bundle, workflowDefinition: workflowDefinitionRaw });
   const parsed = TychonicConfigSchema.safeParse(defaultProfileRaw);
   if (!parsed.success) {
     throw new Error(
@@ -382,6 +452,29 @@ async function inspectWorkflowModuleExports(bundle: {
   };
 }
 
+function assertGeneratedWorkflowDefinition(input: {
+  bundle: { name: string; workflowPath: string };
+  workflowDefinition: unknown;
+}): void {
+  const value = input.workflowDefinition;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(
+      `installed bundle ${JSON.stringify(input.bundle.name)} at ${input.bundle.workflowPath}: workflowDefinition must be a JSON-literal object generated from workflow.yaml`
+    );
+  }
+  const record = value as Record<string, unknown>;
+  if (record.version !== "tychonic.workflow.v1") {
+    throw new Error(
+      `installed bundle ${JSON.stringify(input.bundle.name)} at ${input.bundle.workflowPath}: workflowDefinition.version must be "tychonic.workflow.v1"`
+    );
+  }
+  if (record.name !== input.bundle.name) {
+    throw new Error(
+      `installed bundle ${JSON.stringify(input.bundle.name)} at ${input.bundle.workflowPath}: workflowDefinition.name must match the bundle directory name`
+    );
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function exportSpecifierName(node: any): string {
   if (node.type === "Identifier") return node.name;
@@ -393,7 +486,7 @@ function exportSpecifierName(node: any): string {
 function evalBundleStaticExpression(node: any, bundle: { name: string; workflowPath: string }): unknown {
   const fail = (reason: string): never => {
     throw new Error(
-      `bundle ${JSON.stringify(bundle.name)} at ${bundle.workflowPath}: defaultProfile must be a JSON-literal object; ${reason}`
+      `bundle ${JSON.stringify(bundle.name)} at ${bundle.workflowPath}: generated metadata must be JSON-literal; ${reason}`
     );
   };
   if (!node || typeof node !== "object" || !node.type) fail("missing expression node");
@@ -451,5 +544,7 @@ function isNotFoundError(error: unknown): boolean {
 
 export const BUNDLE_FILE_NAMES = {
   workflow: BUNDLE_WORKFLOW_FILE,
+  workflowSpec: BUNDLE_WORKFLOW_SPEC_FILE,
+  generatedMermaid: BUNDLE_GENERATED_MERMAID_FILE,
   readme: BUNDLE_README_FILE
 } as const;

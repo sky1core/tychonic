@@ -19,7 +19,7 @@ Run evidence storage belongs under the Tychonic user-home run evidence root:
 `~/.tychonic/runs/operational/<run-id>/` for operational runs and
 `~/.tychonic/runs/instances/<name>/<run-id>/` for isolated instances. Artifact
 and live-output paths recorded in `WorkflowRunRecord` are relative to the run's
-recorded `artifact_root`. The storage layer may resolve legacy
-target-repository `.tychonic/runs/...` paths already present in Temporal
-history for inspection, but new writes must not create a target-repository
-`.tychonic/` directory.
+recorded `artifact_root`, and `artifact_root` is required for artifact storage
+and workflow result snapshots. The storage layer must reject paths that escape
+the run root. New writes must not create a target-repository `.tychonic/`
+directory.

@@ -1,14 +1,26 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { loadExampleWorkflowSpec, loadGeneratedExampleWorkflowSource } from "./exampleYamlHelpers.js";
 
-const WORKFLOW_PATH = new URL("../examples/workflows/checkpointWorkflow/workflow.mjs", import.meta.url);
+describe("checkpointWorkflow YAML example", () => {
+  it("declares both review prompts in workflow.yaml", async () => {
+    const spec = await loadExampleWorkflowSpec("checkpointWorkflow");
+    expect(spec.states.semantic_review?.prompt).toContain("Review changes for correctness");
+    expect(spec.states.test_review?.prompt).toContain("Review test coverage for correctness");
+    expect(spec.states.semantic_review?.prompt).toContain("{{goal}}");
+    expect(spec.states.test_review?.prompt).toContain("{{goal}}");
+  });
 
-describe("checkpointWorkflow bundle example", () => {
-  it("passes the optional goal into both review prompts", async () => {
-    const source = await readFile(WORKFLOW_PATH, "utf8");
+  it("renders the optional run goal into generated review prompts", async () => {
+    const source = await loadGeneratedExampleWorkflowSource("checkpointWorkflow");
+    expect(source).toContain("renderDeclarativePrompt(");
+    expect(source).toContain("typeof input.goal === \"string\"");
+  });
 
-    expect(source).toContain('ctx.review("semantic_review", structuredReviewPrompt("changes", input.goal))');
-    expect(source).toContain('ctx.review("test_review", structuredReviewPrompt("test coverage", input.goal))');
-    expect(source).toContain("Workflow goal and review scope:");
+  it("routes failed reviews to the declared integration return state", async () => {
+    const spec = await loadExampleWorkflowSpec("checkpointWorkflow");
+    expect(spec.profile.states?.semantic_review?.on_fail_return_to).toBe("integration");
+    expect(spec.profile.states?.test_review?.on_fail_return_to).toBe("integration");
+    expect(spec.states.semantic_review?.on_fail).toEqual({ goto: "integration" });
+    expect(spec.states.test_review?.on_fail).toEqual({ goto: "integration" });
   });
 });

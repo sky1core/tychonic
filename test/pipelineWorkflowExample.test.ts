@@ -1,45 +1,30 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { inspectBundle } from "../src/temporal/workflowModules.js";
+import { loadExampleWorkflowSpec, loadGeneratedExampleWorkflowSource } from "./exampleYamlHelpers.js";
 
-const WORKFLOW_PATH = new URL("../examples/workflows/pipelineWorkflow/workflow.mjs", import.meta.url);
-const WORKFLOW_FILE_PATH = fileURLToPath(WORKFLOW_PATH);
-
-describe("pipelineWorkflow bundle example", () => {
-  it("threads goal through this workflow's work prompt and leaves prompt additions to the context helper", async () => {
-    const source = await readFile(WORKFLOW_PATH, "utf8");
-    expect(source).toContain('ctx.work(\n    "work",\n    workPrompt(input.goal)\n  )');
-    expect(source).toContain("Before editing, inspect the target project's applicable rules and");
-    expect(source).toContain('ctx.review(\n    "review_1",\n    structuredReviewPrompt("work stages 1-3")\n  )');
-    expect(source).not.toContain("withPromptAddition");
+describe("pipelineWorkflow YAML example", () => {
+  it("threads the pipeline through the YAML state order", async () => {
+    const spec = await loadExampleWorkflowSpec("pipelineWorkflow");
+    expect(spec.start).toBe("work");
+    expect(spec.states.work?.on_pass).toEqual({ goto: "static" });
+    expect(spec.states.static?.on_pass).toEqual({ goto: "unit" });
+    expect(spec.states.unit?.on_pass).toEqual({ goto: "review_1" });
+    expect(spec.states.review_1?.on_pass).toEqual({ goto: "integration" });
+    expect(spec.states.integration?.on_pass).toEqual({ goto: "review_2" });
+    expect(spec.states.review_2?.on_pass).toEqual({ goto: "security" });
   });
 
-  it("routes blocked review stages to triage instead of falling through to success", async () => {
-    const source = await readFile(WORKFLOW_PATH, "utf8");
-    expect(source).toContain('gateReviewStage(review1, "review_1")');
-    expect(source).toContain("reviewTriageInboxItem");
+  it("routes failed reviews back to work with generated feedback", async () => {
+    const source = await loadGeneratedExampleWorkflowSource("pipelineWorkflow");
+    expect(source).toContain('assertReviewFailReturnTo(input.profile, "review_1", "work")');
+    expect(source).toContain('assertReviewFailReturnTo(input.profile, "review_2", "work")');
+    expect(source).toContain("appendDeclarativeReviewFeedback");
+    expect(source).toContain("declarativeReviewFeedback");
   });
 
   it("asks for semantic review payload without host wire fields", async () => {
-    const source = await readFile(WORKFLOW_PATH, "utf8");
-    expect(source).toContain("structuredReviewPrompt(\"work stages 1-3\")");
-    expect(source).toContain("Report a semantic review verdict with status, summary, and findings.");
-    expect(source).not.toContain("Return only one JSON object");
-    expect(source).not.toContain("\"schema_version\": \"tychonic.review.v1\"");
-  });
-
-  it("declares its workflow-default profile via the defaultProfile export", async () => {
-    const inspection = await inspectBundle({
-      name: "pipelineWorkflow",
-      workflowPath: WORKFLOW_FILE_PATH
-    });
-    const states = inspection.defaultProfile.states ?? {};
-    expect(states.work?.type).toBe("work");
-    expect(states.review_1?.type).toBe("review");
-    expect(states.review_2?.type).toBe("review");
-    expect(states.security?.type).toBe("verify");
-    expect(states.integration?.type).toBe("verify");
-    expect(inspection.defaultProfile.version).toBe("tychonic.config.v1");
+    const spec = await loadExampleWorkflowSpec("pipelineWorkflow");
+    expect(spec.states.review_1?.prompt).toContain("Report a semantic review verdict with status, summary, and findings.");
+    expect(spec.states.review_1?.prompt).not.toContain("Return only one JSON object");
+    expect(spec.states.review_1?.prompt).not.toContain("tychonic.review.v1");
   });
 });

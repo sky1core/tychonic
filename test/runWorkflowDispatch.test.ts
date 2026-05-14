@@ -61,8 +61,8 @@ describe("run workflow dispatch", () => {
   // Workflow-specific policy validation (e.g. policies.loop.auto_continue)
   // is no longer a CLI preflight. With runInput.mjs removed, policy
   // validation runs inside the Temporal workflow sandbox via
-  // workflowPolicies.mjs. Testing that path requires a running Temporal
-  // and is covered by integration tests.
+  // the installed workflow wrapper. Testing that path requires a running
+  // Temporal and is covered by integration tests.
 });
 
 async function createRunDispatchFixture(): Promise<{

@@ -6,16 +6,21 @@ pass. It records each gate result and finishes; there is no retry loop.
 ## Purpose
 
 Use this when the workflow should collect fixed checkpoints in one pass:
-lint/unit/integration commands plus two review states, with integration placed
-before review, after semantic review, or as the final gate.
+lint/unit commands, two review states, and integration as the final gate.
 
 ## States
 
-- `lint` — `verify`
-- `unit_test` — `verify`
-- `integration` — `verify`
-- `semantic_review` — `review`
-- `test_review` — `review`
+| State | TYPE | Failed review returns to |
+|---|---|---|
+| `lint` | `verify` | - |
+| `unit_test` | `verify` | - |
+| `integration` | `verify` | - |
+| `semantic_review` | `review` | `integration` |
+| `test_review` | `review` | `integration` |
+
+This workflow is one-pass, so it does not auto-retry failed reviews. The review
+states still declare `on_fail_return_to` because the review-state contract
+requires an explicit failure destination in the effective profile.
 
 This example profile sets `semantic_review` to Claude `claude-opus-4-7` with
 `reasoning_effort: max` and `test_review` to Codex `gpt-5.5` with
@@ -54,17 +59,6 @@ JSON
 tychonic run checkpointWorkflow --input-file ./checkpoint-input.json --wait
 ```
 
-## Policies
-
-The workflow reads `policies.integration.position` to decide where the
-integration gate runs:
-
-| Value | Behavior |
-|---|---|
-| `before_ai_review` | Run integration before reviews. |
-| `after_ai_review` | Run integration after `semantic_review` and before `test_review`. |
-| `final_gate` | Run integration after both reviews. |
-
 ## Recovery
 
 This workflow does not wait for standard interaction approval. A failed gate is
@@ -77,5 +71,5 @@ of being ignored.
 
 ## Config Override
 
-`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+`--config <file>` replaces the bundle YAML-derived profile as one whole object. It
 does not merge with the bundle default.

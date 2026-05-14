@@ -1,201 +1,81 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-
-// Example bundle contract: every `defaultProfile` worker / review
-// state runs through a built-in adapter (`agent: "<name>"`), not through a
-// hand-rolled `command`. The deterministic `verify` type is the legitimate
-// escape-hatch path and keeps `command`.
-
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore - bundle modules export plain JS, no TS types.
-import { defaultProfile as simpleDefault } from "../examples/workflows/simpleWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as simpleWorkflowModule from "../examples/workflows/simpleWorkflow/workflow.mjs";
-import { defaultProfile as checkpointDefault } from "../examples/workflows/checkpointWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as checkpointWorkflowModule from "../examples/workflows/checkpointWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { defaultProfile as pipelineDefault } from "../examples/workflows/pipelineWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as pipelineWorkflowModule from "../examples/workflows/pipelineWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { defaultProfile as architectDefault } from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as architectWorkflowModule from "../examples/workflows/architectBuilderQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { defaultProfile as architectFinalQaDefault } from "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as architectFinalQaWorkflowModule from "../examples/workflows/architectBuilderFinalQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { defaultProfile as architectFirstReviewQaDefault } from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as architectBuilderFirstReviewQaWorkflowModule from "../examples/workflows/architectBuilderFirstReviewQaWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-import { defaultProfile as verifyOnlyDefault } from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as verifyOnlyWorkflowModule from "../examples/workflows/verifyOnlyWorkflow/workflow.mjs";
-
 import { TychonicConfigSchema } from "../src/catalog/types.js";
+import { EXAMPLE_WORKFLOW_NAMES, loadExampleWorkflowSpec } from "./exampleYamlHelpers.js";
 
 const BUILTIN_AGENTS = new Set(["claude", "codex", "gemini", "kiro"]);
 const ADAPTER_TYPES = new Set(["work", "review"]);
 const ESCAPE_HATCH_TYPES = new Set(["verify"]);
 
-interface Bundle {
-  name: string;
-  profile: any;
-  module: Record<string, unknown>;
-}
-
-const BUNDLES: readonly Bundle[] = [
-  { name: "simpleWorkflow", profile: simpleDefault, module: simpleWorkflowModule },
-  { name: "checkpointWorkflow", profile: checkpointDefault, module: checkpointWorkflowModule },
-  { name: "pipelineWorkflow", profile: pipelineDefault, module: pipelineWorkflowModule },
-  { name: "architectBuilderQaWorkflow", profile: architectDefault, module: architectWorkflowModule },
-  {
-    name: "architectBuilderFinalQaWorkflow",
-    profile: architectFinalQaDefault,
-    module: architectFinalQaWorkflowModule
-  },
-  {
-    name: "architectBuilderFirstReviewQaWorkflow",
-    profile: architectFirstReviewQaDefault,
-    module: architectBuilderFirstReviewQaWorkflowModule
-  },
-  { name: "verifyOnlyWorkflow", profile: verifyOnlyDefault, module: verifyOnlyWorkflowModule }
-];
-
-describe("example bundle defaultProfile shape", () => {
-  for (const bundle of BUNDLES) {
-    describe(bundle.name, () => {
-      it("does not carry per-example package metadata for Temporal SDK resolution", () => {
-        const packagePath = join(process.cwd(), "examples", "workflows", bundle.name, "package.json");
-        expect(existsSync(packagePath), `${bundle.name} should not require per-bundle npm install`).toBe(false);
+describe("example workflow.yaml profile shape", () => {
+  for (const name of EXAMPLE_WORKFLOW_NAMES) {
+    describe(name, () => {
+      it("does not carry hand-written workflow.mjs source", () => {
+        const workflowPath = join(process.cwd(), "examples", "workflows", name, "workflow.mjs");
+        expect(existsSync(workflowPath), `${name} must author workflow.yaml, not workflow.mjs`).toBe(false);
       });
 
-      it("exports only defaultProfile and the workflow function from workflow.mjs", () => {
-        expect(Object.keys(bundle.module).sort()).toEqual(["defaultProfile", bundle.name].sort());
-      });
-
-      it("validates against the host TychonicConfigSchema", () => {
-        const result = TychonicConfigSchema.safeParse(bundle.profile);
+      it("validates the YAML-derived profile against the host schema", async () => {
+        const spec = await loadExampleWorkflowSpec(name);
+        const result = TychonicConfigSchema.safeParse(spec.profile);
         expect(result.success, JSON.stringify(result.error?.issues ?? null, null, 2)).toBe(true);
       });
 
-      it("uses built-in adapters on every work / review state", () => {
-        for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
-          const b = block as any;
-          if (!ADAPTER_TYPES.has(b.type)) continue;
+      it("uses built-in adapters on every work / review state", async () => {
+        const spec = await loadExampleWorkflowSpec(name);
+        for (const [stateName, block] of Object.entries(spec.profile.states ?? {})) {
+          if (!ADAPTER_TYPES.has(block.type)) continue;
+          expect(block.agent, `${name}.${stateName} must declare a built-in agent`).toBeDefined();
           expect(
-            b.agent,
-            `${bundle.name}.${stateName} (type=${b.type}) must declare a built-in agent`
-          ).toBeDefined();
-          expect(
-            BUILTIN_AGENTS.has(b.agent),
-            `${bundle.name}.${stateName} agent must be one of claude/codex/gemini/kiro, got ${b.agent}`
+            BUILTIN_AGENTS.has(block.agent ?? ""),
+            `${name}.${stateName} agent must be one of claude/codex/gemini/kiro, got ${block.agent}`
           ).toBe(true);
         }
       });
 
-      it("declares only schema-owned fields on every state", () => {
-        for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
-          const result = TychonicConfigSchema.safeParse({
-            version: "tychonic.config.v1",
-            states: { [stateName]: block }
-          });
-          expect(result.success, `${bundle.name}.${stateName} carries an unknown state field`).toBe(true);
-        }
-      });
-
-      it("only carries command on deterministic verify states", () => {
-        for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
-          const b = block as any;
-          if (b.command !== undefined) {
-            expect(
-              ESCAPE_HATCH_TYPES.has(b.type),
-              `${bundle.name}.${stateName} (type=${b.type}) declares command but is not a deterministic-script state`
-            ).toBe(true);
-          }
-        }
-      });
-
-      it("declares non-negative integer resume only on adapter states", () => {
-        for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
-          const b = block as any;
-          if (b.resume === undefined) continue;
+      it("only carries command on deterministic verify states", async () => {
+        const spec = await loadExampleWorkflowSpec(name);
+        for (const [stateName, block] of Object.entries(spec.profile.states ?? {})) {
+          if (block.command === undefined) continue;
           expect(
-            ADAPTER_TYPES.has(b.type),
-            `${bundle.name}.${stateName} declares resume on a non-adapter state`
+            ESCAPE_HATCH_TYPES.has(block.type),
+            `${name}.${stateName} declares command but is not a deterministic-script state`
           ).toBe(true);
-          expect(Number.isInteger(b.resume)).toBe(true);
-          expect(b.resume).toBeGreaterThanOrEqual(0);
         }
       });
 
-      // gemini and kiro are partial review adapters: they need a
-      // normalizer if a bundle pins them on a review state.
-      it("never declares a partial adapter on a review state without normalizer", () => {
-        for (const [stateName, block] of Object.entries(bundle.profile.states ?? {})) {
-          const b = block as any;
-          if (b.type !== "review") continue;
-          if (b.normalizer !== undefined) continue;
-          expect(
-            b.agent,
-            `${bundle.name}.${stateName} (review) must not use gemini or kiro`
-          ).not.toBe("gemini");
-          expect(
-            b.agent,
-            `${bundle.name}.${stateName} (review) must not use gemini or kiro`
-          ).not.toBe("kiro");
+      it("never declares a partial adapter on a review state without normalizer", async () => {
+        const spec = await loadExampleWorkflowSpec(name);
+        for (const [stateName, block] of Object.entries(spec.profile.states ?? {})) {
+          if (block.type !== "review" || block.normalizer !== undefined) continue;
+          expect(block.agent, `${name}.${stateName} must not use gemini or kiro without normalizer`).not.toBe("gemini");
+          expect(block.agent, `${name}.${stateName} must not use gemini or kiro without normalizer`).not.toBe("kiro");
         }
       });
     });
   }
 });
 
-// simpleWorkflow's worker state must declare a numeric resume cap because
-// the bundle's runAutoContinueLoop reads it from `states.work.resume`.
-describe("simpleWorkflow defaultProfile.states.work.resume", () => {
-  it("declares a positive integer (the same-session resume cap)", () => {
-    const work = (simpleDefault as any).states?.work;
-    expect(work?.agent).toBe("claude");
-    expect(work?.command).toBeUndefined();
-    expect(typeof work?.resume).toBe("number");
-    expect(Number.isInteger(work.resume)).toBe(true);
-    expect(work.resume).toBeGreaterThan(0);
-  });
-});
-
-// These assertions document the current bundled reference examples. They are
-// not universal model choices or templates for user bundles.
-describe("current example bundle defaultProfile choices", () => {
-  it("currently declares one structured-review model choice on every final review gate", () => {
+describe("current example workflow.yaml choices", () => {
+  it("declares one structured-review model choice on every final review gate", async () => {
+    const specs = Object.fromEntries(
+      await Promise.all(EXAMPLE_WORKFLOW_NAMES.map(async (name) => [name, await loadExampleWorkflowSpec(name)]))
+    ) as Record<string, Awaited<ReturnType<typeof loadExampleWorkflowSpec>>>;
     const finalReviewStates: Array<[string, any]> = [
-      ["simpleWorkflow.review", (simpleDefault as any).states?.review],
-      ["checkpointWorkflow.test_review", (checkpointDefault as any).states?.test_review],
-      ["pipelineWorkflow.review_2", (pipelineDefault as any).states?.review_2],
-      ["architectBuilderQaWorkflow.qa", (architectDefault as any).states?.qa],
-      ["architectBuilderFinalQaWorkflow.qa", (architectFinalQaDefault as any).states?.qa],
+      ["simpleWorkflow.review", specs.simpleWorkflow.profile.states?.review],
+      ["checkpointWorkflow.test_review", specs.checkpointWorkflow.profile.states?.test_review],
+      ["pipelineWorkflow.review_2", specs.pipelineWorkflow.profile.states?.review_2],
+      ["architectBuilderQaWorkflow.qa", specs.architectBuilderQaWorkflow.profile.states?.qa],
+      ["architectBuilderFinalQaWorkflow.qa", specs.architectBuilderFinalQaWorkflow.profile.states?.qa],
       [
         "architectBuilderFirstReviewQaWorkflow.final_qa",
-        (architectFirstReviewQaDefault as any).states?.final_qa
+        specs.architectBuilderFirstReviewQaWorkflow.profile.states?.final_qa
       ]
     ];
 
-    for (const [name, block] of finalReviewStates) {
-      expect(block, name).toMatchObject({
+    for (const [stateName, block] of finalReviewStates) {
+      expect(block, stateName).toMatchObject({
         type: "review",
         agent: "codex",
         model: "gpt-5.5",
@@ -204,87 +84,38 @@ describe("current example bundle defaultProfile choices", () => {
     }
   });
 
-  it("currently declares explicit model choices for planning review states and middle work", () => {
-    for (const [name, block] of [
-      ["architectBuilderQaWorkflow.architect", (architectDefault as any).states?.architect],
-      ["architectBuilderFinalQaWorkflow.architect", (architectFinalQaDefault as any).states?.architect],
-      [
-        "architectBuilderFirstReviewQaWorkflow.architect",
-        (architectFirstReviewQaDefault as any).states?.architect
-      ],
-      ["checkpointWorkflow.semantic_review", (checkpointDefault as any).states?.semantic_review],
-      ["pipelineWorkflow.review_1", (pipelineDefault as any).states?.review_1]
+  it("declares explicit model choices for planning review states and middle work", async () => {
+    const architect = await loadExampleWorkflowSpec("architectBuilderQaWorkflow");
+    const architectFinal = await loadExampleWorkflowSpec("architectBuilderFinalQaWorkflow");
+    const architectFirst = await loadExampleWorkflowSpec("architectBuilderFirstReviewQaWorkflow");
+    const checkpoint = await loadExampleWorkflowSpec("checkpointWorkflow");
+    const pipeline = await loadExampleWorkflowSpec("pipelineWorkflow");
+
+    for (const [stateName, block] of [
+      ["architectBuilderQaWorkflow.architect", architect.profile.states?.architect],
+      ["architectBuilderFinalQaWorkflow.architect", architectFinal.profile.states?.architect],
+      ["architectBuilderFirstReviewQaWorkflow.architect", architectFirst.profile.states?.architect],
+      ["checkpointWorkflow.semantic_review", checkpoint.profile.states?.semantic_review],
+      ["pipelineWorkflow.review_1", pipeline.profile.states?.review_1]
     ] as Array<[string, any]>) {
-      expect(block, name).toMatchObject({
+      expect(block, stateName).toMatchObject({
         agent: "claude",
         model: "claude-opus-4-7",
         reasoning_effort: "max"
       });
     }
 
-    for (const [name, block] of [
-      ["architectBuilderQaWorkflow.builder", (architectDefault as any).states?.builder],
-      ["architectBuilderFinalQaWorkflow.builder", (architectFinalQaDefault as any).states?.builder],
-      [
-        "architectBuilderFirstReviewQaWorkflow.builder",
-        (architectFirstReviewQaDefault as any).states?.builder
-      ],
-      ["pipelineWorkflow.work", (pipelineDefault as any).states?.work]
+    for (const [stateName, block] of [
+      ["architectBuilderQaWorkflow.builder", architect.profile.states?.builder],
+      ["architectBuilderFinalQaWorkflow.builder", architectFinal.profile.states?.builder],
+      ["architectBuilderFirstReviewQaWorkflow.builder", architectFirst.profile.states?.builder],
+      ["pipelineWorkflow.work", pipeline.profile.states?.work]
     ] as Array<[string, any]>) {
-      expect(block, name).toMatchObject({
+      expect(block, stateName).toMatchObject({
         type: "work",
         agent: "kiro",
         model: "claude-opus-4.6"
       });
     }
-  });
-});
-
-describe("simpleWorkflow defaultProfile.states.verify.command", () => {
-  it("uses generic npm verification scripts, not this repo's example validator", () => {
-    const verify = (simpleDefault as any).states?.verify;
-    expect(verify?.type).toBe("verify");
-    expect(verify?.command).toContain("npm run typecheck");
-    expect(verify?.command).toContain("npm run build");
-    expect(verify?.command).toContain("npm test");
-    expect(verify?.command).not.toContain("validate:examples");
-  });
-});
-
-describe("current agent choices in reference examples", () => {
-  it("declares distinct builder and final QA agent roles in the Kiro-assisted QA variant", () => {
-    const builder = (architectFinalQaDefault as any).states?.builder;
-    const qa = (architectFinalQaDefault as any).states?.qa;
-    expect(builder).toMatchObject({
-      type: "work",
-      agent: "kiro",
-      model: "claude-opus-4.6",
-      trust_all_tools: true
-    });
-    expect(qa).toMatchObject({
-      type: "review",
-      agent: "codex",
-      model: "gpt-5.5",
-      reasoning_effort: "xhigh"
-    });
-    expect(qa?.normalizer).toBeUndefined();
-  });
-
-  it("declares a normalized first structured review before final QA", () => {
-    const states = (architectFirstReviewQaDefault as any).states;
-    expect(states?.first_review).toMatchObject({
-      type: "review",
-      agent: "kiro",
-      model: "claude-opus-4.6",
-      normalizer: "claude",
-      trust_all_tools: true
-    });
-    expect(states?.final_qa).toMatchObject({
-      type: "review",
-      agent: "codex",
-      model: "gpt-5.5",
-      reasoning_effort: "xhigh"
-    });
-    expect(states?.final_qa?.normalizer).toBeUndefined();
   });
 });

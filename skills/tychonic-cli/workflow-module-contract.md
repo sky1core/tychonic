@@ -4,34 +4,21 @@ Use this when writing or changing workflow bundles.
 
 ## Bundle Shape
 
-A workflow bundle is a directory containing `workflow.mjs`. The directory name
-must equal the exported workflow function name, and that name is what users pass
+A workflow bundle is a directory containing exactly one authoring entrypoint:
+declarative `workflow.yaml`. The directory name is the workflow name users pass
 to `tychonic run <name>`.
 
-`workflow.mjs` must export `defaultProfile`:
-
-```js
-export const defaultProfile = {
-  version: "tychonic.config.v1",
-  states: {
-    work: { type: "work", agent: "codex" },
-    verify: {
-      type: "verify",
-      command: `npm run typecheck
-npm run build
-npm test`
-    },
-    review: { type: "review", agent: "claude" }
-  }
-};
-```
+`workflow.yaml` must declare `name`, matching the bundle directory name.
+Install validates the YAML, derives the bundle `defaultProfile`, generates an
+explicit Temporal `workflow.mjs` wrapper, and writes `workflow.generated.mmd`.
+Edit `workflow.yaml`, not generated files.
 
 `tychonic run` validates the standard workflow input contract (required `cwd`,
 optional `goal`, optional `promptAdditions`) at CLI preflight before starting
 Temporal. `promptAdditions` keys are auto-derived from profile states with type
-`work` or `review`. `createTychonicWorkflowContext` repeats that standard
-validation at workflow start. Workflow modules that bypass the context helper
-call `validateTaskWorkflowInput(input)` from `tychonic/workflow` themselves.
+`work` or `review`. The generated wrapper uses
+`createTychonicWorkflowContext`, which repeats that standard validation at
+workflow start.
 
 At workflow start, Tychonic injects the effective profile into the workflow
 input's reserved `profile` field. Workflow code passes that profile to
@@ -42,28 +29,30 @@ input.
 Workflow run input must stay task-shaped. Public top-level input fields are
 required `cwd`, optional `goal`, and optional `promptAdditions`. The host
 auto-derives valid `promptAdditions` keys from profile states with type `work`
-or `review` and rejects unknown keys. Workflow code defines its own prompts.
-Do not expose top-level prompt fields or agent-named input keys. When using
-`createTychonicWorkflowContext`, pass only the workflow-owned base prompt to
-`ctx.work` or `ctx.review`; the context helper appends any validated
-`promptAdditions[stateName]` entry.
+or `review` and rejects unknown keys. Workflow source defines its own prompts.
+Do not expose top-level prompt fields or agent-named input keys. In
+`workflow.yaml`, `prompt` is valid only for `work` and `review` states. Prompt
+text may reference explicit `{{goal}}`; install rejects unknown `{{...}}`
+variables. The generated wrapper renders `{{goal}}` from public input `goal`,
+or from `(no explicit goal supplied)` when omitted, then appends validated
+`promptAdditions[stateName]`.
 
-The bundle may include `README.md`, `package.json`, lockfiles, relative modules
-imported by `workflow.mjs`, assets, and `node_modules`. Tychonic provides
-`@temporalio/workflow` and `tychonic/workflow` while bundling workflow code. If
-`workflow.mjs` imports any other package, ship that package in the bundle
-directory or pre-bundle it into `workflow.mjs`. Tychonic does not synthesize
-resolver state during install.
+The bundle may include `README.md` and reproducible supporting files, but
+workflow behavior is authored in `workflow.yaml`. Tychonic provides
+`@temporalio/workflow` and `tychonic/workflow` to the generated wrapper while
+bundling workflow code. Tychonic does not synthesize resolver state during
+install.
 
 ## Boundaries
 
-- Workflow code decides order, branching, loops, retry, gating, and stop
+- Workflow source decides order, branching, loops, retry, gating, and stop
   conditions.
-- Workflow code should stay small enough that the state order and stop
-  conditions are obvious. Use `tychonic/workflow` helpers for repeated
-  run-record bookkeeping; do not copy activity-result merge/finalize/standard
-  interaction plumbing into every bundle.
+- Workflow source should stay small enough that the state order and stop
+  conditions are obvious.
 - Config declares named state blocks and workflow-owned policy values.
+- Every `review` state declares `on_fail_return_to`; the target must be a
+  non-review state, and workflow code must route failed review feedback to that
+  declared state when it implements a review loop.
 - Activities execute one state invocation at a time.
 - State NAME is workflow-defined and product-facing.
 - Activity TYPE selects the activity contract.
@@ -71,7 +60,7 @@ resolver state during install.
   narrower TYPES such as architect, builder, QA, repair, or pre-review.
   Express those roles as state NAMEs.
 
-Do not encode workflow graph behavior in config. Do not add source-tree
+Do not encode workflow graph behavior in runtime config. Do not add source-tree
 shortcuts or alternate workflow execution paths.
 
 ## State Config
@@ -149,11 +138,13 @@ value to be an object or to use the state NAME grammar. A workflow that consumes
 a policy validates that policy value's shape. The standard interaction helper
 validates the `policies.interaction` shape that it consumes.
 
-## Activities
+## Generated Activity Calls
 
-Bundles call activities through `proxyActivities` from `@temporalio/workflow`.
+The installed generated wrapper calls activities through `proxyActivities` from
+`@temporalio/workflow`. Bundle authors express those calls by declaring state
+TYPE and state NAME in `workflow.yaml`; they do not hand-write activity calls.
 
-Available activities:
+Generated wrappers may call these activities:
 
 - `startRunActivity`
 - `collectGitFactsActivity`
@@ -170,10 +161,10 @@ must not choose which command or agent runs.
 
 Activities return `ActivityResult`. They do not mutate `input.run`; workflow
 code must merge returned states, attempts, artifacts, sessions, inbox items, and
-status into its local run copy. Prefer `createTychonicWorkflowContext` or
-`applyActivityResult` from `tychonic/workflow` for that merge path. Parsed
-failed review findings are promoted into run-level finding records by the
-standard helper; workflow-specific inbox routing remains workflow-owned.
+status into its local run copy. The generated wrapper uses the
+`tychonic/workflow` helper surface for that merge path. Parsed failed review
+findings are promoted into run-level finding records by the standard helper;
+workflow-specific inbox routing remains workflow-owned.
 
 ## Workflow Sandbox
 
@@ -190,57 +181,13 @@ Temporal workflow code is deterministic.
 
 ## Signals
 
-A workflow may register custom signal/query names it owns. Document each name,
-payload shape, and recovery behavior in the bundle README.
+Signal/query names, payload shapes, and recovery behavior must be expressible in
+the declarative YAML contract before bundle authors use them. Do not add a
+hand-written workflow module to register custom signal/query names.
 
-Use `createTychonicWorkflowContext` from `tychonic/workflow` for workflow
-modules that need start/worktree/work/review/finalize bookkeeping plus standard
-status snapshots:
-
-```js
-import { proxyActivities } from "@temporalio/workflow";
-import { createTychonicWorkflowContext } from "tychonic/workflow";
-
-const act = proxyActivities({
-  startToCloseTimeout: "24 hours",
-  heartbeatTimeout: "5 minutes",
-  retry: { maximumAttempts: 3 }
-});
-
-export async function myWorkflow(input) {
-  const ctx = createTychonicWorkflowContext({
-    input,
-    template: "my_workflow",
-    activities: act
-  });
-
-  await ctx.start();
-  await ctx.createWorktree();
-  await ctx.work("work", input.goal ?? "");
-  await ctx.review("review", "Review the worker result.");
-  return ctx.finish();
-}
-```
-
-This helper does not choose the next state. The workflow still calls each state
-by NAME and owns branches, loops, and stop conditions.
-
-Use `createTychonicRunState` directly only when a workflow needs custom
-snapshot handling outside the context helper. It supports `tychonic run --wait`,
-`tychonic wait <workflow-id>`, or status checks before final completion. The
-helper owns the standard `tychonic.workflow_state` query registration:
-
-```js
-import { createTychonicRunState } from "tychonic/workflow";
-
-const runState = createTychonicRunState();
-run = runState.update({ ...run, status: "running" });
-return runState.result(run);
-```
-
-Use `createTychonicInteraction(policy)` directly only when a workflow needs
-custom interactive behavior outside the context helper. It registers the
-standard signal/query names as one unit and exposes the approval gate, modify
-patch application, stray-signal drain, standard inbox item helpers,
-`policies.interaction` validation, and standard raw payload validation. Do not
-hand-register the standard interaction names one by one.
+The installed generated wrapper uses `createTychonicWorkflowContext` and related
+`tychonic/workflow` helpers for start/worktree/work/review/finalize bookkeeping
+and standard status snapshots. Bundle authors do not hand-write `workflow.mjs`
+to call those helpers. If a needed interaction or recovery shape is not
+expressible in `workflow.yaml`, update the declarative product contract and
+generator first instead of adding a hand-written workflow module.

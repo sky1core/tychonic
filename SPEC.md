@@ -51,7 +51,6 @@ Not supported:
 - organization worker pools, team quota pooling, or task queue tenancy
 - project working tree mutation by background automation
 - unsafe auto-fix
-- Tychonic-owned workflow DSL
 - full native desktop app
 - automatic issue/webhook processing
 - secret proxying or credential brokering
@@ -119,9 +118,17 @@ The active product path is TypeScript: CLI, Temporal workflows, configuration
 schema, agent adapters, and tests stay in one TypeScript package and type
 system.
 
-Workflow behavior belongs in TypeScript Temporal workflow code. Configuration
-declares named `states.<name>` blocks and named `policies.<name>` values. It
-does not define workflow graphs, ordering, branching, fan-out, joins, or loops.
+Workflow behavior runs as Temporal workflow code generated from declarative
+`workflow.yaml` bundle source. Install validates the YAML and generates
+explicit Temporal `workflow.mjs` wrappers. Hand-written `workflow.mjs` is not
+an operator-authored bundle entrypoint. Runtime configuration declares named
+`states.<name>` blocks and named `policies.<name>` values. It does not define
+workflow graphs, ordering, branching, fan-out, joins, or loops. Each `review`
+state block must explicitly declare `on_fail_return_to`, naming the non-review
+state that receives failed review feedback when the workflow loops. Declarative
+YAML wrappers generated at install time append failed review summaries and
+structured findings to that declared return state's next prompt when the return
+state is prompt-bearing.
 
 Tychonic core contains **zero workflow modules**. Workflows are user-supplied
 bundles installed via `tychonic workflows install`. Reference examples under
@@ -134,7 +141,9 @@ escape hatch for non-default execution paths.
 Public workflow run input must not require callers to memorize workflow-internal
 prompt fields. Public top-level input fields are required `cwd`, optional
 `goal`, and optional `promptAdditions` only when the workflow explicitly
-supports additive per-state prompt instructions.
+supports additive per-state prompt instructions. Declarative `workflow.yaml`
+prompt text may reference the explicit `{{goal}}` variable; unknown prompt
+variables are install-time validation errors.
 
 ## Cross-Module Invariants
 
@@ -145,9 +154,16 @@ SPEC:
   NAMEs and calls activities by NAME. TYPE only binds a state config block to
   the activity contract (`work`, `verify`, `review`) and must not drive
   branching, retry, aggregation, or candidate rotation.
-- **Configuration is data; orchestration is code.** Configuration declares
-  `states.<name>` blocks and workflow-owned `policies.<name>` values. Workflow
-  graphs, loops, ordering, joins, and retry decisions live in workflow code.
+- **Runtime configuration is data; workflow source owns orchestration.**
+  Runtime configuration declares `states.<name>` blocks and workflow-owned
+  `policies.<name>` values. Workflow graphs, loops, ordering, joins, and retry
+  decisions live in `workflow.yaml`, which is translated into explicit Temporal
+  workflow code at install time. A
+  `review` state's `on_fail_return_to` is the required declared failure
+  destination for review-loop feedback. The destination must be a non-review
+  state; it is not a runtime config graph DSL. In generated YAML workflows,
+  failed review summaries and structured findings are carried into that
+  destination state's next prompt when the destination is prompt-bearing.
 - **Config sources replace, not merge.** A bundle's `defaultProfile` is the
   default source. `--config <file>` replaces it as one whole object for that
   run. No field merge, deep merge, array merge, implicit inheritance, or hidden
@@ -155,7 +171,9 @@ SPEC:
 - **Run input is narrow and stable.** Public top-level workflow input is
   `cwd`, optional `goal`, and optional `promptAdditions`. `promptAdditions`
   keys are auto-derived from the effective profile (states with type `work` or
-  `review`). `profile` is reserved for Tychonic's internal handoff.
+  `review`). Declarative prompts may explicitly render `{{goal}}`; unknown
+  prompt variables are rejected during install. `profile` is reserved for
+  Tychonic's internal handoff.
 - **Run preflight happens before Temporal start.** `tychonic run` validates the
   standard workflow input contract before starting a Temporal workflow. Invalid
   input must not enter a Temporal workflow task retry loop.
@@ -182,11 +200,11 @@ The active product path is TypeScript.
 The Tychonic package itself — CLI, built-in Temporal workflow activities, bundle
 config schema, adapters — stays in one TypeScript package and type system.
 
-Operator-authored workflow bundles (`workflow.mjs`, documented in
-`docs/plugin-workflows.md`) are written in JavaScript (ESM) so Temporal's
-workflow sandbox can consume them directly without a TypeScript build step.
-Bundles are a first-class product surface and are not covered by this
-"TypeScript-only" rule.
+Operator-authored workflow bundles are declarative `workflow.yaml` files,
+documented in `docs/plugin-workflows.md`. YAML bundles are translated to
+JavaScript ESM during install so Temporal's workflow sandbox consumes generated
+`workflow.mjs`. Bundles are a first-class product surface and are not covered
+by this "TypeScript-only" rule.
 
 Non-TypeScript Temporal SDK bindings (Go, Python, Java) are not part of the
 current product path.

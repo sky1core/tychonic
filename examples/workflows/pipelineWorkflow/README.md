@@ -12,13 +12,15 @@ appear more than once without adding new activity kinds.
 
 ## States
 
-- `work` — `work`
-- `static` — `verify`
-- `unit` — `verify`
-- `review_1` — `review`
-- `integration` — `verify`
-- `review_2` — `review`
-- `security` — `verify`
+| State | TYPE | Failed review returns to |
+|---|---|---|
+| `work` | `work` | - |
+| `static` | `verify` | - |
+| `unit` | `verify` | - |
+| `review_1` | `review` | `work` |
+| `integration` | `verify` | - |
+| `review_2` | `review` | `work` |
+| `security` | `verify` | - |
 
 This example profile sets `work` to Kiro `claude-opus-4.6`, `review_1` to
 Claude `claude-opus-4-7` with `reasoning_effort: max`, and `review_2` to Codex
@@ -73,7 +75,7 @@ of being ignored.
 
 ## Config
 
-Inspect this workflow's installed `defaultProfile`:
+Inspect this workflow's installed YAML-derived profile:
 
 ```sh
 tychonic config show --workflow-name pipelineWorkflow --format yaml

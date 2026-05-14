@@ -13,6 +13,8 @@ artifact paths, inbox references, or user-facing run records.
 `ArtifactRecord`, `FindingRecord`, `DecisionInboxItemRecord`, and
 `AgentSessionRecord` are product record shapes. They describe state that is
 backed by Temporal workflow history. They are not a local persistence layer.
+`WorkflowRunRecord.artifact_root` is required and records the Tychonic-owned run
+evidence root for artifact and live-output path resolution.
 
 State status values are drawn from:
 

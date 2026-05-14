@@ -1,22 +1,23 @@
 # simpleWorkflow
 
 `simpleWorkflow` runs a work → verify → review development loop. When review
-fails and the worker session is resumable, the workflow can continue that same
-session until review passes or the configured loop budget is exhausted.
+fails, the generated YAML wrapper sends the structured review feedback back to
+`work` until review passes or `max_steps` is exhausted.
 
 ## Purpose
 
 Use this as an example delegated coding loop: one worker state,
-one deterministic verification gate, one structured review, and optional
-same-session continuation when review finds fixable issues.
+one deterministic verification gate, and one structured review.
 
 ## States
 
-- `work` — `work`
-- `verify` — `verify`
-- `review` — `review`
+| State | TYPE | Failed review returns to |
+|---|---|---|
+| `work` | `work` | - |
+| `verify` | `verify` | - |
+| `review` | `review` | `work` |
 
-Inspect this workflow's installed `defaultProfile`:
+Inspect this workflow's installed YAML-derived profile:
 
 ```sh
 tychonic workflows install ./examples/workflows/simpleWorkflow
@@ -78,17 +79,9 @@ tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 
 ## Loop Policy
 
-This workflow's `defaultProfile` includes `policies.loop`. The workflow reads:
-
-| Key | Purpose |
-|---|---|
-| `policies.loop.auto_continue` | Enables review-fail continuation. |
-| `policies.loop.max_review_iterations` | Outer review-loop budget. |
-| `states.work.resume` | Same-session resume budget for the worker state. |
-
-Loop behavior is configured through the profile, not workflow input. If
-`policies.loop.max_review_iterations` is omitted while auto-continue is enabled,
-the workflow uses its internal default.
+The loop is declared in `workflow.yaml`: `review.on_fail.goto` returns to
+`work`, and `max_steps` is the stop condition. `states.work.resume` is an
+agent-session resume budget for the worker state.
 
 ## Recovery
 
@@ -108,9 +101,9 @@ Ordinary state results are not rerun recovery. A failed verification command,
 a parsed failing review verdict, or malformed reviewer output remains the
 workflow's normal state-machine result.
 
-The run can also end in terminal `waiting_user` when the resume budget or
-review-iteration budget is exhausted with unresolved findings. Recover by
-inspecting evidence and starting a fresh run with adjusted input or config:
+The run can also end in terminal `waiting_user` when `max_steps` is exhausted
+with unresolved findings. Recover by inspecting evidence and starting a fresh
+run with adjusted input or config:
 
 ```sh
 tychonic inbox --workflow-id <id>
@@ -122,5 +115,5 @@ signal.
 
 ## Config Override
 
-`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+`--config <file>` replaces the bundle YAML-derived profile as one whole object. It
 does not merge with the bundle default.

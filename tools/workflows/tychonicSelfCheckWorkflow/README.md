@@ -4,6 +4,8 @@ Developer-only bootstrap workflow for this repository.
 
 This bundle is not a Tychonic core workflow and is not packaged for npm. Install
 it explicitly from the source checkout when validating Tychonic changes.
+Its workflow source is `workflow.yaml`; install generates the Temporal runtime
+wrapper.
 
 ## Purpose
 

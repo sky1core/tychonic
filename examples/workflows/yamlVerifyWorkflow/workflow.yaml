@@ -1,0 +1,16 @@
+version: tychonic.workflow.v1
+name: yamlVerifyWorkflow
+worktree: false
+max_steps: 3
+start: verify
+states:
+  verify:
+    type: verify
+    command: |
+      npm run typecheck
+      npm test
+    timeout: 30m
+    on_pass:
+      finish: true
+    on_fail:
+      finish: verify failed

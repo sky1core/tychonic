@@ -13,6 +13,7 @@ describe("inspectBundle defaultProfile extraction", () => {
         "  states: { verify: { type: 'verify', command: 'echo ok' } },",
         "  policies: { loop: { auto_continue: true, max_review_iterations: 3 } }",
         "};",
+        generatedWorkflowDefinitionSource(),
         "export async function exampleWorkflow() { return 'ok'; }"
       ].join("\n")
     );
@@ -32,6 +33,7 @@ describe("inspectBundle defaultProfile extraction", () => {
         "  version: 'tychonic.config.v1',",
         "  states: { verify: { type: 'not_a_real_type', command: 'echo ok' } }",
         "};",
+        generatedWorkflowDefinitionSource(),
         "export async function exampleWorkflow() { return 'ok'; }"
       ].join("\n")
     );
@@ -42,10 +44,10 @@ describe("inspectBundle defaultProfile extraction", () => {
 
   it("rejects a workflow that does not export defaultProfile", async () => {
     const workflowPath = await writeWorkflow(
-      "export async function exampleWorkflow() { return 'ok'; }"
+      [generatedWorkflowDefinitionSource(), "export async function exampleWorkflow() { return 'ok'; }"].join("\n")
     );
     await expect(inspectBundle({ name: "exampleWorkflow", workflowPath })).rejects.toThrow(
-      /does not export a 'defaultProfile' object/
+      /does not export a generated 'defaultProfile' object/
     );
   });
 
@@ -56,6 +58,7 @@ describe("inspectBundle defaultProfile extraction", () => {
         "  version: 'tychonic.config.v1',",
         "  states: { verify: { type: 'verify', command: 'echo ok' } }",
         "};",
+        generatedWorkflowDefinitionSource(),
         "export const exampleWorkflow = 123;"
       ].join("\n")
     );
@@ -71,8 +74,9 @@ describe("inspectBundle defaultProfile extraction", () => {
         "  version: 'tychonic.config.v1',",
         "  states: { verify: { type: 'verify', command: 'echo ok' } }",
         "};",
+        "const workflowDefinition = { version: 'tychonic.workflow.v1', name: 'exampleWorkflow' };",
         "async function exampleWorkflow() { return 'ok'; }",
-        "export { defaultProfile, exampleWorkflow };"
+        "export { defaultProfile, workflowDefinition, exampleWorkflow };"
       ].join("\n")
     );
     const inspection = await inspectBundle({ name: "exampleWorkflow", workflowPath });
@@ -86,11 +90,12 @@ describe("inspectBundle defaultProfile extraction", () => {
         "  return { version: 'tychonic.config.v1' };",
         "}",
         "export const defaultProfile = build();",
+        generatedWorkflowDefinitionSource(),
         "export async function exampleWorkflow() { return 'ok'; }"
       ].join("\n")
     );
     await expect(inspectBundle({ name: "exampleWorkflow", workflowPath })).rejects.toThrow(
-      /defaultProfile must be a JSON-literal object/
+      /generated metadata must be JSON-literal/
     );
   });
 
@@ -102,6 +107,7 @@ describe("inspectBundle defaultProfile extraction", () => {
         "  version: 'tychonic.config.v1',",
         "  states: { verify: { type: 'verify', command: `${cmd} ok` } }",
         "};",
+        generatedWorkflowDefinitionSource(),
         "export async function exampleWorkflow() { return 'ok'; }"
       ].join("\n")
     );
@@ -109,7 +115,26 @@ describe("inspectBundle defaultProfile extraction", () => {
       /template literal with interpolation is not supported/
     );
   });
+
+  it("rejects an installed workflow.mjs that does not export generated workflowDefinition", async () => {
+    const workflowPath = await writeWorkflow(
+      [
+        "export const defaultProfile = {",
+        "  version: 'tychonic.config.v1',",
+        "  states: { verify: { type: 'verify', command: 'echo ok' } }",
+        "};",
+        "export async function exampleWorkflow() { return 'ok'; }"
+      ].join("\n")
+    );
+    await expect(inspectBundle({ name: "exampleWorkflow", workflowPath })).rejects.toThrow(
+      /does not export a generated 'workflowDefinition' object/
+    );
+  });
 });
+
+function generatedWorkflowDefinitionSource(): string {
+  return "export const workflowDefinition = { version: 'tychonic.workflow.v1', name: 'exampleWorkflow' };";
+}
 
 async function writeWorkflow(source: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tychonic-default-profile-"));

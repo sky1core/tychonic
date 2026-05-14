@@ -199,9 +199,13 @@ tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 
 ## Workflow Config
 
-workflow bundle은 `workflow.mjs`와 `defaultProfile`을 가집니다. 이 profile은
-workflow author가 정한 기본 설정입니다. run마다 `--config <file>`로 대체할 수
-있지만 merge가 아니라 whole-object replacement입니다.
+workflow bundle은 선언형 `workflow.yaml`을 가집니다. YAML은 author가 소유한
+source of truth이며, install 시 `defaultProfile`과 Temporal wrapper가
+생성됩니다. run마다 `--config <file>`로 profile을 대체할 수 있지만 merge가
+아니라 whole-object replacement입니다.
+선언형 YAML의 review state가 fail하면 생성된 wrapper는 실패 summary와 structured
+finding을 `on_fail_return_to`가 가리키는 state가 prompt를 갖는 경우 그 다음
+prompt에 붙입니다.
 
 workflow JSON input은 task data입니다. config를 `profile`에 넣지 마십시오.
 `profile`은 Tychonic이 effective profile을 workflow code에 넘기기 위해 예약한
@@ -209,10 +213,11 @@ field입니다.
 
 workflow run input은 하나의 안정적인 task-shaped public contract를 씁니다:
 필수 `cwd`, 선택 `goal`, 그리고 workflow가 state별 추가 지시를 명시적으로 지원할
-때만 쓰는 선택 `promptAdditions`입니다. prompt 본문은 workflow code가
-정의합니다. `promptAdditions` key는 effective profile에 존재하는 promptable
-state NAME과 일치해야 합니다. top-level prompt field나 agent 이름을 input key로
-쓰지 마십시오.
+때만 쓰는 선택 `promptAdditions`입니다. prompt 본문은 workflow source가
+정의합니다. 선언형 prompt 본문은 명시적 `{{goal}}` 변수를 쓸 수 있고, 알 수 없는
+`{{...}}` 변수는 install validation에서 실패합니다. `promptAdditions` key는
+effective profile에 존재하는 promptable state NAME과 일치해야 합니다. top-level
+prompt field나 agent 이름을 input key로 쓰지 마십시오.
 
 변경된 checkout에서 workflow를 실행하기 전에는 contract gate를 먼저 실행하십시오:
 
@@ -226,6 +231,17 @@ npm run check:contracts
 
 이 gate는 production config, workflow input, review, interaction validator를
 호출합니다. 특정 workflow 실행이 성공했다는 증거를 대체하지는 않습니다.
+
+review-loop workflow 동작을 바꿀 때는 결정적 runtime smoke gate도 실행하십시오:
+
+```sh
+npm run verify:workflow-review-loop
+```
+
+이 gate는 review-loop architect/builder 예제 bundle을 격리된 local instance에
+설치하고 runtime을 시작한 뒤, 실패 review command가 다시 builder work로
+돌아가는지 실행 evidence로 확인하고 runtime이 정상 중지된 뒤 임시 instance
+data를 제거합니다.
 
 environment-specific agent setting을 생략한 config shape:
 
@@ -294,6 +310,7 @@ adapter는 direct file write를 거부하고, review turn 동안 tracked file이
 ## Example Workflows
 
 - `verifyOnlyWorkflow`: agent 없이 runtime만 확인하는 smoke workflow
+- `yamlVerifyWorkflow`: agent 없이 선언형 YAML 경로를 확인하는 smoke workflow
 - `simpleWorkflow`: work, verify, review를 한 번씩 실행하는 단순 reference workflow
 - `pipelineWorkflow`: 여러 stage와 반복된 `review` state를 보여주는 one-pass pipeline
 - `checkpointWorkflow`: 고정 deterministic gate와 두 structured review를 실행하는 workflow

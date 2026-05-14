@@ -8,7 +8,7 @@ capture, artifacts, and final status work without calling an external AI agent.
 
 Use this as the first runtime smoke reference. It has no external AI dependency
 and proves the non-agent command path before adding agent or review states.
-Inspect and adjust its `defaultProfile.command` for the target repository.
+Inspect and adjust its YAML `verify.command` for the target repository.
 
 ## States
 
@@ -43,7 +43,7 @@ tychonic run verifyOnlyWorkflow --input-file ./verify-input.json --wait
 
 ## Config
 
-This example's defaultProfile runs a multi-line command:
+This example's YAML-derived profile runs a multi-line command:
 
 ```yaml
 states:
@@ -54,5 +54,5 @@ states:
       git diff --check
 ```
 
-`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+`--config <file>` replaces the bundle YAML-derived profile as one whole object. It
 does not merge with the bundle default.

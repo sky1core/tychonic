@@ -150,9 +150,7 @@ describe("workflows install / remove under --instance do not touch launchd", () 
   });
 
   it("positive: a valid bundle installs with worker_replacement: null + instance note + launchd untouched", async () => {
-    // Positive path — prepare a minimal valid bundle (workflow.mjs
-    // exporting a workflow function whose name matches the bundle dir
-    // plus a defaultProfile object), install it under --instance, and
+    // Positive path — prepare a minimal valid YAML bundle, install it under --instance, and
     // assert that the CLI reached the success branch AND short-circuited
     // launchd. This is the end-to-end locked behavior: workflows install
     // --instance must never mutate operational launchd.
@@ -161,21 +159,21 @@ describe("workflows install / remove under --instance do not touch launchd", () 
     const bundleDir = join(await mkdtemp(join(tmpdir(), "tychonic-bundle-")), bundleName);
     await mkdir(bundleDir, { recursive: true });
     await writeFile(
-      join(bundleDir, "workflow.mjs"),
-      // A minimal workflow: named export whose name matches the bundle
-      // directory name, plus a `defaultProfile` object literal. The
-      // AST-based inspector (AGENTS §16) parses this without running the
-      // module.
+      join(bundleDir, "workflow.yaml"),
       [
-        `export async function ${bundleName}(input) {`,
-        "  return { runId: input.runId ?? 'x', status: 'succeeded', run: {}, artifactRoot: '' };",
-        "}",
-        "export const defaultProfile = {",
-        "  version: 'tychonic.config.v1',",
-        "  states: {",
-        "    work: { type: 'work', agent: 'claude' }",
-        "  }",
-        "};",
+        "version: tychonic.workflow.v1",
+        `name: ${bundleName}`,
+        "worktree: false",
+        "max_steps: 3",
+        "start: verify",
+        "states:",
+        "  verify:",
+        "    type: verify",
+        "    command: echo ok",
+        "    on_pass:",
+        "      finish: true",
+        "    on_fail:",
+        "      finish: verify failed",
         ""
       ].join("\n"),
       "utf8"

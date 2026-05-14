@@ -14,6 +14,10 @@ export const defaultProfile = {
     verify: { type: "verify", command: "echo ok" }
   }
 };
+export const workflowDefinition = {
+  version: "tychonic.workflow.v1",
+  name: "bundle"
+};
 export async function bundle() { return "ok"; }
 `;
 
@@ -55,13 +59,22 @@ describe("bundleConfig loader", () => {
 export const defaultProfile = {
   version: "tychonic.config.v1",
   states: {
+    work: {
+      type: "work",
+      agent: "claude"
+    },
     review: {
       type: "review",
+      on_fail_return_to: "work",
       agent: "claude",
       model: "opus",
       reasoning_effort: "max"
     }
   }
+};
+export const workflowDefinition = {
+  version: "tychonic.workflow.v1",
+  name: "bundle"
 };
 export async function bundle() { return "ok"; }
 `);
@@ -83,6 +96,10 @@ export const defaultProfile = {
       thinking_budget: "2000"
     }
   }
+};
+export const workflowDefinition = {
+  version: "tychonic.workflow.v1",
+  name: "bundle"
 };
 export async function bundle() { return "ok"; }
 `);

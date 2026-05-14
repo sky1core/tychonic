@@ -1,4 +1,5 @@
 import { configContractChecks } from "./config.js";
+import { declarativeWorkflowContractChecks } from "./declarativeWorkflow.js";
 import { interactionContractChecks } from "./interaction.js";
 import { reviewContractChecks } from "./review.js";
 import type { ContractCheck, ContractCheckResult } from "./types.js";
@@ -9,6 +10,7 @@ export type { ContractCheck, ContractCheckResult } from "./types.js";
 
 export const contractChecks: readonly ContractCheck[] = [
   ...configContractChecks,
+  ...declarativeWorkflowContractChecks,
   ...workflowInputContractChecks,
   ...reviewContractChecks,
   ...interactionContractChecks

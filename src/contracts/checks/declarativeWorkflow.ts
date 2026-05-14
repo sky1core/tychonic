@@ -1,0 +1,306 @@
+import {
+  generateDeclarativeWorkflowModule,
+  generateDeclarativeWorkflowMermaid,
+  parseDeclarativeWorkflowSpecYaml
+} from "../../declarative/workflowSpec.js";
+import type { ContractCheck } from "./types.js";
+import { expectAccept, expectReject } from "./types.js";
+
+export const declarativeWorkflowContractChecks: readonly ContractCheck[] = [
+  {
+    area: "declarativeWorkflow",
+    name: "accepts a minimal verify workflow.yaml",
+    run() {
+      expectAccept("minimal declarative verify workflow", () =>
+        parseDeclarativeWorkflowSpecYaml({
+          bundleName: "yamlVerifyWorkflow",
+          source: [
+            "version: tychonic.workflow.v1",
+            "name: yamlVerifyWorkflow",
+            "worktree: false",
+            "max_steps: 3",
+            "start: verify",
+            "states:",
+            "  verify:",
+            "    type: verify",
+            "    command: echo ok",
+            "    on_pass:",
+            "      finish: true",
+            "    on_fail:",
+            "      finish: verify failed",
+            ""
+          ].join("\n")
+        })
+      );
+    }
+  },
+  {
+    area: "declarativeWorkflow",
+    name: "rejects review fail transitions that target review states",
+    run() {
+      expectReject(
+        "declarative review fail target is review",
+        () =>
+          parseDeclarativeWorkflowSpecYaml({
+            bundleName: "badYamlWorkflow",
+            source: [
+              "version: tychonic.workflow.v1",
+              "name: badYamlWorkflow",
+              "worktree: true",
+              "max_steps: 5",
+              "start: work",
+              "states:",
+              "  work:",
+              "    type: work",
+              "    agent: claude",
+              "    prompt: work",
+              "    on_pass:",
+              "      goto: review",
+              "    on_fail:",
+              "      finish: work failed",
+              "  review:",
+              "    type: review",
+              "    agent: codex",
+              "    on_fail_return_to: review_fix",
+              "    prompt: review",
+              "    on_pass:",
+              "      finish: true",
+              "    on_fail:",
+              "      goto: review_fix",
+              "  review_fix:",
+              "    type: review",
+              "    agent: claude",
+              "    on_fail_return_to: work",
+              "    prompt: fix review",
+              "    on_pass:",
+              "      finish: true",
+              "    on_fail:",
+              "      goto: work",
+              ""
+            ].join("\n")
+          }),
+        /on_fail_return_to must name a non-review state/
+      );
+    }
+  },
+  {
+    area: "declarativeWorkflow",
+    name: "rejects review fail transitions that diverge from on_fail_return_to",
+    run() {
+      expectReject(
+        "declarative review fail transition mismatch",
+        () =>
+          parseDeclarativeWorkflowSpecYaml({
+            bundleName: "mismatchWorkflow",
+            source: [
+              "version: tychonic.workflow.v1",
+              "name: mismatchWorkflow",
+              "worktree: true",
+              "max_steps: 5",
+              "start: work",
+              "states:",
+              "  work:",
+              "    type: work",
+              "    agent: claude",
+              "    prompt: work",
+              "    on_pass:",
+              "      goto: review",
+              "    on_fail:",
+              "      finish: work failed",
+              "  verify:",
+              "    type: verify",
+              "    command: npm test",
+              "    on_pass:",
+              "      finish: true",
+              "    on_fail:",
+              "      finish: verify failed",
+              "  review:",
+              "    type: review",
+              "    agent: codex",
+              "    on_fail_return_to: work",
+              "    prompt: review",
+              "    on_pass:",
+              "      finish: true",
+              "    on_fail:",
+              "      goto: verify",
+              ""
+            ].join("\n")
+          }),
+        /on_fail\.goto must equal on_fail_return_to/
+      );
+    }
+  },
+  {
+    area: "declarativeWorkflow",
+    name: "rejects prompt on verify states",
+    run() {
+      expectReject(
+        "declarative verify prompt is dead surface",
+        () =>
+          parseDeclarativeWorkflowSpecYaml({
+            bundleName: "verifyPromptWorkflow",
+            source: [
+              "version: tychonic.workflow.v1",
+              "name: verifyPromptWorkflow",
+              "worktree: false",
+              "max_steps: 3",
+              "start: verify",
+              "states:",
+              "  verify:",
+              "    type: verify",
+              "    command: echo ok",
+              "    prompt: ignored",
+              "    on_pass:",
+              "      finish: true",
+              "    on_fail:",
+              "      finish: verify failed",
+              ""
+            ].join("\n")
+          }),
+        /prompt is not allowed for type verify/
+      );
+    }
+  },
+  {
+    area: "declarativeWorkflow",
+    name: "generated review fail transitions attach feedback to return target prompts",
+    run() {
+      expectAccept("declarative generated review feedback routing", () => {
+        const spec = parseDeclarativeWorkflowSpecYaml({
+          bundleName: "reviewFeedbackWorkflow",
+          source: [
+            "version: tychonic.workflow.v1",
+            "name: reviewFeedbackWorkflow",
+            "worktree: true",
+            "max_steps: 6",
+            "start: work",
+            "states:",
+            "  work:",
+            "    type: work",
+            "    command: cat >/dev/null",
+            "    prompt: do work",
+            "    on_pass:",
+            "      goto: review",
+            "    on_fail:",
+            "      finish: work failed",
+            "  review:",
+            "    type: review",
+            "    command: printf '%s\\n' '{\"schema_version\":\"tychonic.review.v1\",\"status\":\"pass\",\"summary\":\"ok\",\"findings\":[]}'",
+            "    on_fail_return_to: work",
+            "    prompt: review work",
+            "    on_pass:",
+            "      finish: true",
+            "    on_fail:",
+            "      goto: work",
+            ""
+          ].join("\n")
+        });
+        const source = generateDeclarativeWorkflowModule({
+          bundleName: "reviewFeedbackWorkflow",
+          spec
+        });
+        if (!source.includes("const feedbacksByState = new Map();")) {
+          throw new Error("generated workflow does not keep review feedback by return target state");
+        }
+        if (!source.includes("const returnTo = assertReviewFailReturnTo(input.profile, \"review\", \"work\");")) {
+          throw new Error("generated review fail transition does not assert the effective on_fail_return_to target");
+        }
+        if (!source.includes("addDeclarativeReviewFeedback(feedbacksByState, returnTo, declarativeReviewFeedback(\"review\", result));")) {
+          throw new Error("generated review fail transition does not attach feedback to asserted on_fail_return_to target");
+        }
+        if (!source.includes("ctx.work(\"work\", appendDeclarativeReviewFeedback(renderDeclarativePrompt(\"do work\", input), feedbacksByState.get(\"work\") ?? []))")) {
+          throw new Error("generated work state prompt does not include returned review feedback");
+        }
+      });
+    }
+  },
+  {
+    area: "declarativeWorkflow",
+    name: "rejects unsupported prompt variables",
+    run() {
+      for (const [label, prompt, expected] of [
+        ["unknown identifier", "Do {{unknown}}", /unsupported variable "unknown"/],
+        ["malformed dotted variable", "Do {{goal.text}}", /unsupported variable "goal\.text"/],
+        ["malformed dashed variable", "Do {{goal-name}}", /unsupported variable "goal-name"/],
+        ["empty variable", "Do {{ }}", /unsupported variable ""/]
+      ] as const) {
+        expectReject(
+          `declarative prompt ${label}`,
+          () =>
+            parseDeclarativeWorkflowSpecYaml({
+              bundleName: "badPromptVariableWorkflow",
+              source: [
+                "version: tychonic.workflow.v1",
+                "name: badPromptVariableWorkflow",
+                "worktree: true",
+                "max_steps: 3",
+                "start: work",
+                "states:",
+                "  work:",
+                "    type: work",
+                "    agent: claude",
+                `    prompt: ${JSON.stringify(prompt)}`,
+                "    on_pass:",
+                "      finish: true",
+                "    on_fail:",
+                "      finish: work failed",
+                ""
+              ].join("\n")
+            }),
+          expected
+        );
+      }
+    }
+  },
+  {
+    area: "declarativeWorkflow",
+    name: "generates unique Mermaid ids for punctuation-distinct states",
+    run() {
+      expectAccept("declarative Mermaid state ids do not collide", () => {
+        const spec = parseDeclarativeWorkflowSpecYaml({
+          bundleName: "punctuationWorkflow",
+          source: [
+            "version: tychonic.workflow.v1",
+            "name: punctuationWorkflow",
+            "worktree: false",
+            "max_steps: 5",
+            "start: qa-fix",
+            "states:",
+            "  qa-fix:",
+            "    type: verify",
+            "    command: echo dash",
+            "    on_pass:",
+            "      goto: qa.fix",
+            "    on_fail:",
+            "      finish: dash failed",
+            "  qa.fix:",
+            "    type: verify",
+            "    command: echo dot",
+            "    on_pass:",
+            "      goto: qa_fix",
+            "    on_fail:",
+            "      finish: dot failed",
+            "  qa_fix:",
+            "    type: verify",
+            "    command: echo underscore",
+            "    on_pass:",
+            "      finish: true",
+            "    on_fail:",
+            "      finish: underscore failed",
+            ""
+          ].join("\n")
+        });
+        const mermaid = generateDeclarativeWorkflowMermaid(spec);
+        if (!mermaid.includes("s0[\"qa-fix\\\\nverify\"]")) {
+          throw new Error("missing dash state id");
+        }
+        if (!mermaid.includes("s1[\"qa.fix\\\\nverify\"]")) {
+          throw new Error("missing dot state id");
+        }
+        if (!mermaid.includes("s2[\"qa_fix\\\\nverify\"]")) {
+          throw new Error("missing underscore state id");
+        }
+      });
+    }
+  }
+];

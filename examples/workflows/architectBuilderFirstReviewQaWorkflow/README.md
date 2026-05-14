@@ -3,12 +3,16 @@
 `architectBuilderFirstReviewQaWorkflow` runs architect → builder →
 first_review → final QA. Claude plans, Kiro implements and performs the first
 structured review, and Codex runs only after that first review passes.
+Its YAML state machine has a bounded builder/review loop.
 
 ## Purpose
 
 Use this when the workflow should maximize Kiro work before spending Codex final
 QA time. Kiro handles the implementation middle and the first pass/fail review;
 Codex is reserved for the final structured QA gate.
+When either `first_review` or `final_qa` does not pass, the workflow sends the
+review finding back to `builder` until both review gates pass or `max_steps` is
+reached.
 
 This example profile sets `architect` to Claude `claude-opus-4-7` with
 `reasoning_effort: max`, `builder` and `first_review` to Kiro
@@ -23,20 +27,33 @@ documented Kiro model id is globally invalid.
 
 ## States
 
-| State | TYPE | Role |
-|---|---|---|
-| `architect` | `work` | Produce the implementation plan. |
-| `builder` | `work` | Kiro implements the plan in the isolated worktree. |
-| `first_review` | `review` | Kiro produces the first review verdict; `normalizer: claude` structures the result. |
-| `final_qa` | `review` | Codex returns the final structured pass/fail review verdict. |
+| State | TYPE | Failed review returns to | Role |
+|---|---|---|---|
+| `architect` | `work` | - | Produce the implementation plan. |
+| `builder` | `work` | - | Kiro implements the plan in the isolated worktree. |
+| `first_review` | `review` | `builder` | Kiro produces the first review verdict; `normalizer: claude` structures the result. |
+| `final_qa` | `review` | `builder` | Codex returns the final structured pass/fail review verdict. |
 
 `first_review` is a real `review` state, not prose pre-review work. It uses
 `normalizer: claude` because Kiro review output must be normalized into the
 Tychonic review contract. The normalizer structures the Kiro review output; it
 does not perform a second independent review.
 
-If `first_review` does not pass, `final_qa` is not run. That keeps Codex reserved
-for runs that already cleared the first review gate.
+If `first_review` does not pass on an iteration, `final_qa` is not run for that
+iteration. The next builder attempt receives the first-review feedback. That
+keeps Codex reserved for iterations that already cleared the first review gate.
+
+## Run Mode
+
+Use `tychonic run architectBuilderFirstReviewQaWorkflow --input-file <file> --wait`
+when the caller should wait for the pipeline result before doing anything else.
+
+Failed `first_review` or `final_qa` verdicts loop back into `builder` with
+prior review feedback until both review gates pass or the YAML `max_steps` cap
+is reached.
+
+After the run reaches a terminal `waiting_user` status, interaction signals no
+longer resume it. Recovery is a fresh run with adjusted input or config.
 
 ## Input
 
@@ -73,10 +90,10 @@ tychonic run architectBuilderFirstReviewQaWorkflow --input-file ./architect-buil
 ## Trade-Off
 
 This adds one structured first review before Codex final QA. It can reduce Codex
-usage for runs with clear defects, but a failed first review stops the workflow
-and requires operator action or a separate repair workflow.
+usage for runs with clear defects because Codex only runs on iterations that
+pass `first_review`.
 
 ## Config Override
 
-`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
+`--config <file>` replaces the bundle YAML-derived profile as one whole object. It
 does not merge with the bundle default.

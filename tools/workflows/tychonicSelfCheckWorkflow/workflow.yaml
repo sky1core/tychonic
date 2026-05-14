@@ -1,0 +1,14 @@
+version: tychonic.workflow.v1
+name: tychonicSelfCheckWorkflow
+worktree: false
+max_steps: 1
+start: bootstrap
+states:
+  bootstrap:
+    type: verify
+    command: node scripts/tychonic-bootstrap-check.mjs
+    timeout: 6h
+    on_pass:
+      finish: true
+    on_fail:
+      finish: bootstrap self-check failed

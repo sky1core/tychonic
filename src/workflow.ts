@@ -83,6 +83,49 @@ export { validateTaskWorkflowInput, derivePromptableStates } from "./inputValida
 import { validateTaskWorkflowInput } from "./inputValidation.js";
 import type { TychonicWorkflowRuntimeInput, TaskWorkflowInputContract } from "./inputValidation.js";
 
+export function reviewFailReturnTarget(
+  profile: TychonicConfig | undefined,
+  reviewStateName: string
+): string {
+  const block = profile?.states?.[reviewStateName];
+  if (block === undefined) {
+    throw new Error(`review state '${reviewStateName}' is missing from effective profile.states`);
+  }
+  if (block.type !== "review") {
+    throw new Error(`state '${reviewStateName}' must have type 'review' to declare on_fail_return_to`);
+  }
+  if (block.on_fail_return_to === undefined) {
+    throw new Error(`review state '${reviewStateName}' must declare on_fail_return_to`);
+  }
+  const target = profile?.states?.[block.on_fail_return_to];
+  if (target === undefined) {
+    throw new Error(
+      `review state '${reviewStateName}' declares on_fail_return_to '${block.on_fail_return_to}', but that state is missing`
+    );
+  }
+  if (target.type === "review") {
+    throw new Error(
+      `review state '${reviewStateName}' declares on_fail_return_to '${block.on_fail_return_to}', but failed review feedback must return to a non-review state`
+    );
+  }
+  return block.on_fail_return_to;
+}
+
+export function assertReviewFailReturnTo(
+  profile: TychonicConfig | undefined,
+  reviewStateName: string,
+  expectedReturnTo: string
+): string {
+  const actual = reviewFailReturnTarget(profile, reviewStateName);
+  if (actual !== expectedReturnTo) {
+    throw new Error(
+      `review state '${reviewStateName}' declares on_fail_return_to '${actual}', ` +
+      `but this workflow routes failed review feedback to '${expectedReturnTo}'`
+    );
+  }
+  return actual;
+}
+
 export interface TychonicWorkflowRuntimeActivities {
   startRunActivity(input: {
     template: string;
@@ -93,12 +136,12 @@ export interface TychonicWorkflowRuntimeActivities {
   createWorktreeActivity?(input: {
     run: WorkflowRunRecord;
     cwd: string;
-  }): Promise<{ worktreePath: string; worktreeParentDir?: string; baseHead: string }>;
+  }): Promise<{ worktreePath: string; worktreeParentDir: string; baseHead: string }>;
   cleanupWorktreeActivity?(input: {
     run: WorkflowRunRecord;
     cwd: string;
     worktreePath: string;
-    worktreeParentDir?: string;
+    worktreeParentDir: string;
     baseHead: string;
   }): Promise<ActivityResult & { cleaned: true }>;
   runWorkerActivity?(input: Omit<ActivityInput<"work">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
@@ -391,11 +434,15 @@ export function createTychonicWorkflowContext(options: {
       if (!currentWorktreeBaseHead) {
         throw new Error("internal error: cleanup worktree baseHead is missing");
       }
+      if (!currentWorktreeParentDir) {
+        throw new Error("internal error: cleanup worktree parent dir is missing");
+      }
+      const cleanupWorktreeParentDir = currentWorktreeParentDir;
       const cleanupResult = await activities.cleanupWorktreeActivity({
         run: finalizedRun,
         cwd: input.cwd,
         worktreePath: cleanupWorktreePath,
-        ...(currentWorktreeParentDir ? { worktreeParentDir: currentWorktreeParentDir } : {}),
+        worktreeParentDir: cleanupWorktreeParentDir,
         baseHead: currentWorktreeBaseHead
       });
       currentWorktreePath = undefined;
@@ -628,5 +675,8 @@ function toWorkflowResult(
 }
 
 function artifactRootForRun(run: WorkflowRunRecord): string {
-  return run.artifact_root ?? `${run.cwd}/.tychonic/runs/${run.id}`;
+  if (!run.artifact_root) {
+    throw new Error("run.artifact_root is required");
+  }
+  return run.artifact_root;
 }

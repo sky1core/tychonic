@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { buildWorkflowBundle, resolveWorkflowModulePath } from "../src/temporal/worker.js";
 import {
@@ -13,14 +11,11 @@ import {
   removeRuntimeWorkflowModule
 } from "../src/temporal/workflowModules.js";
 
-const execFileAsync = promisify(execFile);
-
 describe("Temporal bridge", () => {
   it("resolves a packaged CLI path back to the tychonic package root", async () => {
     const fixture = await makePackagedCliFixture(
       await mkdtemp(join(tmpdir(), "tychonic-temporal-cli-root-")),
-      "sampleWorkflow",
-      bundleSource("sampleWorkflow", "fixture")
+      "sampleWorkflow"
     );
     await expect(resolveTychonicPackageRootFromCli(fixture.cliPath)).resolves.toBe(fixture.packageRoot);
   });
@@ -58,41 +53,13 @@ describe("Temporal bridge", () => {
 
   it("installs a packaged bundle by its directory name", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-temporal-current-packaged-"));
-    const fixture = await makePackagedCliFixture(cwd, "packagedBundle", bundleSource("packagedBundle", "fixture"));
+    const fixture = await makePackagedCliFixture(cwd, "packagedBundle");
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     process.env.TYCHONIC_STATE_HOME = join(cwd, "state");
     try {
       const installed = await installRuntimeWorkflowModule({ sourcePath: fixture.bundleSourceDir });
       expect(installed.name).toBe("packagedBundle");
       expect(installed.path).toMatch(/packagedBundle$/);
-    } finally {
-      if (originalStateHome === undefined) {
-        delete process.env.TYCHONIC_STATE_HOME;
-      } else {
-        process.env.TYCHONIC_STATE_HOME = originalStateHome;
-      }
-    }
-  });
-
-  it("rejects install-time workflow export name conflicts with installed bundles", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-temporal-export-conflict-"));
-    const originalStateHome = process.env.TYCHONIC_STATE_HOME;
-    process.env.TYCHONIC_STATE_HOME = join(cwd, "state");
-    // First bundle owns the `pipelineWorkflow` name through its own
-    // directory. The second bundle's workflow name is different, but it
-    // also exports a `pipelineWorkflow` function: the install must be
-    // refused because the combined runtime registry cannot carry two
-    // `pipelineWorkflow` workflow functions.
-    const first = await makeBundleDir(cwd, "pipelineWorkflow");
-    const second = await makeBundleDir(cwd, "secondPipeline", {
-      extraExport: "export async function pipelineWorkflow() { return 'two'; }"
-    });
-    try {
-      await installRuntimeWorkflowModule({ sourcePath: first });
-      await expect(installRuntimeWorkflowModule({ sourcePath: second })).rejects.toThrow(
-        /workflow export name conflict/
-      );
-      expect((await listRuntimeWorkflowModules()).map((module) => module.name)).toEqual(["pipelineWorkflow"]);
     } finally {
       if (originalStateHome === undefined) {
         delete process.env.TYCHONIC_STATE_HOME;
@@ -116,10 +83,10 @@ describe("Temporal bridge", () => {
     const betaDir = join(modulesDir, "betaWorkflow");
     await mkdir(alphaDir, { recursive: true });
     await mkdir(betaDir, { recursive: true });
-    await writeFile(join(alphaDir, "workflow.mjs"), bundleSource("alphaWorkflow", "a"), "utf8");
+    await writeFile(join(alphaDir, "workflow.mjs"), installedWorkflowSource("alphaWorkflow", "a"), "utf8");
     await writeFile(
       join(betaDir, "workflow.mjs"),
-      bundleSource("betaWorkflow", "b", "export async function alphaWorkflow() { return 'b-alpha'; }"),
+      installedWorkflowSource("betaWorkflow", "b", "export async function alphaWorkflow() { return 'b-alpha'; }"),
       "utf8"
     );
     try {
@@ -133,14 +100,14 @@ describe("Temporal bridge", () => {
     }
   });
 
-  it("builds a workflow bundle with Tychonic-provided workflow SDK and bundled dependencies", async () => {
+  it("builds workflow bundles generated from YAML source", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-temporal-package-state-"));
     const realStateHome = join(cwd, "real-state");
     const symlinkStateHome = join(cwd, "state-link");
     await mkdir(realStateHome, { recursive: true });
     await symlink(realStateHome, symlinkStateHome);
-    const alpha = await makeBundleDir(cwd, "alphaWorkflow", { localDependency: true });
-    const beta = await makeBundleDir(cwd, "betaWorkflow", { temporalImport: true });
+    const alpha = await makeBundleDir(cwd, "alphaWorkflow");
+    const beta = await makeBundleDir(cwd, "betaWorkflow");
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     process.env.TYCHONIC_STATE_HOME = symlinkStateHome;
     try {
@@ -162,7 +129,7 @@ describe("Temporal bridge", () => {
     const bundleDir = join(cwd, "verifyOnlyWorkflow");
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     await mkdir(bundleDir, { recursive: true });
-    await writeFile(join(bundleDir, "workflow.mjs"), await readFile(join(sourceDir, "workflow.mjs"), "utf8"), "utf8");
+    await writeFile(join(bundleDir, "workflow.yaml"), await readFile(join(sourceDir, "workflow.yaml"), "utf8"), "utf8");
     await writeFile(join(bundleDir, "README.md"), await readFile(join(sourceDir, "README.md"), "utf8"), "utf8");
     process.env.TYCHONIC_STATE_HOME = join(cwd, "state");
     try {
@@ -180,8 +147,7 @@ describe("Temporal bridge", () => {
 
 async function makePackagedCliFixture(
   root: string,
-  bundleName: string,
-  packagedContents: string
+  bundleName: string
 ): Promise<{ packageRoot: string; cliPath: string; bundleSourceDir: string }> {
   const packageRoot = join(root, "app", "node_modules", "tychonic");
   const cliPath = join(packageRoot, "dist", "cli", "main.js");
@@ -190,70 +156,51 @@ async function makePackagedCliFixture(
   await mkdir(bundleSourceDir, { recursive: true });
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "tychonic" }), "utf8");
   await writeFile(cliPath, "#!/usr/bin/env node\n", "utf8");
-  await writeFile(join(bundleSourceDir, "workflow.mjs"), packagedContents, "utf8");
+  await writeFile(join(bundleSourceDir, "workflow.yaml"), workflowYaml(bundleName), "utf8");
   return { packageRoot, cliPath, bundleSourceDir };
 }
 
 async function makeBundleDir(
   parent: string,
-  name: string,
-  options?: { extraExport?: string; localDependency?: boolean; temporalImport?: boolean }
+  name: string
 ): Promise<string> {
   const dir = join(parent, name);
   await mkdir(dir, { recursive: true });
-  await writeFile(
-    join(dir, "workflow.mjs"),
-    bundleSource(name, name, options?.extraExport, options?.localDependency, options?.temporalImport),
-    "utf8"
-  );
-  if (options?.localDependency) {
-    await writeFile(
-      join(dir, "package.json"),
-      JSON.stringify(
-        {
-          name,
-          private: true,
-          type: "module",
-          dependencies: { "local-workflow-helper": "1.0.0" }
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    const nodeModulesDir = join(dir, "node_modules");
-    const depDir = join(nodeModulesDir, "local-workflow-helper");
-    await mkdir(depDir, { recursive: true });
-    await writeFile(
-      join(depDir, "package.json"),
-      JSON.stringify({ name: "local-workflow-helper", type: "module", main: "index.js" }),
-      "utf8"
-    );
-    await writeFile(join(depDir, "index.js"), "export const helperTag = 'local-helper';\n", "utf8");
-  }
+  await writeFile(join(dir, "workflow.yaml"), workflowYaml(name), "utf8");
   return dir;
 }
 
-function bundleSource(
+function workflowYaml(name: string): string {
+  return [
+    "version: tychonic.workflow.v1",
+    `name: ${name}`,
+    "worktree: false",
+    "max_steps: 3",
+    "start: verify",
+    "states:",
+    "  verify:",
+    "    type: verify",
+    "    command: echo ok",
+    "    on_pass:",
+    "      finish: true",
+    "    on_fail:",
+    "      finish: verify failed",
+    ""
+  ].join("\n");
+}
+
+function installedWorkflowSource(
   exportName: string,
   tag: string,
-  extra?: string,
-  localDependency = false,
-  temporalImport = false
+  extra?: string
 ): string {
   const lines = [
-    ...(temporalImport
-      ? [
-          'import { proxyActivities } from "@temporalio/workflow";',
-          'proxyActivities({ startToCloseTimeout: "1 minute" });'
-        ]
-      : []),
-    ...(localDependency ? ['import { helperTag } from "local-workflow-helper";'] : []),
     "export const defaultProfile = {",
     "  version: 'tychonic.config.v1',",
     "  states: { verify: { type: 'verify', command: 'echo ok' } }",
     "};",
-    `export async function ${exportName}() { return ${localDependency ? "helperTag" : JSON.stringify(tag)}; }`
+    `export const workflowDefinition = { version: 'tychonic.workflow.v1', name: ${JSON.stringify(exportName)} };`,
+    `export async function ${exportName}() { return ${JSON.stringify(tag)}; }`
   ];
   if (extra) lines.push(extra);
   lines.push("");

@@ -13,7 +13,8 @@ verification.
 
 - Temporal workflow history and Temporal APIs are the product state authority.
 - Tychonic core ships no host-owned workflows.
-- Workflows are installed bundles with `workflow.mjs` and `defaultProfile`.
+- Workflows are installed bundles authored as declarative `workflow.yaml`.
+  Install generates the Temporal wrapper and Mermaid graph.
 - There are no built-in, official, default, or host-seeded workflows. Reference
   examples under `examples/workflows/` are inert files, even when included in a
   package install, until an operator explicitly installs one with
@@ -24,9 +25,9 @@ verification.
   availability, plan/tier, quota, pricing, region/country access, and
   organization policy differ by operator, so Tychonic does not provide one
   default workflow profile to reuse unchanged.
-- Workflow code owns ordering, branching, loops, retry, recovery, and signals.
-- Workflow modules should stay simple: use `tychonic/workflow` helpers for
-  repeated run-record bookkeeping, but keep ordering and branching explicit.
+- Workflow source owns ordering, branching, loops, retry, recovery, and signals.
+- Workflow modules should stay simple: author `workflow.yaml`; install generates
+  the `tychonic/workflow` helper-backed Temporal wrapper.
 - Config declares named `states.<name>` blocks and workflow-owned
   `policies.<name>` values. It is not a workflow graph.
 
@@ -145,6 +146,8 @@ workflow: required `cwd`, optional `goal`, and optional `promptAdditions` only
 when the workflow exposes extra state instructions. The workflow owns policy
 keys, artifacts, inbox items, signals, and recovery flow. Read the workflow
 README before configuring or operating that workflow.
+Declarative prompts include `goal` only through explicit `{{goal}}` variables;
+unknown prompt variables are install-time errors.
 
 Before running a workflow from a changed checkout, run the contract gate:
 
@@ -173,7 +176,8 @@ inside a Temporal workflow task retry loop.
 
 ## Bundle Config
 
-The installed bundle's `defaultProfile` is the default config source.
+The installed bundle's `defaultProfile` is the default config source. Bundles
+derive it from `workflow.yaml`.
 `--config <file>` replaces that profile for one invocation as a whole object.
 There is no merge.
 
@@ -214,6 +218,7 @@ states:
       npm test
   qa:
     type: review
+    on_fail_return_to: builder
     agent: codex
     approval: never
 ```
@@ -235,8 +240,15 @@ value to be an object or to use the state NAME grammar. The workflow that
 consumes a policy validates that policy value's shape.
 
 Allowed state-block fields are `type`, `agent`, `normalizer`, `command`,
-`model`, `reasoning_effort`, `resume`, `timeout`, `sandbox`, `approval`,
-`permission_mode`, and `trust_all_tools`.
+`on_fail_return_to`, `model`, `reasoning_effort`, `resume`, `timeout`,
+`sandbox`, `approval`, `permission_mode`, and `trust_all_tools`.
+
+Every `review` state must declare `on_fail_return_to`, naming the non-review
+state that receives failed review feedback when the workflow loops. The workflow
+still owns the loop and must route failed review feedback to that declared
+state. For declarative `workflow.yaml`, the generated wrapper appends failed
+review summaries and structured findings to that return state's next prompt
+when the return state is prompt-bearing.
 
 `model` applies to the primary `agent`. `reasoning_effort` is supported by
 `claude` and `codex`. Omitted fields become omitted CLI flags/config
@@ -256,6 +268,7 @@ Example Claude state using a versionless alias:
 ```yaml
 review:
   type: review
+  on_fail_return_to: work
   agent: claude
   model: opus
   reasoning_effort: max
@@ -266,6 +279,7 @@ Example Claude state using an exact versioned name:
 ```yaml
 review:
   type: review
+  on_fail_return_to: work
   agent: claude
   model: claude-opus-4-7
   reasoning_effort: max

@@ -1,0 +1,80 @@
+version: tychonic.workflow.v1
+name: checkpointWorkflow
+worktree: false
+max_steps: 8
+start: lint
+states:
+  lint:
+    type: verify
+    command: npm run lint
+    timeout: 10m
+    on_pass:
+      goto: unit_test
+    on_fail:
+      finish: lint failed
+  unit_test:
+    type: verify
+    command: npm test
+    timeout: 30m
+    on_pass:
+      goto: semantic_review
+    on_fail:
+      finish: unit_test failed
+  semantic_review:
+    type: review
+    on_fail_return_to: integration
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+    timeout: 20m
+    prompt: |
+      Review changes for correctness, regressions, missing tests, and risky assumptions.
+
+      Goal:
+      {{goal}}
+
+      Include compliance with the target project's applicable rules,
+      specifications, and guardrails in the review scope. Findings for
+      violations must identify the violated constraint and concrete evidence.
+
+      Report a semantic review verdict with status, summary, and findings.
+      Each finding needs severity, title, and actionable detail.
+      Use status pass only when findings is empty. Use status fail when any actionable finding exists.
+    on_pass:
+      goto: test_review
+    on_fail:
+      goto: integration
+  test_review:
+    type: review
+    on_fail_return_to: integration
+    agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
+    approval: never
+    timeout: 20m
+    prompt: |
+      Review test coverage for correctness, regressions, missing tests, and risky assumptions.
+
+      Goal:
+      {{goal}}
+
+      Include compliance with the target project's applicable rules,
+      specifications, and guardrails in the review scope. Findings for
+      violations must identify the violated constraint and concrete evidence.
+
+      Report a semantic review verdict with status, summary, and findings.
+      Each finding needs severity, title, and actionable detail.
+      Use status pass only when findings is empty. Use status fail when any actionable finding exists.
+    on_pass:
+      goto: integration
+    on_fail:
+      goto: integration
+  integration:
+    type: verify
+    command: npm run integration
+    timeout: 45m
+    on_pass:
+      finish: true
+    on_fail:
+      finish: integration failed

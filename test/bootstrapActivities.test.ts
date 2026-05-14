@@ -261,42 +261,6 @@ describe("bootstrap activities", () => {
       });
     });
 
-    it("derives the parent from recorded worktreePath for legacy cleanup inputs", async () => {
-      await withTychonicStateHome(async (stateHome) => {
-        const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-legacy-"));
-        await execFileAsync("git", ["init"], { cwd });
-        await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
-        await execFileAsync("git", ["add", "seed.txt"], { cwd });
-        await execFileAsync(
-          "git",
-          ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
-          { cwd }
-        );
-
-        const run = baseRun("run_wt_cleanup_legacy");
-        run.artifact_root = join(stateHome, ".tychonic", "runs", "operational", run.id);
-        const created = await createWorktreeActivity({ run, cwd });
-        await writeFile(join(created.worktreePath, "seed.txt"), "legacy cleanup\n", "utf8");
-
-        const otherStateHome = await mkdtemp(join(tmpdir(), "tychonic-other-state-home-"));
-        process.env.TYCHONIC_STATE_HOME = otherStateHome;
-        try {
-          const cleanup = await cleanupWorktreeActivity({
-            run,
-            cwd,
-            worktreePath: created.worktreePath,
-            baseHead: created.baseHead
-          });
-
-          await expect(access(created.worktreePath)).rejects.toThrow();
-          expect(cleanup.cleanupOutcome.artifacts).toHaveLength(1);
-          expect(created.worktreeParentDir).toBe(join(stateHome, ".tychonic", "worktrees", "operational"));
-        } finally {
-          process.env.TYCHONIC_STATE_HOME = stateHome;
-        }
-      });
-    });
-
     it("rejects non-Tychonic paths before staging a patch", async () => {
       const cwd = await mkdtemp(join(tmpdir(), "ordinary-worktree-"));
       await execFileAsync("git", ["init"], { cwd });
@@ -315,6 +279,7 @@ describe("bootstrap activities", () => {
           run: baseRun("run_reject_cleanup"),
           cwd,
           worktreePath: cwd,
+          worktreeParentDir: join(tmpdir(), "tychonic-reject-worktrees"),
           baseHead: baseHead.trim()
         })
       ).rejects.toThrow(/refusing to remove non-Tychonic worktree path/);
@@ -457,6 +422,7 @@ function baseRun(id: string): WorkflowRunRecord {
     template: "checkpoint",
     status: "running",
     cwd: "/ignored",
+    artifact_root: join(tmpdir(), "tychonic-test-runs", id),
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     states: [],

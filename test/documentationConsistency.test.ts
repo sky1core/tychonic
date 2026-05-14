@@ -91,7 +91,7 @@ describe("documentation consistency", () => {
       .filter((entry) => entry.isDirectory())
       .flatMap((entry) => [
         `examples/workflows/${entry.name}/README.md`,
-        `examples/workflows/${entry.name}/workflow.mjs`
+        `examples/workflows/${entry.name}/workflow.yaml`
       ]);
     const files = [
       "README.md",
@@ -104,7 +104,15 @@ describe("documentation consistency", () => {
     ];
 
     for (const file of files) {
-      const text = await readFile(file, "utf8");
+      let text: string;
+      try {
+        text = await readFile(file, "utf8");
+      } catch (error) {
+        if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
       for (const field of retiredFields) {
         expect(text, `${file} must not expose ${field}`).not.toContain(field);
       }

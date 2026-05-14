@@ -1,0 +1,82 @@
+version: tychonic.workflow.v1
+name: architectBuilderQaWorkflow
+worktree: true
+max_steps: 8
+start: architect
+states:
+  architect:
+    type: work
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    timeout: 30m
+    permission_mode: plan
+    prompt: |
+      You are the architect stage of a three-stage delegated-work pipeline.
+
+      Goal:
+      {{goal}}
+
+      Before designing, inspect the target project's applicable rules,
+      specifications, and guardrails. Treat relevant constraints as part of
+      the design input, and mention the constraints you applied in the design
+      output. Do not invent constraints that are not present.
+
+      Deliver a concrete design: file changes to make, public APIs to add or
+      remove, validation steps, and explicit risks. Do NOT implement yet.
+    on_pass:
+      goto: builder
+    on_fail:
+      finish: architect failed
+  builder:
+    type: work
+    agent: kiro
+    model: claude-opus-4.6
+    resume: 2
+    timeout: 60m
+    trust_all_tools: true
+    sandbox: workspace-write
+    approval: never
+    prompt: |
+      You are the builder stage. Implement the architect output for this run.
+
+      Goal:
+      {{goal}}
+
+      Before editing, inspect the target project's applicable rules and
+      specifications. Follow relevant constraints while implementing, and
+      include the constraints you checked plus compliance status in your
+      final note.
+
+      Apply the architect design as code changes and tests. Do not expand scope beyond the design.
+    on_pass:
+      goto: qa
+    on_fail:
+      finish: builder failed
+  qa:
+    type: review
+    on_fail_return_to: builder
+    agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
+    approval: never
+    timeout: 30m
+    prompt: |
+      You are the QA reviewer for this three-stage run.
+
+      Goal:
+      {{goal}}
+
+      Include compliance with the target project's applicable rules,
+      specifications, and guardrails in the review scope. Verify that the
+      goal, architect design, builder output, and tests follow relevant
+      constraints. Findings for violations must identify the violated
+      constraint and concrete evidence.
+
+      Report a semantic review verdict with status, summary, and findings.
+      Each finding needs severity, title, and actionable detail.
+      Use status pass only when findings is empty. Use status fail when any actionable finding exists.
+    on_pass:
+      finish: true
+    on_fail:
+      goto: builder

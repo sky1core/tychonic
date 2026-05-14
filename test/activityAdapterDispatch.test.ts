@@ -247,6 +247,7 @@ describe("runReviewActivity adapter dispatch", () => {
         states: {
           [REVIEW_NAME]: {
             type: "review",
+            on_fail_return_to: WORK_NAME,
             agent: "claude"
           }
         }
@@ -573,6 +574,7 @@ describe("runReviewActivity adapter dispatch", () => {
           states: {
             [REVIEW_NAME]: {
               type: "review",
+              on_fail_return_to: WORK_NAME,
               agent: "custom-non-builtin"
             }
           }
@@ -610,7 +612,7 @@ function reviewProfile(args: {
   reasoning_effort?: string;
   trust_all_tools?: boolean;
 }): TychonicConfig {
-  const block: Record<string, unknown> = { type: "review" };
+  const block: Record<string, unknown> = { type: "review", on_fail_return_to: WORK_NAME };
   if (args.agent !== undefined) block.agent = args.agent;
   if (args.normalizer !== undefined) block.normalizer = args.normalizer;
   if (args.command !== undefined) block.command = args.command;
@@ -630,6 +632,7 @@ function baseRun(id: string, cwd = "/ignored"): WorkflowRunRecord {
     template: "test_template",
     status: "running",
     cwd,
+    artifact_root: join(tmpdir(), "tychonic-test-runs", id),
     created_at: "2026-04-26T00:00:00.000Z",
     updated_at: "2026-04-26T00:00:00.000Z",
     states: [],
@@ -639,9 +642,6 @@ function baseRun(id: string, cwd = "/ignored"): WorkflowRunRecord {
     findings: [],
     inbox: []
   };
-  if (cwd !== "/ignored") {
-    run.artifact_root = join(`${cwd}-runs`, id);
-  }
   return run;
 }
 

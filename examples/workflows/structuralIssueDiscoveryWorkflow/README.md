@@ -19,17 +19,21 @@ limited to the deterministic checks and reviewer scopes that actually ran.
 
 ## States
 
-| State | TYPE | Role |
-|---|---|---|
-| `contract_checks` | `verify` | Runs the configured deterministic checks. |
-| `workflow_review` | `review` | Reviews Temporal workflow control flow, recovery, interaction gates, state lifecycle, and run-record updates. |
-| `adapter_review` | `review` | Reviews adapters, review parsing, structured output handling, model selection, session ids, and activity execution boundaries. |
-| `docs_review` | `review` | Reviews public docs, skills, examples, input shape, and naming consistency. |
-| `finding_audit` | `review` | Audits recorded findings for duplicates, missing evidence, and contract drift. |
+| State | TYPE | Failed review returns to | Role |
+|---|---|---|---|
+| `contract_checks` | `verify` | - | Runs the configured deterministic checks. |
+| `workflow_review` | `review` | `contract_checks` | Reviews Temporal workflow control flow, recovery, interaction gates, state lifecycle, and run-record updates. |
+| `adapter_review` | `review` | `contract_checks` | Reviews adapters, review parsing, structured output handling, model selection, session ids, and activity execution boundaries. |
+| `docs_review` | `review` | `contract_checks` | Reviews public docs, skills, examples, input shape, and naming consistency. |
+| `finding_audit` | `review` | `contract_checks` | Audits recorded findings for duplicates, missing evidence, and contract drift. |
 
 All review states use the Tychonic `review` TYPE. The Claude adapter runs in
 review mode with structured output schema enforcement; prompt-only JSON output
 is not the contract boundary.
+
+This workflow is one-pass, so it does not auto-retry failed reviews. The review
+states still declare `on_fail_return_to` because the review-state contract
+requires an explicit failure destination in the effective profile.
 
 Do not replace this workflow with a direct `claude -p` or other raw agent CLI
 review when the result will be used as an actionable issue list. Direct CLI
@@ -121,6 +125,6 @@ for preflight contract checks.
 
 ## Config Override
 
-`--config <file>` replaces the bundle `defaultProfile` as one whole object. It
-does not merge with the default profile. Keep state NAMEs stable unless the
-workflow code and README are updated together.
+`--config <file>` replaces the bundle YAML-derived profile as one whole object.
+It does not merge with the default profile. Keep state NAMEs stable unless the
+workflow.yaml and README are updated together.

@@ -1,0 +1,15 @@
+version: tychonic.workflow.v1
+name: verifyOnlyWorkflow
+worktree: false
+max_steps: 3
+start: verify
+states:
+  verify:
+    type: verify
+    command: |
+      git status --short
+      git diff --check
+    on_pass:
+      finish: true
+    on_fail:
+      finish: verify failed

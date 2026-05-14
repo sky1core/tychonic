@@ -1,5 +1,5 @@
 import { access, mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { removeIsolatedWorktree } from "../bootstrap/worktree.js";
 import { worktreePatch } from "../bootstrap/worktree.js";
 import { withPeriodicProgress } from "../bootstrap/commandRunner.js";
@@ -12,7 +12,7 @@ export interface CleanupWorktreeActivityInput {
   run: WorkflowRunRecord;
   cwd: string;
   worktreePath: string;
-  worktreeParentDir?: string;
+  worktreeParentDir: string;
   baseHead: string;
 }
 
@@ -30,7 +30,7 @@ export async function cleanupWorktreeActivity(
 ): Promise<CleanupWorktreeActivityResult> {
   const progress = (): void => heartbeatActivity({ runId: input.run.id, activity: "cleanupWorktree" });
   const createdAt = new Date().toISOString();
-  const worktreeParentDir = input.worktreeParentDir ?? parentDirFromRecordedWorktreePath(input.worktreePath);
+  const worktreeParentDir = requireString(input.worktreeParentDir, "worktreeParentDir");
   const existingPatchArtifact = async (): Promise<ArtifactRecord | undefined> =>
     await existingPatchArtifactRecord({ run: input.run, cwd: input.cwd, createdAt });
   if (!(await pathExists(input.worktreePath))) {
@@ -65,10 +65,6 @@ export async function cleanupWorktreeActivity(
     async () => await removeIsolatedWorktree({ ...input, worktreeParentDir })
   );
   return cleanupResult(patchArtifact);
-}
-
-function parentDirFromRecordedWorktreePath(worktreePath: string): string {
-  return dirname(dirname(worktreePath));
 }
 
 function cleanupResult(patchArtifact: ArtifactRecord | undefined): CleanupWorktreeActivityResult {
@@ -154,4 +150,11 @@ function nextArtifactId(run: WorkflowRunRecord): string {
     }
   }
   return `artifact_${counter + 1}`;
+}
+
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`cleanupWorktreeActivity.${field} is required`);
+  }
+  return value;
 }

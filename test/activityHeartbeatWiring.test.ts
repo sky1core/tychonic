@@ -103,6 +103,7 @@ function baseRun(
     template: "simple_workflow",
     status: "running",
     cwd: "/ignored",
+    artifact_root: join(tmpdir(), "tychonic-test-runs", id),
     created_at: "2026-04-19T00:00:00.000Z",
     updated_at: "2026-04-19T00:00:00.000Z",
     states: [],

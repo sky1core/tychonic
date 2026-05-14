@@ -69,10 +69,10 @@ import {
   listRuntimeWorkflowModules,
   removeRuntimeWorkflowModule,
   runtimeWorkflowModulesDir,
-  inspectBundle
+  inspectBundle,
+  inspectWorkflowBundleDirectory
 } from "../temporal/workflowModules.js";
 import { validateTaskWorkflowInput } from "../inputValidation.js";
-import { validateBundleFileShape } from "../temporal/bundleValidator.js";
 import { productVersion } from "../version.js";
 
 const program = new Command();
@@ -207,12 +207,9 @@ workflowsCommand
   .description("Validate a workflow bundle directory without installing it")
   .action(async (directory: string) => {
     try {
-      const { readdir } = await import("node:fs/promises");
-      const entries = await readdir(directory);
-      validateBundleFileShape(entries);
-      const inspection = await inspectBundle({
+      const inspection = await inspectWorkflowBundleDirectory({
         name: workflowsBundleDirName(directory),
-        workflowPath: pathJoin(directory, "workflow.mjs")
+        sourcePath: directory
       });
       console.log(
         JSON.stringify(

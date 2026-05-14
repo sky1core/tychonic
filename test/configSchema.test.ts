@@ -28,6 +28,7 @@ describe("activity-centric config schema", () => {
         verify: { type: "verify", command: "npm run verify:worker" },
         review: {
           type: "review",
+          on_fail_return_to: "work",
           command: "node review.js"
         }
       },
@@ -154,7 +155,8 @@ describe("activity-centric config schema", () => {
       TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
-          review: { type: "review", command: "node review.js" }
+          work: { type: "work", command: "node worker.js" },
+          review: { type: "review", on_fail_return_to: "work", command: "node review.js" }
         }
       }).states?.review?.command
     ).toBe("node review.js");
@@ -218,6 +220,7 @@ describe("activity-centric config schema", () => {
         },
         review: {
           type: "review",
+          on_fail_return_to: "work",
           agent: "kiro",
           model: "claude-opus-4.6",
           normalizer: "codex"
@@ -463,12 +466,78 @@ describe("schema tighten", () => {
     ).toThrow(/requires one of: command, agent/);
   });
 
+  it("rejects a review state without an explicit failure return target", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work", agent: "claude" },
+          review: { type: "review", agent: "claude" }
+        }
+      })
+    ).toThrow(/on_fail_return_to is required for type review/);
+  });
+
+  it("rejects failure return targets on non-review states", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: {
+            type: "work",
+            on_fail_return_to: "verify",
+            agent: "claude"
+          },
+          verify: { type: "verify", command: "npm test" }
+        }
+      })
+    ).toThrow(/on_fail_return_to is not allowed for type work/);
+  });
+
+  it("rejects a review failure return target that is not a configured state", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          review: {
+            type: "review",
+            on_fail_return_to: "missing_work",
+            agent: "claude"
+          }
+        }
+      })
+    ).toThrow(/on_fail_return_to must name an existing state/);
+  });
+
+  it("rejects a review failure return target that points to another review state", () => {
+    expect(() =>
+      TychonicConfigSchema.parse({
+        version: "tychonic.config.v1",
+        states: {
+          work: { type: "work", agent: "claude" },
+          review: {
+            type: "review",
+            on_fail_return_to: "review_fix",
+            agent: "claude"
+          },
+          review_fix: {
+            type: "review",
+            on_fail_return_to: "work",
+            agent: "codex"
+          }
+        }
+      })
+    ).toThrow(/on_fail_return_to must name a non-review state/);
+  });
+
   it("accepts resume on non-conventional review state names as workflow-readable data", () => {
     const config = TychonicConfigSchema.parse({
       version: "tychonic.config.v1",
       states: {
+        work: { type: "work", agent: "claude" },
         judgement_phase: {
           type: "review",
+          on_fail_return_to: "work",
           agent: "claude",
           resume: 1
         }
@@ -525,8 +594,10 @@ describe("review-state agent restrictions", () => {
         const config = TychonicConfigSchema.parse({
           version: "tychonic.config.v1",
           states: {
+            work: { type: "work", agent: "claude" },
             review: {
               type: "review",
+              on_fail_return_to: "work",
               agent,
               normalizer
             }
@@ -572,8 +643,10 @@ describe("review-state agent restrictions", () => {
     const config = TychonicConfigSchema.parse({
       version: "tychonic.config.v1",
       states: {
+        work: { type: "work", agent: "claude" },
         review: {
           type: "review",
+          on_fail_return_to: "work",
           agent: "claude"
         }
       }
@@ -585,8 +658,10 @@ describe("review-state agent restrictions", () => {
     const config = TychonicConfigSchema.parse({
       version: "tychonic.config.v1",
       states: {
+        work: { type: "work", agent: "claude" },
         review: {
           type: "review",
+          on_fail_return_to: "work",
           agent: "codex"
         }
       }

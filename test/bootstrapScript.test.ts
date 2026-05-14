@@ -20,7 +20,7 @@ describe("tychonic bootstrap script CLI", () => {
 
   it("references only packaged example workflow bundles that exist", async () => {
     for (const name of PACKAGED_EXAMPLE_WORKFLOWS) {
-      await expect(access(join("examples", "workflows", name, "workflow.mjs"))).resolves.toBeUndefined();
+      await expect(access(join("examples", "workflows", name, "workflow.yaml"))).resolves.toBeUndefined();
     }
   });
 

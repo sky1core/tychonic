@@ -175,12 +175,12 @@ Installed workflow bundles live under `<state>/workflows/modules/<name>/`, where
 
 Each bundle directory contains at minimum:
 
+- `workflow.yaml`
 - `workflow.mjs`
+- `workflow.generated.mmd`
 
-It may also contain `README.md`, `package.json`, lockfiles, `node_modules`,
-relative support modules, and pre-bundled assets. This mirrors the install-time
-bundle contract in `src/temporal/SPEC.md`: Tychonic provides the
-`@temporalio/workflow` and `tychonic/workflow` imports, while all other package
-dependencies resolve through the installed bundle directory's standard package
-layout. Tychonic does not add arbitrary host `node_modules`, symlinks, or
-private resolver state when the worker bundles installed workflows.
+It may also contain `README.md` and other copied support files from the source
+bundle. This mirrors the install-time bundle contract in `src/temporal/SPEC.md`:
+Tychonic generates the runtime `workflow.mjs` from `workflow.yaml` and does not
+add arbitrary host `node_modules`, symlinks, or private resolver state when the
+worker bundles installed workflows.

@@ -5,10 +5,11 @@ parsing, and workflow input handoff code under `src/catalog/`.
 
 ## Configuration Model
 
-A workflow bundle's `defaultProfile` export is the **default** source of
-configuration for that workflow. A single `--config <file>` may replace it for
-one run. There is no global configuration file, no repository configuration
-file, no product-default configuration file, and no layered merge pipeline.
+A workflow bundle's default profile is the **default** source of configuration
+for that workflow. Bundles derive it from the YAML state-machine source in
+`workflow.yaml`. A single `--config <file>` may replace it for one run. There
+is no global configuration file, no repository configuration file, no
+product-default configuration file, and no layered merge pipeline.
 
 Configuration has exactly two top-level groups. No others.
 
@@ -23,10 +24,7 @@ Configuration has exactly two top-level groups. No others.
   does not require policy values to be objects or to follow the state NAME
   grammar. Each workflow bundle defines, validates, and consumes the policy keys
   and value shapes it cares about. The standard workflow interaction helper
-  validates the `policies.interaction` value shape that it consumes. The example
-  bundles under `examples/workflows/` also use workflow-owned `policies.loop`
-  and `policies.integration`; their shapes are documented in those bundles'
-  READMEs.
+  validates the `policies.interaction` value shape that it consumes.
 
 There is no `agents.<name>` top-level, no `commands.<name>` top-level, no
 `activity_timeouts.<name>` top-level, no `work` / `review` slot blocks, no
@@ -41,17 +39,19 @@ function, not for orchestration. A workflow never branches, retries, or selects
 states based on TYPE. See `src/workflows/SPEC.md` for the full NAME/TYPE
 contract.
 
-Workflows reference states by NAME only. Retry, aggregation, and all other
-multi-state orchestration live in the workflow's TypeScript code and use
-explicit NAMEs for each call site.
+Workflows reference states by NAME only. In declarative `workflow.yaml`
+bundles, retry, aggregation, and multi-state orchestration live in the YAML
+state machine and generated Temporal workflow wrapper.
 
 ## Bundle Config Is The Default Source
 
-The default config for a workflow run is the workflow's `defaultProfile` export,
-validated once at install time and again at workflow start by
-`TychonicConfigSchema`. A caller may replace it for one invocation through
-`--config <file>`. No other file — not a user home-directory config, not a
-repository config, not a product-default config — is read, merged, or consulted.
+The default config for a workflow run is the installed workflow's
+`defaultProfile`, validated once at install time and again at workflow start by
+`TychonicConfigSchema`. Bundles derive this profile from `workflow.yaml`. A
+caller may replace it for one invocation through `--config <file>`. No other
+file — not a
+user home-directory config, not a repository config, not a product-default
+config — is read, merged, or consulted.
 
 `tychonic run <name>` resolves the run's profile from exactly one config source:
 the installed bundle's `defaultProfile`, or the whole-object replacement file
@@ -60,23 +60,25 @@ passed with `--config <file>`. Raw workflow input from `--input` or
 reserved for Tychonic's internal handoff of the effective profile to workflow
 code. When raw workflow input is supplied, it must be a JSON object so the
 reserved handoff can be attached without changing the payload's category.
-Pulling the state and policy contract into the workflow code itself keeps the
+Pulling the state and policy contract into one workflow-owned source keeps the
 contract single-sourced: a workflow author declares state names, types, and
-policy values once, in one place, and the runtime reads exactly that.
+policy values once, in `workflow.yaml`, and the runtime reads exactly that.
 
 Workflow run input is a stable task-shaped public contract for every installed
 workflow. The only public top-level input fields are required `cwd`, optional
 `goal`, and optional `promptAdditions`. `profile` is reserved for Tychonic's
 internal config handoff and is not public workflow input. Workflow prompts are
-owned by workflow code. Prompt additions must be additive and use one uniform
-shape: `promptAdditions.<stateName>`. The `<stateName>` key must name a state
-with type `work` or `review` in the effective `profile.states`. The host
-auto-derives the set of valid `promptAdditions` keys from the profile; bundle
-authors do not declare them separately. The host rejects unknown
-`promptAdditions` keys and non-string addition values. Workflows must not
-expose top-level prompt fields such as `architectPrompt`, `builderPrompt`, or
-agent-named fields such as `kiroFixPrompt`; those names leak internal workflow
-implementation into the public invocation contract.
+owned by workflow source. Declarative prompt templates may explicitly reference
+`{{goal}}`; unknown variables are rejected during install. Prompt additions must
+be additive and use one uniform shape: `promptAdditions.<stateName>`. The
+`<stateName>` key must name a state with type `work` or `review` in the
+effective `profile.states`. The host auto-derives the set of valid
+`promptAdditions` keys from the profile; bundle authors do not declare them
+separately. The host rejects unknown `promptAdditions` keys and non-string
+addition values. Workflows must not expose top-level prompt fields such as
+`architectPrompt`, `builderPrompt`, or agent-named fields such as
+`kiroFixPrompt`; those names leak internal workflow implementation into the
+public invocation contract.
 
 Two consequences follow and must both hold:
 
@@ -139,12 +141,14 @@ states:
     timeout: 30m
   primary_review:
     type: review
+    on_fail_return_to: work
     agent: claude
     model: opus
     reasoning_effort: max
     permission_mode: plan
   first_review:
     type: review
+    on_fail_return_to: work
     agent: kiro
     model: claude-opus-4.6
     normalizer: codex
@@ -197,9 +201,15 @@ Rules:
   selection but no stable reasoning/effort/thinking CLI option, so the schema
   rejects `reasoning_effort` for those agents.
 - Allowed fields inside a state block are exactly `type`, `agent`,
-  `normalizer`, `resume`, `command`, `model`, `reasoning_effort`, `timeout`,
-  `sandbox`, `approval`, `permission_mode`, and `trust_all_tools`. Unknown
-  fields are a validation error.
+  `on_fail_return_to`, `normalizer`, `resume`, `command`, `model`,
+  `reasoning_effort`, `timeout`, `sandbox`, `approval`, `permission_mode`, and
+  `trust_all_tools`. Unknown fields are a validation error.
+- `on_fail_return_to` is required on every `type: review` block and rejected on
+  non-review blocks. It must name an existing non-review state in the effective
+  profile.
+  The field declares where failed review feedback returns when the workflow
+  has a review loop; it does not define a full graph, ordering, or branching
+  model.
 - `agent` is the primary input: it selects one of the built-in adapters
   (`claude`, `codex`, `gemini`, `kiro`). The host writes the CLI's `argv`,
   role-aware permission flags, and resume invocation where the selected adapter

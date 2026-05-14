@@ -10,8 +10,12 @@ recommendations for every operator account.
 Each example workflow directory is a normal workflow bundle source. It must
 contain:
 
-- `workflow.mjs`
+- exactly one authoring entrypoint: `workflow.yaml`
 - `README.md`
+
+The single authoring entrypoint is `workflow.yaml`; `workflow.generated.mmd` and
+`workflow.mjs` are install-time generated files and must not be committed in the
+example source directory.
 
 Example bundle names, state NAMEs, prompts, policies, model strings, and agent
 selections exist to demonstrate the bundle contract. Operators must adapt them

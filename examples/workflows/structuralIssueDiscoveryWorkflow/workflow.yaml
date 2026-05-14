@@ -1,0 +1,99 @@
+version: tychonic.workflow.v1
+name: structuralIssueDiscoveryWorkflow
+worktree: false
+max_steps: 10
+start: contract_checks
+states:
+  contract_checks:
+    type: verify
+    command: |
+      npm run check:contracts
+      npm run typecheck
+      npm run build
+      npm run validate:examples
+    timeout: 45m
+    on_pass:
+      goto: workflow_review
+    on_fail:
+      finish: contract_checks failed
+  workflow_review:
+    type: review
+    on_fail_return_to: contract_checks
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+    timeout: 45m
+    prompt: |
+      Review Temporal workflow control flow, recovery, rerun, interaction gates,
+      state lifecycle, and run-record updates for structural bugs.
+
+      Goal:
+      {{goal}}
+
+      Check SPEC.md, src/workflows/SPEC.md, workflow helper code, and example workflow definitions.
+      Report only actionable structural bugs or spec violations with concrete evidence.
+    on_pass:
+      goto: adapter_review
+    on_fail:
+      goto: contract_checks
+  adapter_review:
+    type: review
+    on_fail_return_to: contract_checks
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+    timeout: 45m
+    prompt: |
+      Review agent adapters, review parsing, structured output handling,
+      model selection, session ids, and activity execution boundaries.
+
+      Goal:
+      {{goal}}
+
+      Focus on bugs where the wrong terminal source, wrong model, malformed
+      reviewer output, or command-selection ambiguity can pass.
+    on_pass:
+      goto: docs_review
+    on_fail:
+      goto: contract_checks
+  docs_review:
+    type: review
+    on_fail_return_to: contract_checks
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+    timeout: 45m
+    prompt: |
+      Review public docs, skills, example bundle docs, run input shape, and naming consistency.
+
+      Goal:
+      {{goal}}
+
+      Focus on contradictions that would make operators run the wrong command,
+      use non-contract fields, or mistake examples for built-in defaults.
+    on_pass:
+      goto: finding_audit
+    on_fail:
+      goto: contract_checks
+  finding_audit:
+    type: review
+    on_fail_return_to: contract_checks
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+    timeout: 30m
+    prompt: |
+      Audit the recorded finding set for duplicates, unsupported claims,
+      missing contract evidence, or findings that merely repeat the operator's
+      known issue ledger. Do not re-review the entire repository for new bugs.
+
+      Goal:
+      {{goal}}
+    on_pass:
+      finish: true
+    on_fail:
+      goto: contract_checks

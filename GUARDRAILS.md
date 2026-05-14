@@ -132,3 +132,23 @@ and exposes workflow-level operations such as publishing the run snapshot or
 waiting for an interaction decision. Workflow code may still define custom
 signals for custom recovery behavior, but those names and payloads are that
 bundle's own contract and must be documented by that bundle.
+
+## Do Not Reintroduce Source Workflow Modules
+
+Workflow authors write `workflow.yaml`. They do not write `workflow.mjs`, policy
+sidecar modules, review loop modules, or other executable workflow source files
+inside a bundle.
+
+The failure pattern is treating the generated Temporal `workflow.mjs` as an
+authoring surface because Temporal ultimately executes JavaScript. That brings
+back the same hidden freedom the YAML contract removed: hand-written branching,
+undocumented retry loops, custom review return targets, and copied host
+bookkeeping.
+
+The correct boundary is install-time generation. `tychonic workflows install`
+validates `workflow.yaml`, derives the default profile, and writes generated
+`workflow.mjs` plus `workflow.generated.mmd` into the installed runtime copy.
+Generated files are runtime artifacts, not source files to edit or commit in
+example/source bundles. If a workflow behavior is not expressible in YAML,
+extend the declarative contract first instead of adding a hand-written module
+escape hatch.

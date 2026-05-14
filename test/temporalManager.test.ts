@@ -109,7 +109,7 @@ describe("tychonicRuntimeDirs / normalizeTemporalConfig with active instance", (
     expect(cfg.namespace).toBe("default");
   });
 
-  it("normalizeTemporalConfig with instance unset keeps legacy defaults byte-identical", () => {
+  it("normalizeTemporalConfig with instance unset keeps operational defaults", () => {
     // No setActiveInstance call; active instance is undefined.
     const cfg = normalizeTemporalConfig({});
     expect(cfg.apiPort).toBe(7233);

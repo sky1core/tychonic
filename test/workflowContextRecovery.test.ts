@@ -131,6 +131,7 @@ describe("Tychonic workflow context recoverable state rerun", () => {
           template: "recovery_test",
           status: "created",
           cwd: "/repo",
+          artifact_root: "/tmp/tychonic-test-runs/run_recovery",
           created_at: "2026-01-01T00:00:00.000Z",
           updated_at: "2026-01-01T00:00:00.000Z",
           states: [],
@@ -210,6 +211,7 @@ describe("Tychonic workflow context recoverable state rerun", () => {
         startRunActivity: async () => baseRun(),
         createWorktreeActivity: async () => ({
           worktreePath: "/tmp/tychonic-worktree-run_recovery-test/worktree",
+          worktreeParentDir: "/tmp/tychonic-worktree-run_recovery-test",
           baseHead: "0123456789abcdef0123456789abcdef01234567"
         }),
         cleanupWorktreeActivity,
@@ -284,6 +286,7 @@ describe("Tychonic workflow context recoverable state rerun", () => {
           template: "recovery_test",
           status: "created",
           cwd: "/repo",
+          artifact_root: "/tmp/tychonic-test-runs/run_recovery",
           created_at: "2026-01-01T00:00:00.000Z",
           updated_at: "2026-01-01T00:00:00.000Z",
           states: [],
@@ -501,7 +504,8 @@ describe("Tychonic workflow context interactive approval status", () => {
         profile: {
           version: "tychonic.config.v1",
           states: {
-            review: { type: "review", agent: "claude" }
+            work: { type: "work", agent: "claude" },
+            review: { type: "review", on_fail_return_to: "work", agent: "claude" }
           },
           policies: {}
         }
@@ -570,6 +574,7 @@ function baseRun(): WorkflowRunRecord {
     template: "recovery_test",
     status: "created",
     cwd: "/repo",
+    artifact_root: "/tmp/tychonic-test-runs/run_recovery",
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     states: [],

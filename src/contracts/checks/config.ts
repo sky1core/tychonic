@@ -89,11 +89,112 @@ export const configContractChecks: readonly ContractCheck[] = [
             },
             judgement_phase: {
               type: "review",
+              on_fail_return_to: "build_phase",
               agent: "claude",
               resume: 3
             }
           }
         })
+      );
+    }
+  },
+  {
+    area: "config",
+    name: "rejects review states without failure return target",
+    run() {
+      expectReject(
+        "missing review failure return target",
+        () =>
+          TychonicConfigSchema.parse({
+            version: "tychonic.config.v1",
+            states: {
+              work: {
+                type: "work",
+                agent: "claude"
+              },
+              review: {
+                type: "review",
+                agent: "codex"
+              }
+            }
+          }),
+        /on_fail_return_to is required for type review/
+      );
+    }
+  },
+  {
+    area: "config",
+    name: "rejects review failure return target outside configured states",
+    run() {
+      expectReject(
+        "unknown review failure return target",
+        () =>
+          TychonicConfigSchema.parse({
+            version: "tychonic.config.v1",
+            states: {
+              review: {
+                type: "review",
+                on_fail_return_to: "missing_work",
+                agent: "codex"
+              }
+            }
+          }),
+        /on_fail_return_to must name an existing state/
+      );
+    }
+  },
+  {
+    area: "config",
+    name: "rejects review failure return targets that point to review states",
+    run() {
+      expectReject(
+        "review failure return target is review",
+        () =>
+          TychonicConfigSchema.parse({
+            version: "tychonic.config.v1",
+            states: {
+              work: {
+                type: "work",
+                agent: "claude"
+              },
+              review: {
+                type: "review",
+                on_fail_return_to: "review_fix",
+                agent: "codex"
+              },
+              review_fix: {
+                type: "review",
+                on_fail_return_to: "work",
+                agent: "claude"
+              }
+            }
+          }),
+        /on_fail_return_to must name a non-review state/
+      );
+    }
+  },
+  {
+    area: "config",
+    name: "rejects failure return targets on non-review states",
+    run() {
+      expectReject(
+        "non-review failure return target",
+        () =>
+          TychonicConfigSchema.parse({
+            version: "tychonic.config.v1",
+            states: {
+              work: {
+                type: "work",
+                on_fail_return_to: "verify",
+                agent: "claude"
+              },
+              verify: {
+                type: "verify",
+                command: "npm test"
+              }
+            }
+          }),
+        /on_fail_return_to is not allowed for type work/
       );
     }
   },

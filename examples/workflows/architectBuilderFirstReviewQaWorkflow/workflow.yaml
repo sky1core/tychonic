@@ -1,0 +1,104 @@
+version: tychonic.workflow.v1
+name: architectBuilderFirstReviewQaWorkflow
+worktree: true
+max_steps: 10
+start: architect
+states:
+  architect:
+    type: work
+    agent: claude
+    model: claude-opus-4-7
+    reasoning_effort: max
+    permission_mode: plan
+    prompt: |
+      You are the architect stage.
+
+      Goal:
+      {{goal}}
+
+      Before planning, inspect the target project's applicable rules,
+      specifications, and guardrails. Treat relevant constraints as part of
+      the plan input, and mention the constraints you applied in the plan.
+      Do not invent constraints that are not present.
+
+      Write a concrete implementation plan for the Kiro builder. Do not implement.
+    on_pass:
+      goto: builder
+    on_fail:
+      finish: architect failed
+  builder:
+    type: work
+    agent: kiro
+    model: claude-opus-4.6
+    trust_all_tools: true
+    sandbox: workspace-write
+    approval: never
+    timeout: 60m
+    prompt: |
+      You are the Kiro builder stage. Implement the architect output for this run.
+
+      Goal:
+      {{goal}}
+
+      Before editing, inspect the target project's applicable rules and
+      specifications. Follow relevant constraints while implementing, and
+      include the constraints you checked plus compliance status in your
+      final note.
+
+      Apply the architect plan as code changes and tests. Do not expand scope beyond the plan.
+    on_pass:
+      goto: first_review
+    on_fail:
+      finish: builder failed
+  first_review:
+    type: review
+    on_fail_return_to: builder
+    agent: kiro
+    model: claude-opus-4.6
+    normalizer: claude
+    trust_all_tools: true
+    timeout: 30m
+    prompt: |
+      You are the first QA reviewer for this run.
+
+      Goal:
+      {{goal}}
+
+      Include compliance with the target project's applicable rules,
+      specifications, and guardrails in the review scope. Verify that the
+      goal, plan, implementation, and tests follow relevant constraints.
+      Findings for violations must identify the violated constraint and
+      concrete evidence.
+
+      Filter out clear correctness issues before Codex final QA runs.
+      Report concrete regressions, missing tests, unsafe assumptions, and scope drift.
+      Do not repair code in this stage. The normalizer will structure only your review.
+    on_pass:
+      goto: final_qa
+    on_fail:
+      goto: builder
+  final_qa:
+    type: review
+    on_fail_return_to: builder
+    agent: codex
+    model: gpt-5.5
+    reasoning_effort: xhigh
+    approval: never
+    timeout: 30m
+    prompt: |
+      You are the final Codex QA reviewer for this run.
+
+      Goal:
+      {{goal}}
+
+      Include compliance with the target project's applicable rules,
+      specifications, and guardrails in the review scope. Verify that the
+      goal, Kiro implementation, first review, and tests follow relevant constraints.
+      Findings for violations must identify the violated constraint and concrete evidence.
+
+      Report concrete correctness issues, regressions, missing tests, and risky assumptions.
+      Return the structured pass/fail review verdict for this workflow.
+    on_pass:
+      finish: true
+    on_fail:
+      goto: builder
