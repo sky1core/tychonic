@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { join } from "node:path";
 import { optionalStateConfig } from "../catalog/types.js";
 import type {
   ActivityAttemptRecord,
@@ -81,7 +81,7 @@ export async function runDeterministicCommandBody<T extends DeterministicCommand
 
   await mkdir(store.liveDir(run.id), { recursive: true });
   const liveOutputPath = join(store.liveDir(run.id), `${attempt.id}.log`);
-  attempt.live_output_path = relativeToExecutionCwd(executionCwd, liveOutputPath);
+  attempt.live_output_path = store.storedPath(run.id, liveOutputPath);
 
   const progress = (): void => heartbeat?.({ runId: run.id, state: state.name, attemptId: attempt.id });
   const result = await withPeriodicProgress(progress, async () =>
@@ -110,7 +110,7 @@ export async function runDeterministicCommandBody<T extends DeterministicCommand
   const artifact: ArtifactRecord = {
     id: nextId("artifact"),
     kind: artifactKind,
-    path: relative(dirname(store.rootDir), artifactPath),
+    path: store.storedPath(run.id, artifactPath),
     created_at: now().toISOString(),
     state_id: state.id,
     activity_attempt_id: attempt.id
@@ -125,12 +125,4 @@ export async function runDeterministicCommandBody<T extends DeterministicCommand
     delta: { states: [state], activityAttempts: [attempt] },
     commandOutcome: { artifact }
   };
-}
-
-function relativeToExecutionCwd(cwd: string, targetPath: string): string {
-  const relativePath = relative(resolve(cwd), resolve(targetPath));
-  if (relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)) {
-    return relativePath;
-  }
-  return targetPath;
 }

@@ -149,7 +149,7 @@ export const interactionContractChecks: readonly ContractCheck[] = [
               {
                 id: "artifact_1",
                 kind: "note",
-                path: ".tychonic/runs/run_1/artifacts/note.txt",
+                path: "artifacts/note.txt",
                 created_at: "2026-01-01T00:00:00Z"
               }
             ],

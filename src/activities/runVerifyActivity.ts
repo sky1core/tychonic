@@ -1,11 +1,10 @@
 import { ApplicationFailure } from "@temporalio/activity";
-import { join } from "node:path";
 import {
   runDeterministicCommandBody,
   type DeterministicCommandResources
 } from "../bootstrap/deterministicCommandBody.js";
 import { activityTimeoutMs, defaultActivityTimeoutMs, optionalStateConfig } from "../catalog/types.js";
-import { RunArtifactStore } from "../storage/runArtifactStore.js";
+import { runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import { heartbeatActivity } from "./heartbeat.js";
 
@@ -31,7 +30,7 @@ export async function runVerifyActivity(input: RunVerifyActivityInput): Promise<
     });
   }
 
-  const store = new RunArtifactStore(join(input.cwd, ".tychonic"));
+  const store = runArtifactStoreForRun(input.run);
   const resources: DeterministicCommandResources = {
     store,
     env: process.env,

@@ -269,10 +269,11 @@ describe("runReviewActivity adapter dispatch", () => {
   it("block.agent built-in (claude) parses structured_output through the review activity path", async () => {
     await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"));
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-claude-structured-"));
+    const run = baseRun("disp_review_claude_structured", cwd);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
-      run: baseRun("disp_review_claude_structured"),
+      run,
       cwd,
       profile: reviewProfile({ agent: "claude" }),
       prompt: "review please"
@@ -294,7 +295,7 @@ describe("runReviewActivity adapter dispatch", () => {
       (artifact) => artifact.kind === `${REVIEW_NAME}_prompt`
     );
     if (!promptArtifact) throw new Error("expected review prompt artifact");
-    const promptArtifactText = await readFile(join(cwd, promptArtifact.path), "utf8");
+    const promptArtifactText = await readFile(join(run.artifact_root!, promptArtifact.path), "utf8");
     expect(promptArtifactText).toContain("review please");
     expect(promptArtifactText).toContain("Tychonic structured review output contract");
     expect(promptArtifactText).toContain("findings are actionable problems only");
@@ -303,7 +304,7 @@ describe("runReviewActivity adapter dispatch", () => {
       (artifact) => artifact.kind === `${REVIEW_NAME}_parsed`
     );
     if (!parsedArtifact) throw new Error("expected parsed review artifact");
-    const parsedArtifactText = await readFile(join(cwd, parsedArtifact.path), "utf8");
+    const parsedArtifactText = await readFile(join(run.artifact_root!, parsedArtifact.path), "utf8");
     expect(JSON.parse(parsedArtifactText)).toMatchObject({
       schema_version: "tychonic.review.v1",
       status: "pass",
@@ -411,10 +412,11 @@ describe("runReviewActivity adapter dispatch", () => {
       join(tmpdir(), "tychonic-disp-review-kiro-normalized-wt-")
     );
     await initGitWorktree(worktreePath);
+    const run = baseRun("disp_review_kiro_normalized", cwd);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
-      run: baseRun("disp_review_kiro_normalized"),
+      run,
       cwd,
       worktreePath,
       profile: reviewProfile({ agent: "kiro", normalizer: "claude" }),
@@ -444,7 +446,7 @@ describe("runReviewActivity adapter dispatch", () => {
       (artifact) => artifact.kind === `${REVIEW_NAME}_normalizer_output`
     );
     if (!normalizerOutputArtifact) throw new Error("expected normalizer output artifact");
-    const normalizerOutputText = await readFile(join(cwd, normalizerOutputArtifact.path), "utf8");
+    const normalizerOutputText = await readFile(join(run.artifact_root!, normalizerOutputArtifact.path), "utf8");
     expect(normalizerOutputText).toContain("NORMALIZER_CWD:");
     expect(normalizerOutputText).toContain("ARGV:-p --model haiku --output-format");
     expect(normalizerOutputText).not.toContain(cwd);
@@ -460,10 +462,11 @@ describe("runReviewActivity adapter dispatch", () => {
   it("runs a partial review adapter through a codex normalizer", async () => {
     await writeCodexSemanticReviewStubBinary(join(stubBinDir, "codex"));
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-gemini-codex-normalized-"));
+    const run = baseRun("disp_review_gemini_codex_normalized", cwd);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
-      run: baseRun("disp_review_gemini_codex_normalized"),
+      run,
       cwd,
       profile: reviewProfile({ agent: "gemini", normalizer: "codex" }),
       prompt: "review please"
@@ -484,7 +487,7 @@ describe("runReviewActivity adapter dispatch", () => {
       (artifact) => artifact.kind === `${REVIEW_NAME}_normalizer_prompt`
     );
     if (!normalizerPromptArtifact) throw new Error("expected normalizer prompt artifact");
-    const normalizerPrompt = await readFile(join(cwd, normalizerPromptArtifact.path), "utf8");
+    const normalizerPrompt = await readFile(join(run.artifact_root!, normalizerPromptArtifact.path), "utf8");
     expect(normalizerPrompt).toContain("Top-level keys are exactly: status, summary, findings.");
     expect(normalizerPrompt).toContain("severity, title, detail");
     expect(normalizerPrompt).toContain("Use the exact key detail");
@@ -494,7 +497,7 @@ describe("runReviewActivity adapter dispatch", () => {
       (artifact) => artifact.kind === `${REVIEW_NAME}_normalizer_output`
     );
     if (!normalizerOutputArtifact) throw new Error("expected normalizer output artifact");
-    const normalizerOutputText = await readFile(join(cwd, normalizerOutputArtifact.path), "utf8");
+    const normalizerOutputText = await readFile(join(run.artifact_root!, normalizerOutputArtifact.path), "utf8");
     expect(normalizerOutputText).toContain(
       "ARGV:-a never --model gpt-5.3-codex-spark exec --skip-git-repo-check --json --sandbox workspace-write -"
     );
@@ -620,13 +623,13 @@ function reviewProfile(args: {
   };
 }
 
-function baseRun(id: string): WorkflowRunRecord {
-  return {
+function baseRun(id: string, cwd = "/ignored"): WorkflowRunRecord {
+  const run: WorkflowRunRecord = {
     schema_version: "tychonic.run.v1",
     id,
     template: "test_template",
     status: "running",
-    cwd: "/ignored",
+    cwd,
     created_at: "2026-04-26T00:00:00.000Z",
     updated_at: "2026-04-26T00:00:00.000Z",
     states: [],
@@ -636,6 +639,10 @@ function baseRun(id: string): WorkflowRunRecord {
     findings: [],
     inbox: []
   };
+  if (cwd !== "/ignored") {
+    run.artifact_root = join(`${cwd}-runs`, id);
+  }
+  return run;
 }
 
 async function initGitWorktree(path: string): Promise<void> {

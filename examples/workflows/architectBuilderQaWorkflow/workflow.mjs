@@ -87,6 +87,7 @@ export async function architectBuilderQaWorkflow(input) {
       withQaFeedback(
         builderStageInstructions({
           runId: ctx.run().id,
+          workflowId: ctx.workflowId(),
           worktreePath: ctx.worktreePath()
         }),
         qaFeedbacks
@@ -98,6 +99,7 @@ export async function architectBuilderQaWorkflow(input) {
       "qa",
       qaStageInstructions({
         runId: ctx.run().id,
+        workflowId: ctx.workflowId(),
         worktreePath: ctx.worktreePath()
       })
     );
@@ -164,13 +166,13 @@ function architectStageInstructions(goal) {
   ].join("\n");
 }
 
-function builderStageInstructions({ runId, worktreePath }) {
+function builderStageInstructions({ runId, workflowId, worktreePath }) {
   return [
     "You are the builder stage. Implement the design produced by the",
     "architect stage of this run.",
     "",
     `Worktree:  ${worktreePath}`,
-    `Artifacts: .tychonic/runs/${runId}/artifacts/`,
+    ...evidenceCommandInstructions({ workflowId, runId }),
     "",
     "Before editing, inspect the target project's applicable rules and",
     "specifications. Follow relevant constraints while implementing, and",
@@ -185,11 +187,12 @@ function builderStageInstructions({ runId, worktreePath }) {
   ].join("\n");
 }
 
-function qaStageInstructions({ runId, worktreePath }) {
+function qaStageInstructions({ runId, workflowId, worktreePath }) {
   return [
     "You are the QA reviewer for this three-stage run.",
+    ...evidenceCommandInstructions({ workflowId, runId }),
     `Check the builder output in ${worktreePath} against the architect`,
-    `design captured under .tychonic/runs/${runId}/artifacts/.`,
+    "design captured in Tychonic artifact evidence.",
     "",
     "Include compliance with the target project's applicable rules,",
     "specifications, and guardrails in the review scope. Verify that the",
@@ -202,4 +205,19 @@ function qaStageInstructions({ runId, worktreePath }) {
     "Add target or target_session_id only when you can identify one.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
   ].join("\n");
+}
+
+function evidenceCommandInstructions({ workflowId, runId }) {
+  const workflowArg = shellArg(workflowId);
+  return [
+    `Workflow: ${workflowId}`,
+    `Run: ${runId}`,
+    `Status command: tychonic status --workflow-id ${workflowArg}`,
+    `Artifact command: tychonic artifacts --workflow-id ${workflowArg}`
+  ];
+}
+
+function shellArg(value) {
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

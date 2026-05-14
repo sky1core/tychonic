@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
   calls: [] as string[],
+  prompts: [] as Array<{ kind: "work" | "review"; stateName: string; prompt: string }>,
   interactive: false,
   workResults: [] as Array<{ halted: boolean; passed: boolean; summary?: string }>,
   verifyResults: [] as Array<{ halted: boolean; passed: boolean; summary?: string }>,
@@ -31,14 +32,16 @@ vi.mock("tychonic/workflow", () => ({
       harness.calls.push("createWorktree");
       return "/tmp/tychonic-worktree";
     },
+    workflowId: () => "wf abq test",
     run: () => ({ id: "run_abq_test" }),
     worktreePath: () => "/tmp/tychonic-worktree",
     isInteractive: () => harness.interactive,
     apply: async () => {
       harness.calls.push("apply");
     },
-    work: async (stateName: string) => {
+    work: async (stateName: string, prompt: string) => {
       harness.calls.push(`work:${stateName}`);
+      harness.prompts.push({ kind: "work", stateName, prompt });
       const result = harness.workResults.shift();
       if (!result) throw new Error(`missing work result for ${stateName}`);
       return result;
@@ -49,8 +52,9 @@ vi.mock("tychonic/workflow", () => ({
       if (!result) throw new Error(`missing verify result for ${stateName}`);
       return result;
     },
-    review: async (stateName: string) => {
+    review: async (stateName: string, prompt: string) => {
       harness.calls.push(`review:${stateName}`);
+      harness.prompts.push({ kind: "review", stateName, prompt });
       const result = harness.reviewResults.shift();
       if (!result) throw new Error(`missing review result for ${stateName}`);
       return result;
@@ -82,6 +86,7 @@ const { tychonicSelfCheckWorkflow } = await import(
 describe("architectBuilderQaWorkflow control flow", () => {
   beforeEach(() => {
     harness.calls = [];
+    harness.prompts = [];
     harness.interactive = false;
     harness.workResults = [];
     harness.verifyResults = [];
@@ -149,11 +154,36 @@ describe("architectBuilderQaWorkflow control flow", () => {
 
     expect(harness.calls).toContain("finish:");
   });
+
+  it("passes executable Tychonic evidence commands to builder and QA prompts", async () => {
+    harness.workResults = [
+      { halted: false, passed: true },
+      { halted: false, passed: true }
+    ];
+    harness.reviewResults = [{ halted: false, passed: true }];
+
+    await architectBuilderQaWorkflow({ cwd: "/tmp/repo", goal: "test goal" });
+
+    const builderPrompt = harness.prompts.find(
+      (entry) => entry.kind === "work" && entry.stateName === "builder"
+    )?.prompt;
+    const qaPrompt = harness.prompts.find(
+      (entry) => entry.kind === "review" && entry.stateName === "qa"
+    )?.prompt;
+    const statusCommand = "tychonic status --workflow-id 'wf abq test'";
+    const artifactCommand = "tychonic artifacts --workflow-id 'wf abq test'";
+
+    expect(builderPrompt).toContain(statusCommand);
+    expect(builderPrompt).toContain(artifactCommand);
+    expect(qaPrompt).toContain(statusCommand);
+    expect(qaPrompt).toContain(artifactCommand);
+  });
 });
 
 describe("agent-pinned QA workflow control flow", () => {
   beforeEach(() => {
     harness.calls = [];
+    harness.prompts = [];
     harness.interactive = false;
     harness.workResults = [];
     harness.verifyResults = [];

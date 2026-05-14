@@ -1,5 +1,4 @@
 import { ApplicationFailure } from "@temporalio/activity";
-import { join } from "node:path";
 import {
   runWorkerActivityBody,
   type WorkerActivityResources
@@ -16,7 +15,7 @@ import {
   type AdapterDispatch
 } from "../adapters/resolveAdapter.js";
 import { AdapterUnsupported } from "../adapters/types.js";
-import { RunArtifactStore } from "../storage/runArtifactStore.js";
+import { runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import type { AgentSessionRecord } from "../domain/types.js";
 import { applyParsedAdapterSession } from "./adapterSession.js";
@@ -44,7 +43,7 @@ export async function runWorkerActivity(input: RunWorkerActivityInput): Promise<
     });
   }
 
-  const store = new RunArtifactStore(join(input.cwd, ".tychonic"));
+  const store = runArtifactStoreForRun(input.run);
   const prompt = input.prompt ?? "";
   const resumeSession = resolveExplicitResumeSession(input);
 

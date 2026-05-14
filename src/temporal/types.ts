@@ -85,11 +85,11 @@ export interface ActivityCallFieldsByType {
  *               identifier, not a slot key. The activity never hardcodes it.
  * @field run    The Tychonic `WorkflowRunRecord` at call time. Its `run.id`
  *               is the sole run identifier across the whole system — used
- *               for `.tychonic/runs/<id>/` paths, artifact/session records,
- *               inbox references, and cross-activity linkage. Temporal's
- *               own run id is an SDK concern and not surfaced here; if an
- *               activity needs it, read it from
- *               `Context.current().info.runId` inside the activity body.
+ *               with `run.artifact_root`, artifact/session records, inbox
+ *               references, and cross-activity linkage. Temporal's own run id
+ *               is an SDK concern and not surfaced here; if an activity needs
+ *               it, read it from `Context.current().info.runId` inside the
+ *               activity body.
  * @field profile
  *               The immutable workflow profile snapshot captured at
  *               workflow start. Activities read configuration through this.

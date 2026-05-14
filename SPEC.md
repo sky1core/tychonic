@@ -76,6 +76,10 @@ Allowed local files:
 - Temporal managed-local runtime files
 
 These files are evidence or runtime support files. They are not state authority.
+Tychonic-owned artifacts, live output, patches, and temporary worktrees must
+live under Tychonic-owned user-home or runtime directories, not inside the
+target repository. A target repository must not receive a repo-local `.tychonic`
+directory as a Tychonic byproduct of running workflows.
 
 ## Module SPECs
 

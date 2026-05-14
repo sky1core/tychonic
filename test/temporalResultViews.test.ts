@@ -75,10 +75,10 @@ describe("Temporal result views", () => {
     });
     expect(listLiveOutputAttemptViews(result, "wf_1", "run_1")[0]).not.toHaveProperty("command");
     expect(artifactContentPath(result, "artifact_1")).toBe(
-      join(cwd, ".tychonic", "runs", "run_temporal_view", "artifacts", "worker-output.txt")
+      join(cwd, "tychonic-runs", "run_temporal_view", "artifacts", "worker-output.txt")
     );
     expect(liveOutputContentPath(result, "attempt_1")).toBe(
-      join(cwd, ".tychonic", "runs", "run_temporal_view", "live", "attempt_1.log")
+      join(cwd, "tychonic-runs", "run_temporal_view", "live", "attempt_1.log")
     );
   });
 
@@ -90,7 +90,7 @@ describe("Temporal result views", () => {
       path: "../outside.txt"
     };
 
-    expect(() => artifactContentPath(result, "artifact_1")).toThrow("stored path escapes Tychonic root");
+    expect(() => artifactContentPath(result, "artifact_1")).toThrow(/stored path escapes/);
   });
 
   it("derives run timing from observed state and activity timestamps when run.updated_at is stale", async () => {
@@ -115,7 +115,7 @@ function fakeResult(cwd: string): TychonicWorkflowResult {
   return {
     runId: "run_temporal_view",
     status: "waiting_user",
-    artifactRoot: join(cwd, ".tychonic", "runs", "run_temporal_view"),
+    artifactRoot: join(cwd, "tychonic-runs", "run_temporal_view"),
     worktreePath: join("/tmp", "tychonic-worktree-run_temporal_view-fixture", "worktree"),
     run: {
       schema_version: "tychonic.run.v1",
@@ -124,6 +124,7 @@ function fakeResult(cwd: string): TychonicWorkflowResult {
       status: "waiting_user",
       goal: "inspect Temporal result",
       cwd,
+      artifact_root: join(cwd, "tychonic-runs", "run_temporal_view"),
       created_at: "2026-04-19T00:00:00.000Z",
       updated_at: "2026-04-19T00:00:01.000Z",
       states: [
@@ -151,7 +152,7 @@ function fakeResult(cwd: string): TychonicWorkflowResult {
           exit_code: 0,
           agent_session_id: "session_1",
           started_at: "2026-04-19T00:00:00.000Z",
-          live_output_path: ".tychonic/runs/run_temporal_view/live/attempt_1.log"
+          live_output_path: "live/attempt_1.log"
         },
         {
           id: "attempt_2",
@@ -179,7 +180,7 @@ function fakeResult(cwd: string): TychonicWorkflowResult {
         {
           id: "artifact_1",
           kind: "worker_output",
-          path: ".tychonic/runs/run_temporal_view/artifacts/worker-output.txt",
+          path: "artifacts/worker-output.txt",
           created_at: "2026-04-19T00:00:00.000Z"
         }
       ],

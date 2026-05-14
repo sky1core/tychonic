@@ -209,7 +209,7 @@ function sampleRun(): WorkflowRunRecord {
       {
         id: "artifact_1",
         kind: "lint_output",
-        path: "/repo/.tychonic/runs/run_1/lint.txt",
+        path: "<home>/.tychonic/runs/operational/run_1/artifacts/lint.txt",
         created_at: "2026-04-20T00:00:10.000Z"
       }
     ],

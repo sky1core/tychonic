@@ -27,10 +27,13 @@ files. macOS defaults are:
 - logs: `~/Library/Logs/Tychonic`
 - LaunchAgents: `~/Library/LaunchAgents/com.tychonic.*.plist`
 
-Project `.tychonic/` files may hold artifacts, live output, patches, and
-rebuildable projections. Temporary worktrees live outside the project tree under
-`/tmp` so repo-local inspection and review do not traverse accumulated worker
-checkouts. Project `.tychonic/` files must not become workflow state databases.
+Workflow evidence files live outside the target project tree under
+`~/.tychonic/runs/`. Temporary worktrees live outside the project tree under
+`~/.tychonic/worktrees/`, separate from both OS temp directories and the runtime
+state directory, so repo-local inspection and review do not traverse accumulated
+Tychonic byproducts and active work does not depend on OS temp retention. A
+workflow run must not create a target-project `.tychonic/` directory for
+Tychonic artifacts, live output, patches, or scratch files.
 
 ## Isolated Dev Instances
 
@@ -61,6 +64,8 @@ and uses them in place of the operational defaults:
 | --- | --- | --- |
 | state dir | `tychonicRuntimeDirs().stateDir` | `<default-state>/instances/<name>` |
 | log dir | `tychonicRuntimeDirs().logDir` | `<default-log>/instances/<name>` |
+| mutable worktree dir | `~/.tychonic/worktrees/operational` | `~/.tychonic/worktrees/instances/<name>` |
+| run evidence dir | `~/.tychonic/runs/operational` | `~/.tychonic/runs/instances/<name>` |
 | Temporal DB / PID / runtime files | under the state dir | under the instance state dir (derivation propagates) |
 | Temporal API port | `7233` | `17000 + fnv1a32(<name>) mod 1000` |
 | Temporal address | `127.0.0.1:7233` | `127.0.0.1:<derived API port>` |
@@ -135,13 +140,19 @@ Lifecycle commands:
   `runtime up --instance <name>` for the worker to load the new bundle.
 - `tychonic runtime reset --instance <name>` — terminates any runtime recorded
   in the instance PID file (SIGTERM, 10 second wait, SIGKILL), then removes
-  `<instance-state>/` and `<instance-log>/`. Rejects invocation without
-  `--instance`; operational paths are never reset through this command. Without
-  `--yes`, it prints the paths it is about to remove and reads a confirmation
-  from stdin. AI agents pass `--yes` for non-interactive cleanup.
+  `<instance-state>/`, `<instance-log>/`, that instance's worktree directory
+  under `~/.tychonic/worktrees/instances/<name>/`, and that instance's run
+  evidence directory under `~/.tychonic/runs/instances/<name>/`. It is
+  destructive instance cleanup, not a normal workflow stop path, and must only
+  be used when no active workflow still needs terminal patch capture or evidence
+  from those directories. Rejects
+  invocation without `--instance`; operational paths are never reset through
+  this command. Without `--yes`, it prints the paths it is about to remove and
+  reads a confirmation from stdin. AI agents pass `--yes` for non-interactive
+  cleanup.
 
-Instance isolation changes only the runtime directory layout and the Temporal
-connection parameters the CLI generates. It does not change the bundle
+Instance isolation changes only the runtime/worktree directory layout and the
+Temporal connection parameters the CLI generates. It does not change the bundle
 configuration schema, the workflow code, the workflow configuration snapshot, or
 the rule that Temporal workflow history is the sole Source Of Truth. The
 instance's Temporal DB file is a different file on disk from the operational DB,
@@ -149,10 +160,12 @@ and the two catalogues do not share workflow identities even when both use the
 `default` namespace.
 
 The derivation uses standard mechanisms only: existing `TYCHONIC_STATE_HOME` and
-`TYCHONIC_LOG_HOME` env rules, the commander program's global option and
-`preAction` hook, the Temporal CLI's existing port and namespace flags, and
-POSIX `start_new_session` for `--detach`. No staging directory, symlink array,
-or private node_modules layout is introduced for instance resolution.
+`TYCHONIC_LOG_HOME` env rules, the OS home directory for
+`~/.tychonic/worktrees` and `~/.tychonic/runs`, the commander program's global
+option and `preAction` hook, the Temporal CLI's existing port and namespace
+flags, and POSIX `start_new_session` for `--detach`. No staging directory,
+symlink array, or private node_modules layout is introduced for instance
+resolution.
 
 ## Bundle Layout On Disk
 

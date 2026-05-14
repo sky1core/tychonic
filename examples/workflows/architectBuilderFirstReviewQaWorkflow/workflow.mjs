@@ -68,8 +68,8 @@ export async function architectBuilderFirstReviewQaWorkflow(input) {
   const builder = await ctx.work(
     "builder",
     builderStageInstructions({
-      cwd: input.cwd,
       runId: ctx.run().id,
+      workflowId: ctx.workflowId(),
       worktreePath: ctx.worktreePath()
     })
   );
@@ -78,8 +78,8 @@ export async function architectBuilderFirstReviewQaWorkflow(input) {
   const firstReview = await ctx.review(
     "first_review",
     firstReviewStageInstructions({
-      cwd: input.cwd,
       runId: ctx.run().id,
+      workflowId: ctx.workflowId(),
       worktreePath: ctx.worktreePath()
     })
   );
@@ -91,8 +91,8 @@ export async function architectBuilderFirstReviewQaWorkflow(input) {
   const finalQa = await ctx.review(
     "final_qa",
     finalQaStageInstructions({
-      cwd: input.cwd,
       runId: ctx.run().id,
+      workflowId: ctx.workflowId(),
       worktreePath: ctx.worktreePath()
     })
   );
@@ -117,12 +117,12 @@ function architectStageInstructions(goal) {
   ].join("\n");
 }
 
-function builderStageInstructions({ cwd, runId, worktreePath }) {
+function builderStageInstructions({ runId, workflowId, worktreePath }) {
   return [
     "You are the Kiro builder stage. Implement the architect output for this run.",
     "",
     `Worktree: ${worktreePath}`,
-    `Artifacts: ${cwd}/.tychonic/runs/${runId}/artifacts/`,
+    ...evidenceCommandInstructions({ workflowId, runId }),
     "",
     "Before editing, inspect the target project's applicable rules and",
     "specifications. Follow relevant constraints while implementing, and",
@@ -133,11 +133,12 @@ function builderStageInstructions({ cwd, runId, worktreePath }) {
   ].join("\n");
 }
 
-function firstReviewStageInstructions({ cwd, runId, worktreePath }) {
+function firstReviewStageInstructions({ runId, workflowId, worktreePath }) {
   return [
     "You are the first QA reviewer for this run.",
+    ...evidenceCommandInstructions({ workflowId, runId }),
     `Review the Kiro builder output in ${worktreePath}.`,
-    `Use artifacts under ${cwd}/.tychonic/runs/${runId}/artifacts/ as context.`,
+    "Use Tychonic artifact evidence as context.",
     "",
     "Include compliance with the target project's applicable rules,",
     "specifications, and guardrails in the review scope. Verify that the",
@@ -151,11 +152,12 @@ function firstReviewStageInstructions({ cwd, runId, worktreePath }) {
   ].join("\n");
 }
 
-function finalQaStageInstructions({ cwd, runId, worktreePath }) {
+function finalQaStageInstructions({ runId, workflowId, worktreePath }) {
   return [
     "You are the final Codex QA reviewer for this run.",
+    ...evidenceCommandInstructions({ workflowId, runId }),
     `Check the final worktree in ${worktreePath}.`,
-    `Use artifacts under ${cwd}/.tychonic/runs/${runId}/artifacts/ as context, including Kiro's first review.`,
+    "Use Tychonic artifact evidence as context, including Kiro's first review.",
     "",
     "Include compliance with the target project's applicable rules,",
     "specifications, and guardrails in the review scope. Verify that the",
@@ -167,4 +169,19 @@ function finalQaStageInstructions({ cwd, runId, worktreePath }) {
     "Each finding needs severity, title, and actionable detail.",
     "Use status pass only when findings is empty. Use status fail when any actionable finding exists."
   ].join("\n");
+}
+
+function evidenceCommandInstructions({ workflowId, runId }) {
+  const workflowArg = shellArg(workflowId);
+  return [
+    `Workflow: ${workflowId}`,
+    `Run: ${runId}`,
+    `Status command: tychonic status --workflow-id ${workflowArg}`,
+    `Artifact command: tychonic artifacts --workflow-id ${workflowArg}`
+  ];
+}
+
+function shellArg(value) {
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

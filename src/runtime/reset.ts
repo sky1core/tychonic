@@ -2,7 +2,7 @@
  * `runtime reset --instance <name>` core logic.
  *
  * Terminates any runtime process recorded in `pidFile` (SIGTERM → 10s wait
- * → SIGKILL), then removes the instance's state and log directories.
+ * → SIGKILL), then removes the instance's state, log, worktree, and run evidence directories.
  * Pure-ish: takes explicit path inputs and a deps object so tests can inject
  * fake signal/sleep/fs behavior.
  *
@@ -32,14 +32,18 @@
  */
 
 import { rm } from "node:fs/promises";
-import { join as pathJoin } from "node:path";
+import { isAbsolute, join as pathJoin, normalize as pathNormalize } from "node:path";
 import { readPidFile, isProcessAlive } from "./detached.js";
+import { tychonicInstanceRunsParentDir } from "./runDirs.js";
+import { tychonicInstanceWorktreeParentDir } from "./worktreeDirs.js";
 
 export interface KillAndRemoveInstanceOptions {
   instance: string;
   pidFile: string;
   stateDir: string;
   logDir: string;
+  worktreeDir: string;
+  runsDir: string;
   /**
    * Maximum total wait time (ms) after SIGTERM before sending SIGKILL.
    * Default 10_000ms per design.
@@ -86,6 +90,8 @@ export interface KillAndRemoveInstanceResult {
   removed: {
     stateDir: string;
     logDir: string;
+    worktreeDir: string;
+    runsDir: string;
   };
 }
 
@@ -127,35 +133,68 @@ function assertInstancePath(path: string, instance: string, label: string): void
   if (!path || typeof path !== "string") {
     throw new Error(`${label} must be a non-empty string`);
   }
-  // Path must contain an `instances/<instance>` segment whose boundary is
-  // exact. `includes` on the raw substring would accept
-  // `.../instances/foo2/...` for instance `foo`, which is catastrophic for a
-  // destructive command. Enforce a separator (or string end) immediately
-  // before and after the instance name.
+  if (!isAbsolute(path)) {
+    throw new Error(`${label} must be an absolute path: ${path}`);
+  }
+  const normalized = pathNormalize(path);
+  if (normalized !== path) {
+    throw new Error(`${label} must be a normalized path before destructive cleanup: ${path}`);
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  const instanceSegmentIndexes: number[] = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    if (segments[i] === "instances") {
+      instanceSegmentIndexes.push(i);
+    }
+  }
   const needle = `/instances/${instance}`;
-  const idx = path.indexOf(needle);
-  if (idx < 0) {
+  if (instanceSegmentIndexes.length === 0) {
     throw new Error(
       `${label} does not contain the instance path segment ${JSON.stringify(
         needle
       )}: ${path}`
     );
   }
-  const afterIdx = idx + needle.length;
-  const afterChar = afterIdx < path.length ? path[afterIdx] : undefined;
-  if (afterChar !== undefined && afterChar !== "/") {
+  if (instanceSegmentIndexes.length > 1) {
     throw new Error(
-      `${label} matches instance segment ${JSON.stringify(
-        needle
-      )} only by prefix (next char is ${JSON.stringify(afterChar)}); ` +
-        `refusing to operate on ${path}`
+      `${label} contains multiple instance path segments; refusing destructive cleanup for ${path}`
     );
+  }
+  const idx = instanceSegmentIndexes[0]!;
+  const foundInstance = segments[idx + 1];
+  if (foundInstance === undefined) {
+    throw new Error(
+      `${label} does not contain the instance path segment ${JSON.stringify(
+        needle
+      )}: ${path}`
+    );
+  }
+  if (foundInstance !== instance) {
+    if (foundInstance.startsWith(instance)) {
+      throw new Error(
+        `${label} matches instance segment ${JSON.stringify(
+          needle
+        )} only by prefix (found ${JSON.stringify(foundInstance)}); ` +
+          `refusing to operate on ${path}`
+      );
+    }
+    throw new Error(
+      `${label} does not contain the instance path segment ${JSON.stringify(
+        needle
+      )}: ${path}`
+    );
+  }
+}
+
+function assertExactPath(path: string, expected: string, label: string): void {
+  if (path !== expected) {
+    throw new Error(`${label} must equal ${expected}: ${path}`);
   }
 }
 
 /**
  * Terminate the instance's runtime (if any), cascade the signal across
- * its process group when possible, and remove its state and log
+ * its process group when possible, and remove its state, log, worktree, and run evidence
  * directories. Idempotent: missing pidFile / missing directories are fine.
  *
  * Order:
@@ -170,7 +209,7 @@ function assertInstancePath(path: string, instance: string, label: string): void
  *      group kill, signal it directly with the same SIGTERM→SIGKILL
  *      escalation. Catches the corner case where the temporal child
  *      escaped the group.
- *   3. Remove `stateDir` and `logDir`.
+ *   3. Remove `stateDir`, `logDir`, `worktreeDir`, and `runsDir`.
  */
 export async function killAndRemoveInstance(
   options: KillAndRemoveInstanceOptions
@@ -180,6 +219,8 @@ export async function killAndRemoveInstance(
     pidFile,
     stateDir,
     logDir,
+    worktreeDir,
+    runsDir,
     waitForExitMs = 10_000,
     pollIntervalMs = 500
   } = options;
@@ -195,6 +236,10 @@ export async function killAndRemoveInstance(
   assertInstancePath(stateDir, instance, "stateDir");
   assertInstancePath(logDir, instance, "logDir");
   assertInstancePath(pidFile, instance, "pidFile");
+  assertInstancePath(worktreeDir, instance, "worktreeDir");
+  assertInstancePath(runsDir, instance, "runsDir");
+  assertExactPath(worktreeDir, tychonicInstanceWorktreeParentDir(instance), "worktreeDir");
+  assertExactPath(runsDir, tychonicInstanceRunsParentDir(instance), "runsDir");
 
   let killedPid: number | null = null;
   let killedSignal: "SIGTERM" | "SIGKILL" | null = null;
@@ -304,10 +349,12 @@ export async function killAndRemoveInstance(
     }
   }
 
-  // Remove state and log directories (force+recursive = idempotent on
+  // Remove instance-owned directories (force+recursive = idempotent on
   // missing paths).
   await removeDir(stateDir);
   await removeDir(logDir);
+  await removeDir(worktreeDir);
+  await removeDir(runsDir);
 
   return {
     instance,
@@ -315,6 +362,6 @@ export async function killAndRemoveInstance(
     killedSignal,
     killedTemporalPid,
     killedTemporalSignal,
-    removed: { stateDir, logDir }
+    removed: { stateDir, logDir, worktreeDir, runsDir }
   };
 }

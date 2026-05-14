@@ -37,14 +37,16 @@ process output; silent-but-healthy commands still require periodic heartbeats.
 Background mutation must use an isolated worktree. Worktree helpers create or
 describe that isolated path; they do not make workflow state decisions.
 
-Isolated worktrees live under `/tmp`, not under the target project's
-`.tychonic/` directory. The target project may still receive Tychonic evidence
-files under `.tychonic/runs/<run-id>/`, but the mutable worker checkout itself
-must stay outside the project tree so ordinary repo inspection and review do not
-traverse accumulated temporary worktrees.
+Isolated worktrees live under the user-home worktree root
+`~/.tychonic/worktrees/`, not under `/tmp`, not under the target project's
+`.tychonic/` directory, and not under the runtime state directory. Tychonic
+evidence files live under the user-home run evidence root `~/.tychonic/runs/`,
+not under the target project's `.tychonic/` directory, so ordinary repo
+inspection and review do not traverse accumulated Tychonic byproducts.
 
 When the target repository has `HEAD`, worktree helpers use Git's linked
-worktree mechanism under `/tmp`. Tychonic owns the linked worktree lifecycle:
-failed creation removes any partial checkout and prunes stale Git metadata, and
-terminal workflows must capture an applicable patch artifact and remove the
-isolated worktree instead of leaving the caller to manage it.
+worktree mechanism under that Tychonic-owned worktree root. Tychonic owns the
+linked worktree lifecycle: failed creation removes any partial checkout and
+prunes stale Git metadata, and terminal workflows must capture an applicable
+patch artifact and remove the isolated worktree instead of leaving the caller
+to manage it.

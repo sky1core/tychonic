@@ -1,5 +1,6 @@
 import { createIsolatedWorktree } from "../bootstrap/worktree.js";
 import type { WorkflowRunRecord } from "../domain/types.js";
+import { tychonicWorktreeParentDir } from "../runtime/worktreeDirs.js";
 
 export interface CreateWorktreeActivityInput {
   run: WorkflowRunRecord;
@@ -8,6 +9,7 @@ export interface CreateWorktreeActivityInput {
 
 export interface CreateWorktreeActivityResult {
   worktreePath: string;
+  worktreeParentDir: string;
   mode: "git_worktree" | "directory_copy_no_head";
   reason: string;
   baseHead: string;
@@ -27,11 +29,20 @@ export interface CreateWorktreeActivityResult {
 export async function createWorktreeActivity(
   input: CreateWorktreeActivityInput
 ): Promise<CreateWorktreeActivityResult> {
-  const isolated = await createIsolatedWorktree({ cwd: input.cwd, runId: input.run.id });
+  const isolated = await createIsolatedWorktree({
+    cwd: input.cwd,
+    runId: input.run.id,
+    worktreeParentDir: worktreeParentDir()
+  });
   return {
     worktreePath: isolated.path,
+    worktreeParentDir: isolated.worktreeParentDir,
     mode: isolated.mode,
     reason: isolated.reason,
     baseHead: isolated.baseHead
   };
+}
+
+function worktreeParentDir(): string {
+  return tychonicWorktreeParentDir();
 }

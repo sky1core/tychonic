@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   optionalStateConfig
@@ -125,13 +125,14 @@ export async function runReviewActivityBody(
 
   await mkdir(store.liveDir(run.id), { recursive: true });
   const liveOutputPath = join(store.liveDir(run.id), `${attempt.id}.log`);
-  attempt.live_output_path = relativeToCwd(input.cwd, liveOutputPath);
+  attempt.live_output_path = store.storedPath(run.id, liveOutputPath);
 
   const artifactsDir = store.artifactsDir(run.id);
   await mkdir(artifactsDir, { recursive: true });
   const artifacts: ArtifactRecord[] = [];
   const promptArtifact = await writeReviewArtifact({
     store,
+    runId: run.id,
     artifactsDir,
     id: nextId("artifact"),
     kind: `${input.stateName}_prompt`,
@@ -178,6 +179,7 @@ export async function runReviewActivityBody(
 
   const outputArtifact = await writeReviewArtifact({
     store,
+    runId: run.id,
     artifactsDir,
     id: nextId("artifact"),
     kind: `${input.stateName}_output`,
@@ -274,6 +276,7 @@ export async function runReviewActivityBody(
       env,
       heartbeat: progress,
       store,
+      runId: run.id,
       artifactsDir,
       attemptId: attempt.id,
       stateId: state.id,
@@ -335,6 +338,7 @@ export async function runReviewActivityBody(
 
   const parsedArtifact = await writeReviewArtifact({
     store,
+    runId: run.id,
     artifactsDir,
     id: nextId("artifact"),
     kind: `${input.stateName}_parsed`,
@@ -428,6 +432,7 @@ async function runReviewNormalizer(input: {
   env: NodeJS.ProcessEnv;
   heartbeat: () => void;
   store: RunArtifactStore;
+  runId: string;
   artifactsDir: string;
   attemptId: string;
   stateId: string;
@@ -457,6 +462,7 @@ async function runReviewNormalizer(input: {
     const artifacts: ArtifactRecord[] = [];
     const promptArtifact = await writeReviewArtifact({
       store: input.store,
+      runId: input.runId,
       artifactsDir: input.artifactsDir,
       id: input.nextId("artifact"),
       kind: `${input.stateName}_normalizer_prompt`,
@@ -495,6 +501,7 @@ async function runReviewNormalizer(input: {
 
     const outputArtifact = await writeReviewArtifact({
       store: input.store,
+      runId: input.runId,
       artifactsDir: input.artifactsDir,
       id: input.nextId("artifact"),
       kind: `${input.stateName}_normalizer_output`,
@@ -556,6 +563,7 @@ function buildReviewNormalizerPrompt(input: {
 
 async function writeReviewArtifact(input: {
   store: RunArtifactStore;
+  runId: string;
   artifactsDir: string;
   id: string;
   kind: string;
@@ -571,19 +579,11 @@ async function writeReviewArtifact(input: {
   return {
     id: input.id,
     kind: input.kind,
-    path: relative(dirname(input.store.rootDir), filePath),
+    path: input.store.storedPath(input.runId, filePath),
     created_at: input.createdAt,
     state_id: input.stateId,
     activity_attempt_id: input.attemptId
   };
-}
-
-function relativeToCwd(cwd: string, targetPath: string): string {
-  const relativePath = relative(resolve(cwd), resolve(targetPath));
-  if (relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)) {
-    return relativePath;
-  }
-  return targetPath;
 }
 
 type ReviewMutationSnapshot =

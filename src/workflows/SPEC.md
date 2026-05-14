@@ -50,6 +50,13 @@ into the workflow code itself: it is the workflow's author-supplied
 time. Workflow start still validates the effective config under
 `TychonicConfigSchema`.
 
+The public `createTychonicWorkflowContext` helper exposes the current Temporal
+workflow id through `ctx.workflowId()` so workflow-owned prompts can point
+agents at copyable CLI evidence commands such as `tychonic status
+--workflow-id <id>`. This value is a Temporal workflow identifier. It must not
+be confused with `WorkflowRunRecord.id`, which is the product run id used in
+run records, artifact paths, inbox references, and user-facing run evidence.
+
 ## State Identity And Activity TYPE
 
 A state and the activity it invokes share exactly two axes.

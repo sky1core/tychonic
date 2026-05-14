@@ -1,7 +1,6 @@
-import { join } from "node:path";
 import type { TychonicConfig } from "../catalog/types.js";
 import type { WorkflowRunRecord } from "../domain/types.js";
-import { RunArtifactStore } from "../storage/runArtifactStore.js";
+import { newRunArtifactStore } from "../storage/runArtifactStore.js";
 
 export interface StartRunActivityInput {
   template: string;
@@ -27,12 +26,14 @@ export type StartRunActivityResult = WorkflowRunRecord;
 export async function startRunActivity(input: StartRunActivityInput): Promise<StartRunActivityResult> {
   const createdAt = new Date().toISOString();
   const runId = input.runId ?? defaultRunId(input.template, new Date());
+  const store = newRunArtifactStore();
   let run: WorkflowRunRecord = {
     schema_version: "tychonic.run.v1",
     id: runId,
     template: input.template,
     status: "created",
     cwd: input.cwd,
+    artifact_root: store.runDir(runId),
     created_at: createdAt,
     updated_at: createdAt,
     states: [],
@@ -46,7 +47,6 @@ export async function startRunActivity(input: StartRunActivityInput): Promise<St
     run.goal = input.goal;
   }
   if (input.profile !== undefined) {
-    const store = new RunArtifactStore(join(input.cwd, ".tychonic"));
     await store.initializeRunArtifacts(run);
     const { snapshot } = await store.writeProfileArtifacts({
       run,

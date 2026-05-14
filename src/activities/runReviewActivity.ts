@@ -1,5 +1,4 @@
 import { ApplicationFailure } from "@temporalio/common";
-import { join } from "node:path";
 import {
   resolveNamedReviewOptions,
   runReviewActivityBody
@@ -7,7 +6,7 @@ import {
 import { activityTimeoutMs, defaultActivityTimeoutMs, optionalStateConfig } from "../catalog/types.js";
 import type { WorkflowRunRecord, WorkflowStateRecord } from "../domain/types.js";
 import { AdapterUnsupported } from "../adapters/types.js";
-import { RunArtifactStore } from "../storage/runArtifactStore.js";
+import { runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import { heartbeatActivity } from "./heartbeat.js";
 
@@ -34,7 +33,7 @@ export async function runReviewActivity(input: RunReviewActivityInput): Promise<
     return missingBlockResult(input.run, input.stateName, () => new Date());
   }
 
-  const store = new RunArtifactStore(join(input.cwd, ".tychonic"));
+  const store = runArtifactStoreForRun(input.run);
   const nextId = nextIdFromRun(input.run);
   const env = process.env;
   const now = (): Date => new Date();

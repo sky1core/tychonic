@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { access, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,6 +10,7 @@ import { cleanupWorktreeActivity } from "../src/activities/cleanupWorktreeActivi
 import { createWorktreeActivity } from "../src/activities/createWorktreeActivity.js";
 import { finalizeRunActivity } from "../src/activities/finalizeRunActivity.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
+import { setActiveInstance } from "../src/runtime/instance.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +28,7 @@ describe("bootstrap activities", () => {
       expect(run.findings).toEqual([]);
       expect(run.inbox).toEqual([]);
       expect(run.agent_sessions).toEqual([]);
+      expect(run.artifact_root).toContain("/.tychonic/runs/operational/checkpoint_");
     });
 
     it("uses the caller-supplied runId and records optional metadata", async () => {
@@ -39,6 +40,34 @@ describe("bootstrap activities", () => {
       });
       expect(run.id).toBe("simple_workflow_custom_id");
       expect(run.goal).toBe("fix the bug");
+    });
+
+    it("rejects caller-supplied runId values that are not single path segments", async () => {
+      await expect(
+        startRunActivity({
+          template: "simple_workflow",
+          cwd: "/repo",
+          runId: "../escape"
+        })
+      ).rejects.toThrow(/run id must be a single path segment/);
+    });
+
+    it("records instance run evidence under the user-home instance root", async () => {
+      await withTychonicStateHome(async (stateHome) => {
+        setActiveInstance("itest");
+        try {
+          const run = await startRunActivity({
+            template: "simple_workflow",
+            cwd: "/repo",
+            runId: "simple_workflow_instance"
+          });
+          expect(run.artifact_root).toBe(
+            join(stateHome, ".tychonic", "runs", "instances", "itest", "simple_workflow_instance")
+          );
+        } finally {
+          setActiveInstance(undefined);
+        }
+      });
     });
 
     it("records a profile_snapshot artifact when a profile is supplied", async () => {
@@ -60,12 +89,14 @@ describe("bootstrap activities", () => {
         expect.objectContaining({
           id: "artifact_1",
           kind: "profile_snapshot",
-          path: ".tychonic/runs/simple_workflow_profile_snapshot/artifacts/profile_snapshot.yaml"
+          path: "artifacts/profile_snapshot.yaml"
         })
       ]);
-      const content = await readFile(join(cwd, run.artifacts[0]!.path), "utf8");
+      expect(run.artifact_root).toBeDefined();
+      const content = await readFile(join(run.artifact_root!, run.artifacts[0]!.path), "utf8");
       expect(content).toContain("version: tychonic.config.v1");
       expect(content).toContain("command: npm run verify:worker");
+      await expect(access(join(cwd, ".tychonic"))).rejects.toThrow();
     });
   });
 
@@ -93,70 +124,177 @@ describe("bootstrap activities", () => {
 
   describe("createWorktreeActivity", () => {
     it("creates an isolated worktree path and reports the creation mode", async () => {
-      const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-"));
-      await execFileAsync("git", ["init"], { cwd });
-      await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
-      await execFileAsync("git", ["add", "seed.txt"], { cwd });
-      await execFileAsync(
-        "git",
-        ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
-        { cwd }
-      );
+      await withTychonicStateHome(async (stateHome) => {
+        const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-"));
+        await execFileAsync("git", ["init"], { cwd });
+        await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+        await execFileAsync("git", ["add", "seed.txt"], { cwd });
+        await execFileAsync(
+          "git",
+          ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+          { cwd }
+        );
 
-      const run = baseRun("run_wt_1");
-      const result = await createWorktreeActivity({ run, cwd });
-      expect(result.worktreePath).toMatch(/tychonic-worktree-run_wt_1-.+[\\/]worktree$/);
-      expect((await realpath(result.worktreePath)).startsWith(`${realpathSync("/tmp")}/`)).toBe(true);
-      await expect(access(join(cwd, ".tychonic", "worktrees", run.id))).rejects.toThrow();
-      expect(result.mode).toBe("git_worktree");
-      expect(result.baseHead).toMatch(/[0-9a-f]{40}/);
-      const entries = await readdir(result.worktreePath);
-      expect(entries).toContain("seed.txt");
+        const run = baseRun("run_wt_1");
+        const result = await createWorktreeActivity({ run, cwd });
+        expect(result.worktreePath).toMatch(/tychonic-worktree-run_wt_1-.+[\\/]worktree$/);
+        const expectedParent = join(stateHome, ".tychonic", "worktrees", "operational");
+        expect(result.worktreeParentDir).toBe(expectedParent);
+        expect((await realpath(result.worktreePath)).startsWith(`${await realpath(expectedParent)}/`)).toBe(true);
+        await expect(access(join(cwd, ".tychonic", "worktrees", run.id))).rejects.toThrow();
+        expect(result.mode).toBe("git_worktree");
+        expect(result.baseHead).toMatch(/[0-9a-f]{40}/);
+        const entries = await readdir(result.worktreePath);
+        expect(entries).toContain("seed.txt");
+      });
+    });
+
+    it("creates instance worktrees under the user-home Tychonic worktree root", async () => {
+      await withTychonicStateHome(async (stateHome) => {
+        const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-instance-"));
+        await execFileAsync("git", ["init"], { cwd });
+        await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+        await execFileAsync("git", ["add", "seed.txt"], { cwd });
+        await execFileAsync(
+          "git",
+          ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+          { cwd }
+        );
+
+        setActiveInstance("itest");
+        try {
+          const run = baseRun("run_wt_instance");
+          const result = await createWorktreeActivity({ run, cwd });
+          const expectedParent = join(stateHome, ".tychonic", "worktrees", "instances", "itest");
+          expect(result.worktreeParentDir).toBe(expectedParent);
+          expect((await realpath(result.worktreePath)).startsWith(`${await realpath(expectedParent)}/`)).toBe(true);
+        } finally {
+          setActiveInstance(undefined);
+        }
+      });
     });
   });
 
   describe("cleanupWorktreeActivity", () => {
     it("removes a Tychonic-created worktree path", async () => {
-      const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-activity-"));
-      await execFileAsync("git", ["init"], { cwd });
-      await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
-      await execFileAsync("git", ["add", "seed.txt"], { cwd });
-      await execFileAsync(
-        "git",
-        ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
-        { cwd }
-      );
+      await withTychonicStateHome(async () => {
+        const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-activity-"));
+        await execFileAsync("git", ["init"], { cwd });
+        await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+        await execFileAsync("git", ["add", "seed.txt"], { cwd });
+        await execFileAsync(
+          "git",
+          ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+          { cwd }
+        );
 
-      const run = baseRun("run_wt_cleanup");
-      const created = await createWorktreeActivity({ run, cwd });
-      const worktreeRoot = dirname(created.worktreePath);
-      await writeFile(join(created.worktreePath, "seed.txt"), "changed\n", "utf8");
-      const cleanup = await cleanupWorktreeActivity({
-        run,
-        cwd,
-        worktreePath: created.worktreePath,
-        baseHead: created.baseHead
-      });
+        const run = baseRun("run_wt_cleanup");
+        run.artifact_root = join(process.env.HOME!, ".tychonic", "runs", "operational", run.id);
+        const created = await createWorktreeActivity({ run, cwd });
+        const worktreeRoot = dirname(created.worktreePath);
+        await writeFile(join(created.worktreePath, "seed.txt"), "changed\n", "utf8");
+        const cleanup = await cleanupWorktreeActivity({
+          run,
+          cwd,
+          worktreePath: created.worktreePath,
+          worktreeParentDir: created.worktreeParentDir,
+          baseHead: created.baseHead
+        });
 
-      await expect(access(created.worktreePath)).rejects.toThrow();
-      await expect(access(worktreeRoot)).rejects.toThrow();
-      expect(cleanup.cleanupOutcome.artifacts).toHaveLength(1);
-      const patchPath = join(cwd, cleanup.cleanupOutcome.artifacts[0]?.path ?? "");
-      await expect(readFile(patchPath, "utf8")).resolves.toContain("+changed");
-      const retryCleanup = await cleanupWorktreeActivity({
-        run,
-        cwd,
-        worktreePath: created.worktreePath,
-        baseHead: created.baseHead
+        await expect(access(created.worktreePath)).rejects.toThrow();
+        await expect(access(worktreeRoot)).rejects.toThrow();
+        expect(cleanup.cleanupOutcome.artifacts).toHaveLength(1);
+        const patchPath = join(run.artifact_root, cleanup.cleanupOutcome.artifacts[0]?.path ?? "");
+        await expect(readFile(patchPath, "utf8")).resolves.toContain("+changed");
+        const retryCleanup = await cleanupWorktreeActivity({
+          run,
+          cwd,
+          worktreePath: created.worktreePath,
+          worktreeParentDir: created.worktreeParentDir,
+          baseHead: created.baseHead
+        });
+        expect(retryCleanup.cleanupOutcome.artifacts).toHaveLength(1);
+        expect(retryCleanup.cleanupOutcome.artifacts[0]?.path).toBe(cleanup.cleanupOutcome.artifacts[0]?.path);
+        const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
+          cwd,
+          encoding: "utf8"
+        });
+        expect(stdout).not.toContain(created.worktreePath);
+        expect(stdout).not.toContain(run.id);
       });
-      expect(retryCleanup.cleanupOutcome.artifacts).toHaveLength(1);
-      expect(retryCleanup.cleanupOutcome.artifacts[0]?.path).toBe(cleanup.cleanupOutcome.artifacts[0]?.path);
-      const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
-        cwd,
-        encoding: "utf8"
+    });
+
+    it("uses the recorded worktree parent when the active state dir changes before cleanup", async () => {
+      await withTychonicStateHome(async (stateHome) => {
+        const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-state-change-"));
+        await execFileAsync("git", ["init"], { cwd });
+        await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+        await execFileAsync("git", ["add", "seed.txt"], { cwd });
+        await execFileAsync(
+          "git",
+          ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+          { cwd }
+        );
+
+        const run = baseRun("run_wt_cleanup_state_change");
+        run.artifact_root = join(stateHome, ".tychonic", "runs", "operational", run.id);
+        const created = await createWorktreeActivity({ run, cwd });
+        await writeFile(join(created.worktreePath, "seed.txt"), "changed after state switch\n", "utf8");
+
+        const otherStateHome = await mkdtemp(join(tmpdir(), "tychonic-other-state-home-"));
+        process.env.TYCHONIC_STATE_HOME = otherStateHome;
+        try {
+          const cleanup = await cleanupWorktreeActivity({
+            run,
+            cwd,
+            worktreePath: created.worktreePath,
+            worktreeParentDir: created.worktreeParentDir,
+            baseHead: created.baseHead
+          });
+
+          await expect(access(created.worktreePath)).rejects.toThrow();
+          expect(cleanup.cleanupOutcome.artifacts).toHaveLength(1);
+          expect(created.worktreeParentDir).toBe(join(stateHome, ".tychonic", "worktrees", "operational"));
+        } finally {
+          process.env.TYCHONIC_STATE_HOME = stateHome;
+        }
       });
-      expect(stdout).not.toContain(created.worktreePath);
-      expect(stdout).not.toContain(run.id);
+    });
+
+    it("derives the parent from recorded worktreePath for legacy cleanup inputs", async () => {
+      await withTychonicStateHome(async (stateHome) => {
+        const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-legacy-"));
+        await execFileAsync("git", ["init"], { cwd });
+        await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+        await execFileAsync("git", ["add", "seed.txt"], { cwd });
+        await execFileAsync(
+          "git",
+          ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+          { cwd }
+        );
+
+        const run = baseRun("run_wt_cleanup_legacy");
+        run.artifact_root = join(stateHome, ".tychonic", "runs", "operational", run.id);
+        const created = await createWorktreeActivity({ run, cwd });
+        await writeFile(join(created.worktreePath, "seed.txt"), "legacy cleanup\n", "utf8");
+
+        const otherStateHome = await mkdtemp(join(tmpdir(), "tychonic-other-state-home-"));
+        process.env.TYCHONIC_STATE_HOME = otherStateHome;
+        try {
+          const cleanup = await cleanupWorktreeActivity({
+            run,
+            cwd,
+            worktreePath: created.worktreePath,
+            baseHead: created.baseHead
+          });
+
+          await expect(access(created.worktreePath)).rejects.toThrow();
+          expect(cleanup.cleanupOutcome.artifacts).toHaveLength(1);
+          expect(created.worktreeParentDir).toBe(join(stateHome, ".tychonic", "worktrees", "operational"));
+        } finally {
+          process.env.TYCHONIC_STATE_HOME = stateHome;
+        }
+      });
     });
 
     it("rejects non-Tychonic paths before staging a patch", async () => {
@@ -328,4 +466,26 @@ function baseRun(id: string): WorkflowRunRecord {
     findings: [],
     inbox: []
   };
+}
+
+async function withTychonicStateHome<T>(run: (stateHome: string) => Promise<T>): Promise<T> {
+  const original = process.env.TYCHONIC_STATE_HOME;
+  const originalHome = process.env.HOME;
+  const stateHome = await mkdtemp(join(tmpdir(), "tychonic-state-home-"));
+  process.env.TYCHONIC_STATE_HOME = stateHome;
+  process.env.HOME = stateHome;
+  try {
+    return await run(stateHome);
+  } finally {
+    if (original === undefined) {
+      delete process.env.TYCHONIC_STATE_HOME;
+    } else {
+      process.env.TYCHONIC_STATE_HOME = original;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+  }
 }

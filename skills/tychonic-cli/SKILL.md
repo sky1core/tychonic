@@ -30,8 +30,8 @@ verification.
 - Config declares named `states.<name>` blocks and workflow-owned
   `policies.<name>` values. It is not a workflow graph.
 
-Do not read `.tychonic/runs` as product state. Use CLI commands backed by
-Temporal.
+Do not read filesystem run evidence directories as product state. Use CLI
+commands backed by Temporal.
 
 ## Health And Runtime
 
@@ -435,17 +435,18 @@ npm run verify:agents-live
 
 ## Project Setup
 
-Before running a Tychonic workflow on a project, add `.tychonic/` to the
-project's root `.gitignore`. Tychonic writes evidence and run working files
-under `.tychonic/runs/<run-id>/`; mutable workflow worktrees are created under
-`/tmp/tychonic-worktree-*`, not under the project `.tychonic/` directory.
+Tychonic-owned byproducts must not be written into the target repository.
+Run evidence lives under `~/.tychonic/runs/operational/<run-id>/` or
+`~/.tychonic/runs/instances/<name>/<run-id>/`; mutable workflow worktrees are
+created under `~/.tychonic/worktrees/`, not under `/tmp`, not under the active
+runtime state directory, and not under the project `.tychonic/` directory.
 Tychonic owns terminal patch capture and cleanup for those temporary worktrees.
-Without the ignore entry, evidence files appear as untracked in `git status`.
 
-Agents must not create files or directories at the project root. All scratch
-files, temporary files, notes, analysis outputs, and working state belong
-inside `.tychonic/`. The only files agents may create or modify at the project
-root are source files that are part of the actual task deliverable.
+Agents must not create files or directories at the project root unless they are
+source files that are part of the actual task deliverable. Scratch files,
+temporary files, notes, analysis outputs, and working state belong in Tychonic
+evidence/artifact paths or outside the target repository when explicitly
+needed.
 
 ## Guardrails
 
@@ -456,6 +457,7 @@ root are source files that are part of the actual task deliverable.
 - Keep user-facing docs focused on product behavior. Put workflow-specific
   behavior in that workflow's bundle README.
 - Do not create scratch files, temporary files, or working directories at
-  the project root. All non-deliverable files belong inside `.tychonic/`.
+  the project root. Non-deliverable files belong in Tychonic evidence/artifact
+  paths or outside the target repository when explicitly needed.
 - For notification troubleshooting, use
   [notifications-troubleshooting.md](./notifications-troubleshooting.md).

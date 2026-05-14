@@ -4,10 +4,10 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const WORKTREE_TEMP_PARENT = "/tmp";
 
 export interface IsolatedWorktree {
   path: string;
+  worktreeParentDir: string;
   mode: "git_worktree" | "directory_copy_no_head";
   reason: string;
   baseHead: string;
@@ -16,8 +16,9 @@ export interface IsolatedWorktree {
 export async function createIsolatedWorktree(input: {
   cwd: string;
   runId: string;
+  worktreeParentDir: string;
 }): Promise<IsolatedWorktree> {
-  const { root, target } = await temporaryWorktreeTarget(input.runId);
+  const { root, target } = await temporaryWorktreeTarget(input.runId, input.worktreeParentDir);
   let gitWorktreeAddStarted = false;
 
   try {
@@ -29,6 +30,7 @@ export async function createIsolatedWorktree(input: {
       await copyWorkingTreeSnapshot(input.cwd, target);
       return {
         path: target,
+        worktreeParentDir: input.worktreeParentDir,
         mode: "git_worktree",
         reason: "created detached git worktree from HEAD with working tree snapshot",
         baseHead
@@ -41,6 +43,7 @@ export async function createIsolatedWorktree(input: {
     const baseHead = (await gitOutput(target, ["rev-parse", "--verify", "HEAD"])).trim();
     return {
       path: target,
+      worktreeParentDir: input.worktreeParentDir,
       mode: "directory_copy_no_head",
       baseHead,
       reason:
@@ -55,8 +58,9 @@ export async function createIsolatedWorktree(input: {
 export async function removeIsolatedWorktree(input: {
   cwd: string;
   worktreePath: string;
+  worktreeParentDir: string;
 }): Promise<void> {
-  const root = await validateOwnedWorktreePath(input.worktreePath);
+  const root = await validateOwnedWorktreePath(input.worktreePath, input.worktreeParentDir);
   let gitRemoveFailed = false;
   try {
     await execFileAsync("git", ["worktree", "remove", "--force", input.worktreePath], { cwd: input.cwd });
@@ -72,15 +76,17 @@ export async function removeIsolatedWorktree(input: {
 export async function worktreePatch(input: {
   worktreePath: string;
   baseHead: string;
+  worktreeParentDir: string;
 }): Promise<string> {
-  await validateOwnedWorktreePath(input.worktreePath);
+  await validateOwnedWorktreePath(input.worktreePath, input.worktreeParentDir);
   await execFileAsync("git", ["add", "--all"], { cwd: input.worktreePath });
   return await gitOutput(input.worktreePath, ["diff", "--binary", "--cached", input.baseHead, "--", "."]);
 }
 
-async function temporaryWorktreeTarget(runId: string): Promise<{ root: string; target: string }> {
+async function temporaryWorktreeTarget(runId: string, worktreeParentDir: string): Promise<{ root: string; target: string }> {
   const safeRunId = runId.replaceAll(/[^a-zA-Z0-9._-]/g, "_");
-  const root = await mkdtemp(join(WORKTREE_TEMP_PARENT, `tychonic-worktree-${safeRunId}-`));
+  await mkdir(worktreeParentDir, { recursive: true });
+  const root = await mkdtemp(join(worktreeParentDir, `tychonic-worktree-${safeRunId}-`));
   return { root, target: join(root, "worktree") };
 }
 
@@ -127,7 +133,7 @@ async function cleanupFailedWorktree(input: {
   }
 }
 
-async function validateOwnedWorktreePath(worktreePath: string): Promise<string> {
+async function validateOwnedWorktreePath(worktreePath: string, worktreeParentDir: string): Promise<string> {
   if (basename(worktreePath) !== "worktree") {
     throw new Error(`refusing to remove non-Tychonic worktree path: ${worktreePath}`);
   }
@@ -135,18 +141,23 @@ async function validateOwnedWorktreePath(worktreePath: string): Promise<string> 
   if (!basename(root).startsWith("tychonic-worktree-")) {
     throw new Error(`refusing to remove non-Tychonic worktree path: ${worktreePath}`);
   }
-  const realTmp = await realpath(WORKTREE_TEMP_PARENT);
-  const lexicalTmp = resolve(WORKTREE_TEMP_PARENT);
+  const lexicalParent = resolve(worktreeParentDir);
+  let realParent: string;
+  try {
+    realParent = await realpath(worktreeParentDir);
+  } catch {
+    realParent = lexicalParent;
+  }
   let realRoot: string;
   try {
     realRoot = await realpath(root);
   } catch {
     realRoot = resolve(root);
   }
-  const inRealTmp = realRoot === realTmp || realRoot.startsWith(`${realTmp}${sep}`);
-  const inLexicalTmp = realRoot === lexicalTmp || realRoot.startsWith(`${lexicalTmp}${sep}`);
-  if (!inRealTmp && !inLexicalTmp) {
-    throw new Error(`refusing to remove worktree outside ${WORKTREE_TEMP_PARENT}: ${worktreePath}`);
+  const inRealParent = realRoot === realParent || realRoot.startsWith(`${realParent}${sep}`);
+  const inLexicalParent = realRoot === lexicalParent || realRoot.startsWith(`${lexicalParent}${sep}`);
+  if (!inRealParent && !inLexicalParent) {
+    throw new Error(`refusing to remove worktree outside ${worktreeParentDir}: ${worktreePath}`);
   }
   return root;
 }

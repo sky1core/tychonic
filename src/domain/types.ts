@@ -145,6 +145,7 @@ export interface WorkflowRunRecord {
   status: WorkflowRunStatus;
   goal?: string;
   cwd: string;
+  artifact_root?: string;
   summary?: string;
   facts?: unknown;
   profile_snapshot_artifact_id?: string;

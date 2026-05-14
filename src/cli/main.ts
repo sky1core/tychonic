@@ -35,7 +35,9 @@ import {
   removePidFileIfOwned
 } from "../runtime/detached.js";
 import { killAndRemoveInstance } from "../runtime/reset.js";
+import { tychonicInstanceRunsParentDir } from "../runtime/runDirs.js";
 import { stopRuntimeParent } from "../runtime/stop.js";
+import { tychonicWorktreeParentDir } from "../runtime/worktreeDirs.js";
 import {
   replaceLaunchdWorker,
   installLaunchdServices,
@@ -517,7 +519,7 @@ runtimeCommand
   .command("reset", { hidden: true })
   .option("--yes", "skip the interactive confirmation prompt", false)
   .description(
-    "Terminate the runtime for --instance <name> (SIGTERM → 10s → SIGKILL) and remove its state/log directories. Refuses to operate without --instance."
+    "Terminate the runtime for --instance <name> (SIGTERM → 10s → SIGKILL) and remove its state/log/worktree/run evidence directories. Refuses to operate without --instance."
   )
   .action(async (options: { yes?: boolean }) => {
     await handleRuntimeReset({ yes: Boolean(options.yes) });
@@ -1738,7 +1740,7 @@ async function promptConfirm(message: string): Promise<boolean> {
 
 /**
  * `runtime reset --instance <name>` handler. Requires an active
- * instance; operates only on the instance-scoped state/log/pid paths.
+ * instance; operates only on the instance-scoped state/log/worktree/pid paths.
  */
 async function handleRuntimeReset(options: { yes: boolean }): Promise<void> {
   const instance = getActiveInstance();
@@ -1753,6 +1755,8 @@ async function handleRuntimeReset(options: { yes: boolean }): Promise<void> {
 
   const dirs = tychonicRuntimeDirs();
   const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
+  const worktreeDir = tychonicWorktreeParentDir();
+  const runsDir = tychonicInstanceRunsParentDir(instance);
 
   if (!options.yes) {
     const lines = [
@@ -1760,6 +1764,8 @@ async function handleRuntimeReset(options: { yes: boolean }): Promise<void> {
       `  - SIGTERM (then SIGKILL after 10s) the pid recorded in: ${pidFile}`,
       `  - remove state dir: ${dirs.stateDir}`,
       `  - remove log dir:   ${dirs.logDir}`,
+      `  - remove worktree dir: ${worktreeDir}`,
+      `  - remove run evidence dir: ${runsDir}`,
       `Proceed? [y/N] `
     ];
     const confirmed = await promptConfirm(lines.join("\n"));
@@ -1784,7 +1790,9 @@ async function handleRuntimeReset(options: { yes: boolean }): Promise<void> {
     instance,
     pidFile,
     stateDir: dirs.stateDir,
-    logDir: dirs.logDir
+    logDir: dirs.logDir,
+    worktreeDir,
+    runsDir
   });
 
   console.log(

@@ -1,4 +1,4 @@
-import { defineQuery, setHandler } from "@temporalio/workflow";
+import { defineQuery, setHandler, workflowInfo } from "@temporalio/workflow";
 import type { TychonicConfig } from "./catalog/types.js";
 import type {
   DecisionInboxItemRecord,
@@ -93,11 +93,12 @@ export interface TychonicWorkflowRuntimeActivities {
   createWorktreeActivity?(input: {
     run: WorkflowRunRecord;
     cwd: string;
-  }): Promise<{ worktreePath: string; baseHead: string }>;
+  }): Promise<{ worktreePath: string; worktreeParentDir?: string; baseHead: string }>;
   cleanupWorktreeActivity?(input: {
     run: WorkflowRunRecord;
     cwd: string;
     worktreePath: string;
+    worktreeParentDir?: string;
     baseHead: string;
   }): Promise<ActivityResult & { cleaned: true }>;
   runWorkerActivity?(input: Omit<ActivityInput<"work">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
@@ -126,6 +127,7 @@ export interface TychonicStateRunResult {
 }
 
 export interface TychonicWorkflowContext {
+  workflowId(): string;
   run(): WorkflowRunRecord;
   worktreePath(): string | undefined;
   isInteractive(): boolean;
@@ -192,6 +194,7 @@ export function createTychonicWorkflowContext(options: {
   const rejectCounts = new Map<string, number>();
   let currentRun: WorkflowRunRecord | undefined;
   let currentWorktreePath: string | undefined;
+  let currentWorktreeParentDir: string | undefined;
   let currentWorktreeBaseHead: string | undefined;
 
   function requireRun(): WorkflowRunRecord {
@@ -392,16 +395,18 @@ export function createTychonicWorkflowContext(options: {
         run: finalizedRun,
         cwd: input.cwd,
         worktreePath: cleanupWorktreePath,
+        ...(currentWorktreeParentDir ? { worktreeParentDir: currentWorktreeParentDir } : {}),
         baseHead: currentWorktreeBaseHead
       });
       currentWorktreePath = undefined;
+      currentWorktreeParentDir = undefined;
       currentWorktreeBaseHead = undefined;
       update(applyActivityResult(finalizedRun, cleanupResult));
     } else {
       update(finalizedRun);
     }
     return runState.result(requireRun(), {
-      artifactRoot: `${input.cwd}/.tychonic/runs/${requireRun().id}`,
+      artifactRoot: artifactRootForRun(requireRun()),
       ...(currentWorktreePath ? { worktreePath: currentWorktreePath } : {})
     });
   }
@@ -417,6 +422,7 @@ export function createTychonicWorkflowContext(options: {
   }
 
   return {
+    workflowId: () => workflowInfo().workflowId,
     run: requireRun,
     worktreePath: () => currentWorktreePath,
     isInteractive: () => interaction.mode() === "interactive",
@@ -439,6 +445,7 @@ export function createTychonicWorkflowContext(options: {
       }
       const wt = await activities.createWorktreeActivity({ run: requireRun(), cwd: input.cwd });
       currentWorktreePath = wt.worktreePath;
+      currentWorktreeParentDir = wt.worktreeParentDir;
       currentWorktreeBaseHead = wt.baseHead;
       update(requireRun());
       return currentWorktreePath;
@@ -613,9 +620,13 @@ function toWorkflowResult(
     runId: run.id,
     status: run.status,
     run,
-    artifactRoot: fields.artifactRoot ?? `${run.cwd}/.tychonic/runs/${run.id}`,
+    artifactRoot: fields.artifactRoot ?? artifactRootForRun(run),
     ...(run.summary !== undefined ? { summary: run.summary } : {}),
     ...(fields.summary !== undefined ? { summary: fields.summary } : {}),
     ...(fields.worktreePath !== undefined ? { worktreePath: fields.worktreePath } : {})
   };
+}
+
+function artifactRootForRun(run: WorkflowRunRecord): string {
+  return run.artifact_root ?? `${run.cwd}/.tychonic/runs/${run.id}`;
 }

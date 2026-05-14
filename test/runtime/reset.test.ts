@@ -6,6 +6,12 @@
 
 import { describe, expect, it } from "vitest";
 import { killAndRemoveInstance } from "../../src/runtime/reset.js";
+import { tychonicInstanceRunsParentDir } from "../../src/runtime/runDirs.js";
+import { tychonicInstanceWorktreeParentDir } from "../../src/runtime/worktreeDirs.js";
+
+const FOO_WORKTREE_DIR = tychonicInstanceWorktreeParentDir("foo");
+const BAR_WORKTREE_DIR = tychonicInstanceWorktreeParentDir("bar");
+const FOO_RUNS_DIR = tychonicInstanceRunsParentDir("foo");
 
 describe("killAndRemoveInstance (path guard)", () => {
   it("rejects a stateDir that does not contain the instance suffix", async () => {
@@ -15,6 +21,8 @@ describe("killAndRemoveInstance (path guard)", () => {
         pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
         stateDir: "/tmp/Tychonic", // missing instance suffix
         logDir: "/tmp/Tychonic/instances/foo",
+        worktreeDir: FOO_WORKTREE_DIR,
+        runsDir: FOO_RUNS_DIR,
         deps: {
           readPid: async () => 0,
           removeDir: async () => undefined
@@ -30,6 +38,8 @@ describe("killAndRemoveInstance (path guard)", () => {
         pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
         stateDir: "/tmp/Tychonic/instances/foo",
         logDir: "/tmp/Tychonic/instances/bar",
+        worktreeDir: FOO_WORKTREE_DIR,
+        runsDir: FOO_RUNS_DIR,
         deps: {
           readPid: async () => 0,
           removeDir: async () => undefined
@@ -45,6 +55,8 @@ describe("killAndRemoveInstance (path guard)", () => {
         pidFile: "/tmp/Tychonic/instances/foo2/runtime.pid",
         stateDir: "/tmp/Tychonic/instances/foo2",
         logDir: "/tmp/logs/Tychonic/instances/foo2",
+        worktreeDir: FOO_WORKTREE_DIR,
+        runsDir: FOO_RUNS_DIR,
         deps: {
           readPid: async () => 0,
           removeDir: async () => undefined
@@ -60,6 +72,8 @@ describe("killAndRemoveInstance (path guard)", () => {
         pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
         stateDir: "/tmp/Tychonic/instances/foo",
         logDir: "/tmp/logs/Tychonic/instances/foo-old",
+        worktreeDir: FOO_WORKTREE_DIR,
+        runsDir: FOO_RUNS_DIR,
         deps: {
           readPid: async () => 0,
           removeDir: async () => undefined
@@ -67,16 +81,103 @@ describe("killAndRemoveInstance (path guard)", () => {
       })
     ).rejects.toThrow(/matches instance segment .* only by prefix/);
   });
+
+  it("rejects a worktreeDir belonging to a different instance", async () => {
+    await expect(
+      killAndRemoveInstance({
+        instance: "foo",
+        pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
+        stateDir: "/tmp/Tychonic/instances/foo",
+        logDir: "/tmp/logs/Tychonic/instances/foo",
+        worktreeDir: BAR_WORKTREE_DIR,
+        runsDir: FOO_RUNS_DIR,
+        deps: {
+          readPid: async () => 0,
+          removeDir: async () => undefined
+        }
+      })
+    ).rejects.toThrow(/does not contain the instance path segment/);
+  });
+
+  it("rejects a nested cross-instance worktreeDir even when the target instance appears later", async () => {
+    await expect(
+      killAndRemoveInstance({
+        instance: "foo",
+        pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
+        stateDir: "/tmp/Tychonic/instances/foo",
+        logDir: "/tmp/logs/Tychonic/instances/foo",
+        worktreeDir: `${BAR_WORKTREE_DIR}/nested/instances/foo`,
+        runsDir: FOO_RUNS_DIR,
+        deps: {
+          readPid: async () => 0,
+          removeDir: async () => undefined
+        }
+      })
+    ).rejects.toThrow(/multiple instance path segments/);
+  });
+
+  it("rejects non-normalized instance paths before destructive cleanup", async () => {
+    await expect(
+      killAndRemoveInstance({
+        instance: "foo",
+        pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
+        stateDir: "/tmp/Tychonic/instances/foo",
+        logDir: "/tmp/logs/Tychonic/instances/foo",
+        worktreeDir: `${FOO_WORKTREE_DIR}/../bar`,
+        runsDir: FOO_RUNS_DIR,
+        deps: {
+          readPid: async () => 0,
+          removeDir: async () => undefined
+        }
+      })
+    ).rejects.toThrow(/must be a normalized path/);
+  });
+
+  it("rejects a same-instance worktreeDir outside the canonical user-home worktree root", async () => {
+    await expect(
+      killAndRemoveInstance({
+        instance: "foo",
+        pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
+        stateDir: "/tmp/Tychonic/instances/foo",
+        logDir: "/tmp/logs/Tychonic/instances/foo",
+        worktreeDir: "/tmp/other/instances/foo",
+        runsDir: FOO_RUNS_DIR,
+        deps: {
+          readPid: async () => 0,
+          removeDir: async () => undefined
+        }
+      })
+    ).rejects.toThrow(/worktreeDir must equal/);
+  });
+
+  it("rejects a same-instance child path under the canonical worktreeDir", async () => {
+    await expect(
+      killAndRemoveInstance({
+        instance: "foo",
+        pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
+        stateDir: "/tmp/Tychonic/instances/foo",
+        logDir: "/tmp/logs/Tychonic/instances/foo",
+        worktreeDir: `${FOO_WORKTREE_DIR}/nested`,
+        runsDir: FOO_RUNS_DIR,
+        deps: {
+          readPid: async () => 0,
+          removeDir: async () => undefined
+        }
+      })
+    ).rejects.toThrow(/worktreeDir must equal/);
+  });
 });
 
 describe("killAndRemoveInstance (no pidfile)", () => {
-  it("returns killedPid=null and removes both dirs when no pid file is present", async () => {
+  it("returns killedPid=null and removes instance dirs when no pid file is present", async () => {
     const removed: string[] = [];
     const result = await killAndRemoveInstance({
       instance: "foo",
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/logs/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       deps: {
         readPid: async () => 0,
         removeDir: async (p) => {
@@ -87,9 +188,38 @@ describe("killAndRemoveInstance (no pidfile)", () => {
     expect(result.killedPid).toBeNull();
     expect(result.killedSignal).toBeNull();
     expect(result.instance).toBe("foo");
+    expect(result.removed.runsDir).toBe(FOO_RUNS_DIR);
     expect(removed).toEqual([
       "/tmp/Tychonic/instances/foo",
-      "/tmp/logs/Tychonic/instances/foo"
+      "/tmp/logs/Tychonic/instances/foo",
+      FOO_WORKTREE_DIR,
+      FOO_RUNS_DIR
+    ]);
+  });
+
+  it("removes an explicit instance worktree dir when provided", async () => {
+    const removed: string[] = [];
+    const result = await killAndRemoveInstance({
+      instance: "foo",
+      pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
+      stateDir: "/tmp/Tychonic/instances/foo",
+      logDir: "/tmp/logs/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
+      deps: {
+        readPid: async () => 0,
+        removeDir: async (p) => {
+          removed.push(p);
+        }
+      }
+    });
+    expect(result.removed.worktreeDir).toBe(FOO_WORKTREE_DIR);
+    expect(result.removed.runsDir).toBe(FOO_RUNS_DIR);
+    expect(removed).toEqual([
+      "/tmp/Tychonic/instances/foo",
+      "/tmp/logs/Tychonic/instances/foo",
+      FOO_WORKTREE_DIR,
+      FOO_RUNS_DIR
     ]);
   });
 });
@@ -104,6 +234,8 @@ describe("killAndRemoveInstance (SIGTERM succeeds)", () => {
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       waitForExitMs: 1_000,
       pollIntervalMs: 10,
       deps: {
@@ -141,6 +273,8 @@ describe("killAndRemoveInstance (SIGTERM succeeds)", () => {
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       waitForExitMs: 1_000,
       pollIntervalMs: 10,
       deps: {
@@ -180,6 +314,8 @@ describe("killAndRemoveInstance (SIGTERM times out → SIGKILL)", () => {
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       waitForExitMs: 30,
       pollIntervalMs: 5,
       deps: {
@@ -209,6 +345,8 @@ describe("killAndRemoveInstance (stale pid)", () => {
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       deps: {
         readPid: async () => 54321,
         processAlive: () => false,
@@ -241,6 +379,8 @@ describe("killAndRemoveInstance (temporal-child cascade)", () => {
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       waitForExitMs: 1_000,
       pollIntervalMs: 5,
       deps: {
@@ -280,6 +420,8 @@ describe("killAndRemoveInstance (temporal-child cascade)", () => {
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       waitForExitMs: 30,
       pollIntervalMs: 5,
       deps: {
@@ -318,6 +460,8 @@ describe("killAndRemoveInstance (temporal-child cascade)", () => {
       pidFile: "/tmp/Tychonic/instances/foo/runtime.pid",
       stateDir: "/tmp/Tychonic/instances/foo",
       logDir: "/tmp/Tychonic/instances/foo",
+      worktreeDir: FOO_WORKTREE_DIR,
+      runsDir: FOO_RUNS_DIR,
       waitForExitMs: 200,
       pollIntervalMs: 5,
       deps: {

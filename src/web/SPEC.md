@@ -13,7 +13,8 @@ service, webhook target, or remote deployment surface.
 
 The UI and its JSON endpoints must read workflow state through Temporal APIs and
 the existing Tychonic workflow evidence view helpers. They must not read
-`.tychonic/runs` as a state database or create any repo-local state store.
+filesystem evidence directories as a state database or create any repo-local
+state store.
 
 The UI may expose summaries of workflows, states, inbox items, findings,
 artifacts, logs, sessions, and timing. It must keep raw artifact and log content

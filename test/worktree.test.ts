@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +11,7 @@ const execFileAsync = promisify(execFile);
 describe("createIsolatedWorktree", () => {
   it("copies tracked dirty changes and untracked files into a git worktree when HEAD exists", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd });
     await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd });
@@ -22,11 +22,12 @@ describe("createIsolatedWorktree", () => {
     await writeFile(join(cwd, "tracked.txt"), "dirty tracked\n", "utf8");
     await writeFile(join(cwd, "untracked.txt"), "untracked\n", "utf8");
 
-    const isolated = await createIsolatedWorktree({ cwd, runId: "run_with_head" });
+    const isolated = await createIsolatedWorktree({ cwd, runId: "run_with_head", worktreeParentDir });
 
     expect(isolated.mode).toBe("git_worktree");
+    expect(isolated.worktreeParentDir).toBe(worktreeParentDir);
     expect(isolated.path).toMatch(/tychonic-worktree-run_with_head-.+[\\/]worktree$/);
-    expect((await realpath(isolated.path)).startsWith(`${realpathSync("/tmp")}/`)).toBe(true);
+    expect((await realpath(isolated.path)).startsWith(`${await realpath(worktreeParentDir)}/`)).toBe(true);
     await expect(access(join(cwd, ".tychonic", "worktrees", "run_with_head"))).rejects.toThrow();
     await expect(readFile(join(isolated.path, "tracked.txt"), "utf8")).resolves.toBe("dirty tracked\n");
     await expect(readFile(join(isolated.path, "untracked.txt"), "utf8")).resolves.toBe("untracked\n");
@@ -47,6 +48,7 @@ describe("createIsolatedWorktree", () => {
 
   it("uses standard git ignore rules when copying a repository with no HEAD", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-no-head-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await writeFile(join(cwd, ".gitignore"), ".env\n*.local.md\n", "utf8");
     await writeFile(join(cwd, ".env"), "SECRET=value\n", "utf8");
@@ -55,11 +57,11 @@ describe("createIsolatedWorktree", () => {
     await mkdir(join(cwd, "src"));
     await writeFile(join(cwd, "src", "app.ts"), "export const visible = true;\n", "utf8");
 
-    const isolated = await createIsolatedWorktree({ cwd, runId: "run_no_head_ignore" });
+    const isolated = await createIsolatedWorktree({ cwd, runId: "run_no_head_ignore", worktreeParentDir });
 
     expect(isolated.mode).toBe("directory_copy_no_head");
     expect(isolated.path).toMatch(/tychonic-worktree-run_no_head_ignore-.+[\\/]worktree$/);
-    expect((await realpath(isolated.path)).startsWith(`${realpathSync("/tmp")}/`)).toBe(true);
+    expect((await realpath(isolated.path)).startsWith(`${await realpath(worktreeParentDir)}/`)).toBe(true);
     await expect(access(join(cwd, ".tychonic", "worktrees", "run_no_head_ignore"))).rejects.toThrow();
     await expect(readFile(join(isolated.path, ".gitignore"), "utf8")).resolves.toBe(".env\n*.local.md\n");
     await expect(readFile(join(isolated.path, "README.md"), "utf8")).resolves.toBe("visible\n");
@@ -72,13 +74,14 @@ describe("createIsolatedWorktree", () => {
 
   it("keeps a local HEAD when the source HEAD has an empty tree", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-empty-head-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd });
     await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd });
     await execFileAsync("git", ["commit", "--allow-empty", "-m", "empty"], { cwd });
     await writeFile(join(cwd, "new.txt"), "new\n", "utf8");
 
-    const isolated = await createIsolatedWorktree({ cwd, runId: "run_empty_head" });
+    const isolated = await createIsolatedWorktree({ cwd, runId: "run_empty_head", worktreeParentDir });
 
     expect(isolated.mode).toBe("git_worktree");
     await expect(
@@ -93,6 +96,7 @@ describe("createIsolatedWorktree", () => {
 
   it("copies tracked files even when .gitattributes marks them export-ignore", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-export-ignore-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd });
     await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd });
@@ -101,7 +105,7 @@ describe("createIsolatedWorktree", () => {
     await execFileAsync("git", ["add", ".gitattributes", "hidden.txt"], { cwd });
     await execFileAsync("git", ["commit", "-m", "tracked export ignored file"], { cwd });
 
-    const isolated = await createIsolatedWorktree({ cwd, runId: "run_export_ignore" });
+    const isolated = await createIsolatedWorktree({ cwd, runId: "run_export_ignore", worktreeParentDir });
 
     expect(isolated.mode).toBe("git_worktree");
     await expect(readFile(join(isolated.path, "hidden.txt"), "utf8")).resolves.toBe(
@@ -111,6 +115,7 @@ describe("createIsolatedWorktree", () => {
 
   it("removes a Tychonic-owned git worktree and its source metadata", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd });
     await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd });
@@ -118,9 +123,9 @@ describe("createIsolatedWorktree", () => {
     await execFileAsync("git", ["add", "README.md"], { cwd });
     await execFileAsync("git", ["commit", "-m", "initial"], { cwd });
 
-    const isolated = await createIsolatedWorktree({ cwd, runId: "run_cleanup" });
+    const isolated = await createIsolatedWorktree({ cwd, runId: "run_cleanup", worktreeParentDir });
     const isolatedRoot = dirname(isolated.path);
-    await removeIsolatedWorktree({ cwd, worktreePath: isolated.path });
+    await removeIsolatedWorktree({ cwd, worktreePath: isolated.path, worktreeParentDir });
 
     await expect(access(isolated.path)).rejects.toThrow();
     await expect(access(isolatedRoot)).rejects.toThrow();
@@ -134,16 +139,17 @@ describe("createIsolatedWorktree", () => {
 
   it("does not follow TMPDIR back into the target project", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-env-tmpdir-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await writeFile(join(cwd, "README.md"), "visible\n", "utf8");
 
     const originalTmpdir = process.env.TMPDIR;
     process.env.TMPDIR = join(cwd, ".tychonic", "tmp");
     try {
-      const isolated = await createIsolatedWorktree({ cwd, runId: "run_env_tmpdir" });
+      const isolated = await createIsolatedWorktree({ cwd, runId: "run_env_tmpdir", worktreeParentDir });
 
       expect(isolated.path).toMatch(/tychonic-worktree-run_env_tmpdir-.+[\\/]worktree$/);
-      expect((await realpath(isolated.path)).startsWith(`${realpathSync("/tmp")}/`)).toBe(true);
+      expect((await realpath(isolated.path)).startsWith(`${await realpath(worktreeParentDir)}/`)).toBe(true);
       await expect(access(join(cwd, ".tychonic", "tmp"))).rejects.toThrow();
       await expect(access(join(cwd, ".tychonic", "worktrees", "run_env_tmpdir"))).rejects.toThrow();
     } finally {
@@ -157,6 +163,7 @@ describe("createIsolatedWorktree", () => {
 
   it("removes git worktree metadata when snapshot copy fails after worktree creation", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-copy-fail-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd });
     await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd });
@@ -168,7 +175,9 @@ describe("createIsolatedWorktree", () => {
     await writeFile(unreadablePath, "cannot copy\n", "utf8");
     await chmod(unreadablePath, 0o000);
     try {
-      await expect(createIsolatedWorktree({ cwd, runId: "run_copy_failure" })).rejects.toThrow();
+      await expect(
+        createIsolatedWorktree({ cwd, runId: "run_copy_failure", worktreeParentDir })
+      ).rejects.toThrow();
     } finally {
       await chmod(unreadablePath, 0o600).catch(() => undefined);
     }
@@ -180,3 +189,7 @@ describe("createIsolatedWorktree", () => {
     expect(stdout).not.toContain("run_copy_failure");
   });
 });
+
+async function makeWorktreeParentDir(): Promise<string> {
+  return await mkdtemp(join(tmpdir(), "tychonic-state-worktrees-"));
+}

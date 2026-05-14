@@ -4,9 +4,8 @@
  * prompt skip (`--yes`), and the kill/remove sequence via a fake PID
  * that is guaranteed dead.
  *
- * The tests write under a throwaway `TYCHONIC_STATE_HOME` so no real
- * operational path is ever touched. Each test creates its own state home
- * to avoid interference.
+ * The tests write under a throwaway HOME root so no real operational path
+ * is ever touched. Each test creates its own home to avoid interference.
  */
 
 import { describe, expect, it } from "vitest";
@@ -60,6 +59,14 @@ function defaultStateDirForHome(home: string): string {
     return join(home, "Library", "Application Support", "Tychonic");
   }
   return join(home, ".local", "state", "tychonic");
+}
+
+function instanceWorktreeDirForHome(home: string, instance: string): string {
+  return join(home, ".tychonic", "worktrees", "instances", instance);
+}
+
+function instanceRunsDirForHome(home: string, instance: string): string {
+  return join(home, ".tychonic", "runs", "instances", instance);
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -141,7 +148,9 @@ describe("tychonic runtime reset (idempotent cleanup)", () => {
     expect(payload.killedSignal).toBeNull();
     expect(payload.removed).toMatchObject({
       stateDir: expect.stringContaining("instances/nonexistent-xyz") as unknown as string,
-      logDir: expect.stringContaining("instances/nonexistent-xyz") as unknown as string
+      logDir: expect.stringContaining("instances/nonexistent-xyz") as unknown as string,
+      worktreeDir: expect.stringContaining("worktrees/instances/nonexistent-xyz") as unknown as string,
+      runsDir: expect.stringContaining("runs/instances/nonexistent-xyz") as unknown as string
     });
   });
 
@@ -158,7 +167,17 @@ describe("tychonic runtime reset (idempotent cleanup)", () => {
     // Drop a marker file so we can verify the directory really got wiped.
     const marker = join(stateDir, "marker.txt");
     await writeFile(marker, "hello", "utf8");
+    const worktreeDir = instanceWorktreeDirForHome(fakeHome, "foo");
+    await mkdir(worktreeDir, { recursive: true });
+    const worktreeMarker = join(worktreeDir, "marker.txt");
+    await writeFile(worktreeMarker, "worktree", "utf8");
+    const runsDir = instanceRunsDirForHome(fakeHome, "foo");
+    await mkdir(runsDir, { recursive: true });
+    const runsMarker = join(runsDir, "marker.txt");
+    await writeFile(runsMarker, "runs", "utf8");
     expect(await pathExists(marker)).toBe(true);
+    expect(await pathExists(worktreeMarker)).toBe(true);
+    expect(await pathExists(runsMarker)).toBe(true);
 
     const result = await runCli(
       ["--instance", "foo", "runtime", "reset", "--yes"],
@@ -175,6 +194,10 @@ describe("tychonic runtime reset (idempotent cleanup)", () => {
 
     expect(await pathExists(marker)).toBe(false);
     expect(await pathExists(stateDir)).toBe(false);
+    expect(await pathExists(worktreeMarker)).toBe(false);
+    expect(await pathExists(worktreeDir)).toBe(false);
+    expect(await pathExists(runsMarker)).toBe(false);
+    expect(await pathExists(runsDir)).toBe(false);
   });
 
   it("cancels cleanly when stdin answers no", async () => {
@@ -185,6 +208,14 @@ describe("tychonic runtime reset (idempotent cleanup)", () => {
     await mkdir(stateDir, { recursive: true });
     const marker = join(stateDir, "still-there.txt");
     await writeFile(marker, "keep", "utf8");
+    const worktreeDir = instanceWorktreeDirForHome(fakeHome, "bar");
+    await mkdir(worktreeDir, { recursive: true });
+    const worktreeMarker = join(worktreeDir, "still-there.txt");
+    await writeFile(worktreeMarker, "keep", "utf8");
+    const runsDir = instanceRunsDirForHome(fakeHome, "bar");
+    await mkdir(runsDir, { recursive: true });
+    const runsMarker = join(runsDir, "still-there.txt");
+    await writeFile(runsMarker, "keep", "utf8");
 
     // Drive the CLI with a piped stdin that is not a TTY. The
     // promptConfirm helper returns false for non-TTY stdin, which we
@@ -212,5 +243,7 @@ describe("tychonic runtime reset (idempotent cleanup)", () => {
     const payload = parseJsonStdout(stdout);
     expect(payload.cancelled).toBe(true);
     expect(await pathExists(marker)).toBe(true);
+    expect(await pathExists(worktreeMarker)).toBe(true);
+    expect(await pathExists(runsMarker)).toBe(true);
   });
 });

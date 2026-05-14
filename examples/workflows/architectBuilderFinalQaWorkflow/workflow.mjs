@@ -59,8 +59,8 @@ export async function architectBuilderFinalQaWorkflow(input) {
   const builder = await ctx.work(
     "builder",
     builderStageInstructions({
-      cwd: input.cwd,
       runId: ctx.run().id,
+      workflowId: ctx.workflowId(),
       worktreePath: ctx.worktreePath()
     })
   );
@@ -69,8 +69,8 @@ export async function architectBuilderFinalQaWorkflow(input) {
   const qa = await ctx.review(
     "qa",
     qaStageInstructions({
-      cwd: input.cwd,
       runId: ctx.run().id,
+      workflowId: ctx.workflowId(),
       worktreePath: ctx.worktreePath()
     })
   );
@@ -95,12 +95,12 @@ function architectStageInstructions(goal) {
   ].join("\n");
 }
 
-function builderStageInstructions({ cwd, runId, worktreePath }) {
+function builderStageInstructions({ runId, workflowId, worktreePath }) {
   return [
     "You are the builder stage. Implement the architect output for this run.",
     "",
     `Worktree: ${worktreePath}`,
-    `Artifacts: ${cwd}/.tychonic/runs/${runId}/artifacts/`,
+    ...evidenceCommandInstructions({ workflowId, runId }),
     "",
     "Before editing, inspect the target project's applicable rules and",
     "specifications. Follow relevant constraints while implementing, and",
@@ -111,11 +111,12 @@ function builderStageInstructions({ cwd, runId, worktreePath }) {
   ].join("\n");
 }
 
-function qaStageInstructions({ cwd, runId, worktreePath }) {
+function qaStageInstructions({ runId, workflowId, worktreePath }) {
   return [
     "You are the final Codex QA reviewer for this run.",
+    ...evidenceCommandInstructions({ workflowId, runId }),
     `Check the builder output in ${worktreePath}.`,
-    `Use artifacts under ${cwd}/.tychonic/runs/${runId}/artifacts/ as context.`,
+    "Use Tychonic artifact evidence as context.",
     "",
     "Include compliance with the target project's applicable rules,",
     "specifications, and guardrails in the review scope. Verify that the",
@@ -126,4 +127,19 @@ function qaStageInstructions({ cwd, runId, worktreePath }) {
     "Report concrete correctness issues, regressions, missing tests, and risky assumptions.",
     "Return the structured pass/fail review verdict for this workflow."
   ].join("\n");
+}
+
+function evidenceCommandInstructions({ workflowId, runId }) {
+  const workflowArg = shellArg(workflowId);
+  return [
+    `Workflow: ${workflowId}`,
+    `Run: ${runId}`,
+    `Status command: tychonic status --workflow-id ${workflowArg}`,
+    `Artifact command: tychonic artifacts --workflow-id ${workflowArg}`
+  ];
+}
+
+function shellArg(value) {
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

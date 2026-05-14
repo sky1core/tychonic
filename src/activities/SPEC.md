@@ -40,6 +40,8 @@ appropriate.
 The product run id is `WorkflowRunRecord.id`. Temporal workflow ids and Temporal
 run ids are SDK identifiers; they are not the surfaced Tychonic run id used for
 artifact paths, inbox references, or user-facing run records.
+`WorkflowRunRecord.id` is a single path segment: no slash, path traversal, or
+empty value is valid.
 
 An activity that receives an existing `WorkflowRunRecord` treats `input.run` as
 an immutable snapshot. It does not push into, splice, or otherwise mutate

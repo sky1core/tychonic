@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -188,10 +188,12 @@ describe("runReviewActivity", () => {
     ).rejects.toThrow(/requires prompt/);
   });
 
-  it("runs in worktreePath while keeping review artifacts under the project root", async () => {
+  it("runs in worktreePath while keeping review artifacts out of the target repo", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-root-"));
+    const runsParent = await mkdtemp(join(tmpdir(), "tychonic-run-review-runs-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-review-worktree-"));
     const run = baseRun("run_review_worktree");
+    run.artifact_root = join(runsParent, run.id);
 
     const result = await runReviewActivity({
       stateName: ACTIVITY_NAME,
@@ -212,9 +214,10 @@ describe("runReviewActivity", () => {
     expect(result.reviewOutcome.agentSessions[0]?.cwd).toBe(worktreePath);
     expect(await readFile(join(worktreePath, "review-cwd.txt"), "utf8")).toBe(canonicalWorktreePath);
     for (const artifact of result.reviewOutcome.artifacts) {
-      expect(artifact.path).toContain(`.tychonic/runs/${run.id}/artifacts/`);
+      expect(artifact.path).toMatch(/^artifacts\//);
       expect(artifact.path).not.toContain("/worktrees/");
     }
+    await expect(access(join(cwd, ".tychonic"))).rejects.toThrow();
   });
 
   it("fails a review command that mutates the git worktree", async () => {

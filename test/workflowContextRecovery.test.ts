@@ -46,6 +46,7 @@ vi.mock("@temporalio/workflow", () => ({
     }
     throw new Error("unknown signal/query handle");
   },
+  workflowInfo: () => ({ workflowId: "wf_context_test" }),
   condition: (predicate: () => boolean) =>
     new Promise<void>((resolve) => {
       if (predicate()) {

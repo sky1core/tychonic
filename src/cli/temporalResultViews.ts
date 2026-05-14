@@ -8,7 +8,7 @@ import type {
   WorkflowStateRecord,
   WorkflowRunStatus
 } from "../domain/types.js";
-import { RunArtifactStore } from "../storage/runArtifactStore.js";
+import { RunArtifactStore, runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 
 export interface TychonicWorkflowResult {
   runId: string;
@@ -238,7 +238,7 @@ export function workflowTimingView(result: TychonicWorkflowResult): WorkflowTimi
 }
 
 function artifactStore(run: WorkflowRunRecord): RunArtifactStore {
-  return new RunArtifactStore(`${run.cwd}/.tychonic`);
+  return runArtifactStoreForRun(run);
 }
 
 function evidenceCommands(workflowId: string, runId?: string): WorkflowEvidenceCommandView {

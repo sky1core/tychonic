@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { join } from "node:path";
 import type {
   ActivityAttemptRecord,
   AttemptKind,
@@ -106,7 +106,7 @@ export async function runWorkerActivityBody<T extends WorkerBodyType>(
 
   await mkdir(store.liveDir(run.id), { recursive: true });
   const liveOutputPath = join(store.liveDir(run.id), `${attempt.id}.log`);
-  attempt.live_output_path = relativeToExecutionCwd(executionCwd, liveOutputPath);
+  attempt.live_output_path = store.storedPath(run.id, liveOutputPath);
 
   const artifactsDir = store.artifactsDir(run.id);
   await mkdir(artifactsDir, { recursive: true });
@@ -115,6 +115,7 @@ export async function runWorkerActivityBody<T extends WorkerBodyType>(
   if (prompt.length > 0) {
     const promptArtifact = await writeWorkerArtifact({
       store,
+      runId: run.id,
       artifactsDir,
       id: nextId("artifact"),
       kind: `${stateName}_prompt`,
@@ -150,6 +151,7 @@ export async function runWorkerActivityBody<T extends WorkerBodyType>(
 
   const outputArtifact = await writeWorkerArtifact({
     store,
+    runId: run.id,
     artifactsDir,
     id: nextId("artifact"),
     kind: `${stateName}_output`,
@@ -209,6 +211,7 @@ export async function runWorkerActivityBody<T extends WorkerBodyType>(
 
 async function writeWorkerArtifact(input: {
   store: RunArtifactStore;
+  runId: string;
   artifactsDir: string;
   id: string;
   kind: string;
@@ -224,17 +227,9 @@ async function writeWorkerArtifact(input: {
   return {
     id: input.id,
     kind: input.kind,
-    path: relative(dirname(input.store.rootDir), filePath),
+    path: input.store.storedPath(input.runId, filePath),
     created_at: input.createdAt,
     state_id: input.stateId,
     activity_attempt_id: input.attemptId
   };
-}
-
-function relativeToExecutionCwd(cwd: string, targetPath: string): string {
-  const relativePath = relative(resolve(cwd), resolve(targetPath));
-  if (relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)) {
-    return relativePath;
-  }
-  return targetPath;
 }

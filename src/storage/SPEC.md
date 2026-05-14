@@ -14,3 +14,12 @@ and Temporal APIs.
 The storage module may write artifact files and reproducibility snapshots such
 as `profile_snapshot.yaml`. It must not create repo-local state databases, lock
 files, local inbox/session registries, or stale-run recovery stores.
+
+Run evidence storage belongs under the Tychonic user-home run evidence root:
+`~/.tychonic/runs/operational/<run-id>/` for operational runs and
+`~/.tychonic/runs/instances/<name>/<run-id>/` for isolated instances. Artifact
+and live-output paths recorded in `WorkflowRunRecord` are relative to the run's
+recorded `artifact_root`. The storage layer may resolve legacy
+target-repository `.tychonic/runs/...` paths already present in Temporal
+history for inspection, but new writes must not create a target-repository
+`.tychonic/` directory.

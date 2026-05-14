@@ -1,18 +1,36 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { stringify } from "yaml";
 import type { TychonicConfig } from "../catalog/types.js";
 import type { ArtifactRecord, WorkflowRunRecord } from "../domain/types.js";
+import { tychonicRunsParentDir } from "../runtime/runDirs.js";
 
 export class RunArtifactStore {
   readonly rootDir: string;
+  private readonly runRoots: ReadonlyMap<string, string>;
 
-  constructor(rootDir: string) {
-    this.rootDir = rootDir;
+  constructor(runsParentDir: string, runRoots: ReadonlyMap<string, string> = new Map()) {
+    this.rootDir = resolve(runsParentDir);
+    const normalizedRunRoots = new Map<string, string>();
+    for (const [runId, runRoot] of runRoots) {
+      assertRunIdPathSegment(runId);
+      if (!isAbsolute(runRoot)) {
+        throw new Error(`run artifact root must be an absolute path: ${runRoot}`);
+      }
+      const resolvedRunRoot = resolve(runRoot);
+      if (!isInside(resolvedRunRoot, this.rootDir)) {
+        throw new Error("run artifact root escapes Tychonic runs root");
+      }
+      normalizedRunRoots.set(runId, resolvedRunRoot);
+    }
+    this.runRoots = normalizedRunRoots;
   }
 
   runDir(runId: string): string {
-    return join(this.rootDir, "runs", runId);
+    assertRunIdPathSegment(runId);
+    const explicitRunRoot = this.runRoots.get(runId);
+    if (explicitRunRoot) return explicitRunRoot;
+    return join(this.rootDir, runId);
   }
 
   artifactsDir(runId: string): string {
@@ -33,7 +51,7 @@ export class RunArtifactStore {
     if (!artifact) {
       throw new Error(`artifact not found: ${artifactId}`);
     }
-    return this.resolveStoredPath(artifact.path);
+    return this.resolveStoredPath(run, artifact.path);
   }
 
   liveOutputPath(run: WorkflowRunRecord, attemptId: string): string {
@@ -41,7 +59,16 @@ export class RunArtifactStore {
     if (!attempt?.live_output_path) {
       throw new Error(`live output not found for attempt: ${attemptId}`);
     }
-    return this.resolveStoredPath(attempt.live_output_path);
+    return this.resolveStoredPath(run, attempt.live_output_path);
+  }
+
+  storedPath(runId: string, path: string): string {
+    const resolved = resolve(path);
+    const allowedRoot = resolve(this.runDir(runId));
+    if (!isInside(resolved, allowedRoot)) {
+      throw new Error("stored path escapes Tychonic run root");
+    }
+    return relative(allowedRoot, resolved);
   }
 
   async writeArtifact(input: {
@@ -61,7 +88,7 @@ export class RunArtifactStore {
     const artifact: ArtifactRecord = {
       id: input.id,
       kind: input.kind,
-      path: relative(dirname(this.rootDir), path),
+      path: this.storedPath(input.run.id, path),
       created_at: input.createdAt,
       ...(input.stateId ? { state_id: input.stateId } : {}),
       ...(input.activityAttemptId ? { activity_attempt_id: input.activityAttemptId } : {})
@@ -92,13 +119,58 @@ export class RunArtifactStore {
     return { snapshot };
   }
 
-  private resolveStoredPath(storedPath: string): string {
-    const repoRoot = dirname(this.rootDir);
-    const resolved = resolve(repoRoot, storedPath);
-    const allowedRoot = resolve(this.rootDir);
-    if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${sep}`)) {
-      throw new Error("stored path escapes Tychonic root");
+  private resolveStoredPath(run: WorkflowRunRecord, storedPath: string): string {
+    if (!isAbsolute(storedPath) && (storedPath === ".tychonic" || storedPath.startsWith(".tychonic/"))) {
+      return resolveLegacyProjectPath(run, storedPath);
     }
-    return resolved;
+
+    const resolved = isAbsolute(storedPath)
+      ? resolve(storedPath)
+      : resolve(this.runDir(run.id), storedPath);
+    const allowedRoot = resolve(this.runDir(run.id));
+    if (isInside(resolved, allowedRoot)) {
+      return resolved;
+    }
+
+    if (isAbsolute(storedPath)) {
+      return resolveLegacyProjectPath(run, storedPath);
+    }
+
+    throw new Error("stored path escapes Tychonic run root");
   }
+}
+
+export function newRunArtifactStore(): RunArtifactStore {
+  return new RunArtifactStore(tychonicRunsParentDir());
+}
+
+export function runArtifactStoreForRun(run: WorkflowRunRecord): RunArtifactStore {
+  if (run.artifact_root) {
+    if (!isAbsolute(run.artifact_root)) {
+      throw new Error(`run.artifact_root must be an absolute path: ${run.artifact_root}`);
+    }
+    const artifactRoot = resolve(run.artifact_root);
+    return new RunArtifactStore(dirname(artifactRoot), new Map([[run.id, artifactRoot]]));
+  }
+  return newRunArtifactStore();
+}
+
+function assertRunIdPathSegment(runId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(runId)) {
+    throw new Error(`run id must be a single path segment: ${runId}`);
+  }
+}
+
+function resolveLegacyProjectPath(run: WorkflowRunRecord, storedPath: string): string {
+  const resolved = isAbsolute(storedPath) ? resolve(storedPath) : resolve(run.cwd, storedPath);
+  const legacyRoot = resolve(run.cwd, ".tychonic");
+  if (!isInside(resolved, legacyRoot)) {
+    throw new Error("stored path escapes Tychonic root");
+  }
+  return resolved;
+}
+
+function isInside(path: string, root: string): boolean {
+  const rel = relative(root, path);
+  return rel === "" || (rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel));
 }
