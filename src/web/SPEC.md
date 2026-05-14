@@ -20,3 +20,10 @@ The UI may expose summaries of workflows, states, inbox items, findings,
 artifacts, logs, sessions, and timing. It must keep raw artifact and log content
 behind the focused CLI commands already carried by the evidence view instead of
 dumping raw content by default.
+
+The UI may also expose the installed workflow bundle's generated Mermaid graph
+preview (`workflow.generated.mmd`) and a React Flow definition graph derived
+from the installed `workflow.yaml` as static workflow definition metadata.
+Those graphs are not workflow run state. Runtime status, progress, evidence,
+and decisions still come from Temporal APIs and Tychonic's evidence view
+helpers.

@@ -61,6 +61,7 @@ describe("status UI server", () => {
             template: "simpleWorkflow",
             status: "succeeded",
             cwd: staticDir,
+            artifact_root: join(staticDir, "runs", "run_1"),
             created_at: now,
             updated_at: now,
             states: [
@@ -105,7 +106,42 @@ describe("status UI server", () => {
     const rebound = await statusUiRequest(staticDir, "/api/workflows", deps, "attacker.example");
     expect(rebound.status).toBe(403);
 
-    const detail = JSON.parse((await statusUiRequest(staticDir, "/api/workflows/tychonic_simpleWorkflow_test", deps)).body);
+    const originalStateHome = process.env.TYCHONIC_STATE_HOME;
+    const stateHome = await mkdtemp(join(tmpdir(), "tychonic-status-ui-state-"));
+    tempDirs.push(stateHome);
+    const graphDir = join(stateHome, "workflows", "modules", "simpleWorkflow");
+    await mkdir(graphDir, { recursive: true });
+    await writeFile(join(graphDir, "workflow.generated.mmd"), "flowchart TD\n  __start --> s0\n");
+    await writeFile(
+      join(graphDir, "workflow.yaml"),
+      [
+        "version: tychonic.workflow.v1",
+        "name: simpleWorkflow",
+        "worktree: false",
+        "max_steps: 2",
+        "start: verify",
+        "states:",
+        "  verify:",
+        "    type: verify",
+        "    command: echo ok",
+        "    on_pass:",
+        "      finish: true",
+        "    on_fail:",
+        "      finish: failed",
+        ""
+      ].join("\n")
+    );
+    let detail: ({ workflow: { result?: unknown } } & Record<string, unknown>) | undefined;
+    try {
+      process.env.TYCHONIC_STATE_HOME = stateHome;
+      detail = JSON.parse((await statusUiRequest(staticDir, "/api/workflows/tychonic_simpleWorkflow_test", deps)).body);
+    } finally {
+      if (originalStateHome === undefined) {
+        delete process.env.TYCHONIC_STATE_HOME;
+      } else {
+        process.env.TYCHONIC_STATE_HOME = originalStateHome;
+      }
+    }
     expect(detail).toMatchObject({
       ok: true,
       workflow: {
@@ -119,10 +155,23 @@ describe("status UI server", () => {
         template: "simpleWorkflow",
         status: "succeeded",
         latest_state: { name: "verify", status: "succeeded" },
-        counts: { states: 1, attempts: 0 }
+        counts: { states: 1, attempts: 0 },
+        state_attempt_summaries: []
+      },
+      workflowGraph: {
+        mermaid: "flowchart TD\n  __start --> s0\n",
+        definition: {
+          start: "verify",
+          maxSteps: 2,
+          states: [{ name: "verify", type: "verify" }],
+          edges: [
+            { id: "verify:pass:finish", from: "verify", label: "pass", finish: true },
+            { id: "verify:fail:finish", from: "verify", label: "fail", finish: true }
+          ]
+        }
       }
     });
-    expect(detail.workflow.result).toBeUndefined();
+    expect(detail?.workflow.result).toBeUndefined();
   });
 
   it("rejects non-loopback bind hosts", async () => {

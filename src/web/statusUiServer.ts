@@ -4,8 +4,14 @@ import { extname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertTychonicWorkflowResult,
-  workflowEvidenceView
+  workflowEvidenceView,
+  type TychonicWorkflowResult
 } from "../cli/temporalResultViews.js";
+import {
+  parseDeclarativeWorkflowSpecYaml,
+  type DeclarativeTransition,
+  type DeclarativeWorkflowSpec
+} from "../declarative/workflowSpec.js";
 import {
   describeTychonicTemporalWorkflow,
   listTychonicTemporalWorkflows,
@@ -15,6 +21,7 @@ import {
   type TychonicTemporalWorkflowStatus
 } from "../temporal/client.js";
 import type { TemporalConfig } from "../temporal/manager.js";
+import { BUNDLE_FILE_NAMES, runtimeWorkflowModulesDir } from "../temporal/workflowModules.js";
 
 export interface StatusUiServerOptions extends TemporalConfig {
   uiHost?: string;
@@ -172,18 +179,138 @@ async function handleWorkflowDetailApi(
     ...temporalConfig
   });
   const output: Record<string, unknown> = { ok: true, workflow: workflowStatusUiView(workflow) };
+  const workflowGraph = await loadWorkflowDefinitionGraph(workflow.type);
+  if (workflowGraph.kind === "loaded") {
+    output.workflowGraph = {
+      mermaid: workflowGraph.mermaid,
+      definition: workflowGraph.definition
+    };
+  } else if (workflowGraph.kind === "error") {
+    output.workflowGraphError = workflowGraph.error;
+  }
   if (workflow.result !== undefined) {
     try {
       assertTychonicWorkflowResult(workflow.result);
       output.evidence = {
         ...workflowEvidenceView(workflow.result, workflow.workflowId, workflow.runId),
-        states: workflow.result.run.states
+        states: workflow.result.run.states,
+        state_attempt_summaries: workflowStateAttemptSummaries(workflow.result.run)
       };
     } catch (error) {
       output.evidenceError = error instanceof Error ? error.message : String(error);
     }
   }
   writeJson(response, 200, output);
+}
+
+function workflowStateAttemptSummaries(run: TychonicWorkflowResult["run"]): Array<{
+  id: string;
+  state_id: string;
+  state_name?: string;
+  kind: string;
+  status: string;
+}> {
+  const stateNameById = new Map(run.states.map((state) => [state.id, state.name]));
+  return run.activity_attempts.map((attempt) => {
+    const stateName = stateNameById.get(attempt.state_id);
+    return {
+      id: attempt.id,
+      state_id: attempt.state_id,
+      ...(stateName ? { state_name: stateName } : {}),
+      kind: attempt.kind,
+      status: attempt.status
+    };
+  });
+}
+
+async function loadWorkflowDefinitionGraph(
+  workflowType: string
+): Promise<{ kind: "loaded"; mermaid: string; definition: WorkflowDefinitionGraph } | { kind: "missing" } | { kind: "error"; error: string }> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(workflowType)) {
+    return { kind: "error", error: `workflow type is not a valid installed bundle name: ${workflowType}` };
+  }
+  const modulesDir = runtimeWorkflowModulesDir();
+  const bundleDir = join(modulesDir, workflowType);
+  const graphPath = join(bundleDir, BUNDLE_FILE_NAMES.generatedMermaid);
+  const specPath = join(bundleDir, BUNDLE_FILE_NAMES.workflowSpec);
+  try {
+    const [mermaid, workflowYaml] = await Promise.all([
+      readFile(graphPath, "utf8"),
+      readFile(specPath, "utf8")
+    ]);
+    const spec = parseDeclarativeWorkflowSpecYaml({
+      source: workflowYaml,
+      bundleName: workflowType,
+      sourcePath: BUNDLE_FILE_NAMES.workflowSpec
+    });
+    return {
+      kind: "loaded",
+      mermaid,
+      definition: workflowDefinitionGraph(spec)
+    };
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return { kind: "missing" };
+    }
+    return {
+      kind: "error",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+type WorkflowDefinitionGraph = {
+  start: string;
+  maxSteps: number;
+  states: Array<{
+    name: string;
+    type: string;
+    reviewReturnTo?: string;
+  }>;
+  edges: Array<{
+    id: string;
+    from: string;
+    label: "pass" | "fail";
+    to?: string;
+    finish?: boolean;
+  }>;
+};
+
+function workflowDefinitionGraph(spec: DeclarativeWorkflowSpec): WorkflowDefinitionGraph {
+  return {
+    start: spec.start,
+    maxSteps: spec.max_steps,
+    states: Object.entries(spec.states).map(([name, state]) => ({
+      name,
+      type: state.type,
+      ...(state.on_fail_return_to ? { reviewReturnTo: state.on_fail_return_to } : {})
+    })),
+    edges: Object.entries(spec.states).flatMap(([name, state]) => [
+      workflowDefinitionEdge(name, "pass", state.on_pass),
+      workflowDefinitionEdge(name, "fail", state.on_fail)
+    ])
+  };
+}
+
+function workflowDefinitionEdge(
+  from: string,
+  label: "pass" | "fail",
+  transition: DeclarativeTransition
+): WorkflowDefinitionGraph["edges"][number] {
+  if ("finish" in transition) {
+    return {
+      id: `${from}:${label}:finish`,
+      from,
+      label,
+      finish: true
+    };
+  }
+  return {
+    id: `${from}:${label}:${transition.goto}`,
+    from,
+    label,
+    to: transition.goto
+  };
 }
 
 async function serveStaticAsset(
@@ -325,6 +452,10 @@ function formatUrlHost(host: string): string {
 function writeJson(response: ServerResponse, statusCode: number, body: unknown): void {
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(body, null, 2));
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function contentType(filePath: string): string {

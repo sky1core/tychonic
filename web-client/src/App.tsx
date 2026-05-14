@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react"
+import { useEffect, useId, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react"
 import {
   Background,
   Controls,
@@ -91,6 +91,13 @@ type WorkflowEvidence = {
   summary?: string
   latest_state?: WorkflowStateRecord
   states: WorkflowStateRecord[]
+  state_attempt_summaries: Array<{
+    id: string
+    state_id: string
+    state_name?: string
+    kind: string
+    status: string
+  }>
   counts: Record<"states" | "attempts" | "artifacts" | "logs" | "inbox" | "sessions" | "findings", number>
   inbox: Array<{
     id: string
@@ -162,7 +169,29 @@ type WorkflowDetail = {
   }
   evidence?: WorkflowEvidence
   evidenceError?: string
+  workflowGraph?: {
+    mermaid: string
+    definition: WorkflowDefinitionGraph
+  }
+  workflowGraphError?: string
   error?: string
+}
+
+type WorkflowDefinitionGraph = {
+  start: string
+  maxSteps: number
+  states: Array<{
+    name: string
+    type: string
+    reviewReturnTo?: string
+  }>
+  edges: Array<{
+    id: string
+    from: string
+    label: "pass" | "fail"
+    to?: string
+    finish?: boolean
+  }>
 }
 
 type WorkflowList = {
@@ -352,28 +381,58 @@ function App() {
   const workflowDetailWorkflowId = workflowDetail?.request.workflowId
   const workflowDetailRunId = workflowDetail?.request.runId
   const workflowDetailStates = workflowDetail?.evidence?.states
+  const workflowDefinitionStates = workflowDetail?.workflowGraph?.definition.states
 
   useEffect(() => {
     const runKey = workflowDetailWorkflowId && workflowDetailRunId ? `${workflowDetailWorkflowId}:${workflowDetailRunId}` : undefined
     const states = workflowDetailStates ?? []
+    const definitionStateNames = workflowDefinitionStates?.map((state) => state.name)
+    const selectableStateNames =
+      states.length > 0
+        ? states.map((state) => state.id)
+        : definitionStateNames && definitionStateNames.length > 0
+          ? definitionStateNames
+          : []
     const runChanged = selectedStateRunRef.current !== runKey
     selectedStateRunRef.current = runKey
-    if (!runKey || states.length === 0) {
+    if (!runKey || selectableStateNames.length === 0) {
       setSelectedStateId(undefined)
       return
     }
     setSelectedStateId((current) => {
-      if (!runChanged && current && states.some((state) => state.id === current)) {
+      if (!runChanged && current && selectableStateNames.includes(current)) {
         return current
       }
-      return states[states.length - 1]?.id
+      const latestExecuted = [...states]
+        .reverse()
+        .find((state) => selectableStateNames.includes(state.id))
+      return latestExecuted ? latestExecuted.id : selectableStateNames[0]
     })
-  }, [workflowDetailWorkflowId, workflowDetailRunId, workflowDetailStates])
+  }, [workflowDetailWorkflowId, workflowDetailRunId, workflowDetailStates, workflowDefinitionStates])
 
-  const stateGraph = useMemo(() => workflowStateGraph(workflowDetail?.evidence?.states ?? []), [workflowDetail])
+  const stateGraph = useMemo(
+    () => executionStateGraph(workflowDetail?.evidence?.states ?? []),
+    [workflowDetail],
+  )
+  const definitionGraph = useMemo(
+    () => definitionStateGraph(workflowDetail?.workflowGraph?.definition, workflowDetail?.evidence?.states ?? []),
+    [workflowDetail],
+  )
   const selectedState = useMemo(
-    () => workflowDetail?.evidence?.states.find((state) => state.id === selectedStateId),
+    () => latestStateRecordByNameOrId(workflowDetail?.evidence?.states ?? [], selectedStateId),
     [selectedStateId, workflowDetail],
+  )
+  const selectedDefinitionState = useMemo(
+    () => workflowDetail?.workflowGraph?.definition.states.find((state) => state.name === (selectedState?.name ?? selectedStateId)),
+    [selectedStateId, selectedState, workflowDetail],
+  )
+  const runSummary = useMemo(
+    () => workflowDetail?.evidence ? workflowRunSummary(workflowDetail.evidence) : undefined,
+    [workflowDetail],
+  )
+  const reviewReturns = useMemo(
+    () => workflowDetail?.evidence ? reviewReturnEvents(workflowDetail.evidence) : [],
+    [workflowDetail],
   )
   const workflows = useMemo(() => workflowList?.workflows ?? [], [workflowList])
   const onStateNodeClick: NodeMouseHandler = (_, node) => {
@@ -599,7 +658,7 @@ function App() {
                   <CardHeader>
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div className="flex min-w-0 flex-col gap-2">
-                        <CardTitle className="truncate">{selectedWorkflow.type}</CardTitle>
+                        <CardTitle className="truncate">Run status</CardTitle>
                         <CardDescription className="truncate">{selectedWorkflow.workflowId}</CardDescription>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -620,86 +679,171 @@ function App() {
                       </div>
                     ) : (
                       <div className="flex min-w-0 flex-col gap-4">
-                        <div className="flex min-w-0 flex-col gap-3">
-                          <p className="text-sm text-muted-foreground">
-                            {workflowDetail?.evidence?.summary !== undefined
-                              ? workflowDetail.evidence.summary
-                              : workflowDetail?.workflow.resultError !== undefined
-                                ? workflowDetail.workflow.resultError
-                                : "No workflow evidence summary is available yet."}
-                          </p>
-                          <Separator />
-                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                            {workflowDetail?.evidence
-                              ? Object.entries(workflowDetail.evidence.counts).map(([key, value]) => (
-                                  <div key={key} className="rounded-md border p-3">
-                                    <div className="text-xs text-muted-foreground">{key}</div>
-                                    <div className="text-lg font-semibold">{value}</div>
-                                  </div>
-                                ))
-                              : null}
+                        <div className="rounded-md border p-4">
+                          <div className="flex min-w-0 flex-col gap-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={statusTone[runSummary?.runStatus ?? workflowDetail?.evidence?.status ?? ""] ?? "outline"}>
+                                {runSummary?.runStatus ?? workflowDetail?.evidence?.status ?? "no evidence"}
+                              </Badge>
+                              {runSummary?.activeState ? (
+                                <Badge variant={statusTone[runSummary.activeState.status] ?? "outline"}>
+                                  {runSummary.activeState.name} / {runSummary.activeState.status}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              {workflowDetail?.evidence?.summary !== undefined
+                                ? workflowDetail.evidence.summary
+                                : workflowDetail?.workflow.resultError !== undefined
+                                  ? workflowDetail.workflow.resultError
+                                  : "No workflow evidence summary is available yet."}
+                            </p>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              <div className="rounded-md border p-2">
+                                <div className="text-xs text-muted-foreground">next action</div>
+                                <div className="mt-1 text-sm font-medium">{runSummary?.nextAction ?? "Select a run"}</div>
+                              </div>
+                              <div className="rounded-md border p-2">
+                                <div className="text-xs text-muted-foreground">review returns</div>
+                                <div className="mt-1 text-sm font-medium">
+                                  {reviewReturns.length > 0
+                                    ? `${reviewReturns.length} observed`
+                                    : "none observed"}
+                                </div>
+                              </div>
+                              <div className="rounded-md border p-2">
+                                <div className="text-xs text-muted-foreground">open inbox</div>
+                                <div className="mt-1 text-sm font-medium">{runSummary?.openInboxCount ?? 0}</div>
+                              </div>
+                            </div>
                           </div>
                         </div>
 
+                        {reviewReturns.length > 0 ? (
+                          <div className="rounded-md border p-3">
+                            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                              <ListRestartIcon />
+                              Review return path
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              {reviewReturns.slice(-3).map((event) => (
+                                <div key={`${event.fromState.id}:${event.toState.id}`} className="flex flex-wrap items-center gap-2 text-sm">
+                                  <Badge variant="destructive">{event.fromState.name} failed</Badge>
+                                  <span className="text-muted-foreground">returned to</span>
+                                  <Badge variant={statusTone[event.toState.status] ?? "outline"}>
+                                    {event.toState.name} / {event.toState.status}
+                                  </Badge>
+                                  <span className="min-w-0 truncate text-xs text-muted-foreground">{event.fromState.reason}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
                         <Separator />
 
-                        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-                          {workflowDetail?.evidence && workflowDetail.evidence.states.length > 0 ? (
-                            <div className="h-[420px] min-w-0 overflow-hidden rounded-md border">
-                              <ReactFlow
-                                nodes={stateGraph.nodes}
-                                edges={stateGraph.edges}
-                                onNodeClick={onStateNodeClick}
-                                nodesConnectable={false}
-                                nodesDraggable={false}
-                                fitView
-                                fitViewOptions={{ padding: 0.16 }}
-                              >
-                                <Background />
-                                <Controls showInteractive={false} />
-                              </ReactFlow>
-                            </div>
-                          ) : (
-                            <div className="rounded-md border">
-                              {emptyPanel(ListRestartIcon, "No state graph", "The workflow has not exposed state records.")}
-                            </div>
-                          )}
+                        <div className="grid gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                          {workflowDetail?.evidence
+                            ? Object.entries(workflowDetail.evidence.counts).map(([key, value]) => (
+                                <div key={key} className="rounded-md border px-3 py-2">
+                                  <div className="text-xs text-muted-foreground">{key}</div>
+                                  <div className="text-lg font-semibold">{value}</div>
+                                </div>
+                              ))
+                            : null}
+                        </div>
+
+                        <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
+                          <Tabs defaultValue="execution" className="min-w-0">
+                            <TabsList className="flex h-auto flex-wrap justify-start">
+                              <TabsTrigger value="execution">Execution path</TabsTrigger>
+                              <TabsTrigger value="definition">Definition graph</TabsTrigger>
+                            </TabsList>
+                            <TabsContent value="execution">
+                              {stateGraph.nodes.length > 0 ? (
+                                <div className="h-[520px] min-w-0 overflow-hidden rounded-md border">
+                                  <ReactFlow
+                                    nodes={stateGraph.nodes}
+                                    edges={stateGraph.edges}
+                                    onNodeClick={onStateNodeClick}
+                                    nodesConnectable={false}
+                                    nodesDraggable={false}
+                                    fitView
+                                    fitViewOptions={{ padding: 0.08 }}
+                                  >
+                                    <Background />
+                                    <Controls showInteractive={false} />
+                                  </ReactFlow>
+                                </div>
+                              ) : (
+                                <div className="rounded-md border">
+                                  {emptyPanel(ListRestartIcon, "No execution path", "The workflow has not exposed state records.")}
+                                </div>
+                              )}
+                            </TabsContent>
+                            <TabsContent value="definition">
+                              {definitionGraph.nodes.length > 0 ? (
+                                <div className="h-[520px] min-w-0 overflow-hidden rounded-md border">
+                                  <ReactFlow
+                                    nodes={definitionGraph.nodes}
+                                    edges={definitionGraph.edges}
+                                    onNodeClick={onStateNodeClick}
+                                    nodesConnectable={false}
+                                    nodesDraggable={false}
+                                    fitView
+                                    fitViewOptions={{ padding: 0.08 }}
+                                  >
+                                    <Background />
+                                    <Controls showInteractive={false} />
+                                  </ReactFlow>
+                                </div>
+                              ) : (
+                                <div className="rounded-md border">
+                                  {emptyPanel(ListRestartIcon, "No definition graph", "This installed workflow has no YAML definition graph.")}
+                                </div>
+                              )}
+                            </TabsContent>
+                          </Tabs>
 
                           <div className="rounded-md border p-3">
                             <div className="mb-3 flex items-center gap-2 text-sm font-medium">
                               <ClockIcon />
                               Selected state
                             </div>
-                            {selectedState ? (
+                            {selectedState || selectedDefinitionState ? (
                               <div className="flex min-w-0 flex-col gap-3">
                                 <div className="flex items-center justify-between gap-2">
-                                  <span className="truncate text-sm">{selectedState.name}</span>
-                                  <Badge variant={statusTone[selectedState.status] ?? "outline"}>{selectedState.status}</Badge>
+                                  <span className="truncate text-sm">{selectedDefinitionState?.name ?? selectedState?.name}</span>
+                                  <Badge variant={statusTone[selectedState?.status ?? "not_run"] ?? "outline"}>
+                                    {selectedState?.status ?? selectedDefinitionState?.type}
+                                  </Badge>
                                 </div>
-                                <p className="line-clamp-6 text-xs text-muted-foreground">{selectedState.reason}</p>
+                                <p className="line-clamp-6 text-xs text-muted-foreground">
+                                  {selectedState?.reason ?? "Defined in workflow.yaml; no execution evidence for this state yet."}
+                                </p>
                                 <Separator />
                                 <div className="grid grid-cols-3 gap-2 text-center">
                                   <div className="rounded-md border p-2">
                                     <div className="text-xs text-muted-foreground">attempts</div>
-                                    <div className="text-sm font-semibold">{selectedState.activity_attempt_ids.length}</div>
+                                    <div className="text-sm font-semibold">{selectedState?.activity_attempt_ids.length ?? 0}</div>
                                   </div>
                                   <div className="rounded-md border p-2">
                                     <div className="text-xs text-muted-foreground">artifacts</div>
-                                    <div className="text-sm font-semibold">{selectedState.artifact_ids.length}</div>
+                                    <div className="text-sm font-semibold">{selectedState?.artifact_ids.length ?? 0}</div>
                                   </div>
                                   <div className="rounded-md border p-2">
                                     <div className="text-xs text-muted-foreground">findings</div>
-                                    <div className="text-sm font-semibold">{selectedState.finding_ids.length}</div>
+                                    <div className="text-sm font-semibold">{selectedState?.finding_ids.length ?? 0}</div>
                                   </div>
                                 </div>
                                 <div className="grid gap-2 text-xs text-muted-foreground">
-                                  {selectedState.started_at ? (
+                                  {selectedState?.started_at ? (
                                     <div className="flex items-center justify-between gap-2">
                                       <span>started</span>
                                       <span>{formatDate(selectedState.started_at)}</span>
                                     </div>
                                   ) : null}
-                                  {selectedState.finished_at ? (
+                                  {selectedState?.finished_at ? (
                                     <div className="flex items-center justify-between gap-2">
                                       <span>finished</span>
                                       <span>{formatDate(selectedState.finished_at)}</span>
@@ -730,14 +874,15 @@ function App() {
                         <AlertDescription>{workflowDetail.evidenceError}</AlertDescription>
                       </Alert>
                     ) : workflowDetail?.evidence ? (
-                      <Tabs defaultValue="inbox">
+                      <Tabs defaultValue="logs">
                         <TabsList className="flex h-auto flex-wrap justify-start">
-                          <TabsTrigger value="inbox">Inbox</TabsTrigger>
-                          <TabsTrigger value="findings">Findings</TabsTrigger>
                           <TabsTrigger value="logs">Logs</TabsTrigger>
+                          <TabsTrigger value="findings">Findings</TabsTrigger>
+                          <TabsTrigger value="inbox">Inbox</TabsTrigger>
                           <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
                           <TabsTrigger value="sessions">Sessions</TabsTrigger>
                           <TabsTrigger value="timing">Timing</TabsTrigger>
+                          <TabsTrigger value="definition">Definition</TabsTrigger>
                         </TabsList>
                         <TabsContent value="inbox">
                           {workflowDetail.evidence.inbox.length === 0 ? (
@@ -830,6 +975,19 @@ function App() {
                                 ]),
                               )}
                         </TabsContent>
+                        <TabsContent value="definition">
+                          {workflowDetail.workflowGraphError ? (
+                            <Alert>
+                              <AlertCircleIcon />
+                              <AlertTitle>Definition graph unavailable</AlertTitle>
+                              <AlertDescription>{workflowDetail.workflowGraphError}</AlertDescription>
+                            </Alert>
+                          ) : workflowDetail.workflowGraph ? (
+                            <MermaidDiagram source={workflowDetail.workflowGraph.mermaid} />
+                          ) : (
+                            emptyPanel(ListRestartIcon, "No definition graph", "This installed workflow has no generated Mermaid graph.")
+                          )}
+                        </TabsContent>
                       </Tabs>
                     ) : (
                       emptyPanel(ListRestartIcon, "No evidence snapshot", "The workflow has not exposed a Tychonic result yet.")
@@ -867,9 +1025,143 @@ function formatWorkflowDuration(workflow: WorkflowSummary) {
   return formatDuration(closeMs - startMs)
 }
 
+function workflowRunSummary(evidence: WorkflowEvidence) {
+  const activeState =
+    evidence.states.findLast((state) => state.status === "running" || state.status === "blocked" || state.status === "timed_out") ??
+    evidence.latest_state ??
+    evidence.states.at(-1)
+  const openInboxCount = evidence.inbox.filter((item) => item.status === "open" || item.status === "waiting" || item.status === "waiting_user").length
+  const lastProblemState = evidence.states.findLast((state) => isProblemStatus(state.status))
+  const returnEvents = reviewReturnEvents(evidence)
+  const nextAction =
+    openInboxCount > 0
+      ? "Operator decision pending"
+      : evidence.status === "running"
+        ? activeState
+          ? `Watch ${activeState.name}`
+          : "Watch running workflow"
+        : evidence.status === "waiting_user"
+          ? "Operator decision pending"
+          : evidence.status === "succeeded"
+            ? "Inspect final evidence"
+            : lastProblemState
+              ? `Inspect ${lastProblemState.name}`
+              : "Inspect evidence"
+  return {
+    runStatus: evidence.status,
+    activeState,
+    openInboxCount,
+    lastProblemState,
+    returnEvents,
+    nextAction,
+  }
+}
+
+function reviewReturnEvents(evidence: WorkflowEvidence) {
+  const semanticReviewStateIds = new Set(
+    evidence.state_attempt_summaries
+      .filter((attempt) => attempt.kind === "semantic_review")
+      .map((attempt) => attempt.state_id),
+  )
+  return evidence.states.flatMap((state, index) => {
+    const nextState = evidence.states[index + 1]
+    if (!nextState || !semanticReviewStateIds.has(state.id) || state.status !== "failed" || nextState.name === state.name) {
+      return []
+    }
+    return [{ fromState: state, toState: nextState }]
+  })
+}
+
+function isProblemStatus(status: string) {
+  return status === "failed" || status === "blocked" || status === "timed_out"
+}
+
 type StateGraphNode = Node<{ label: ReactNode }>
 
-function workflowStateGraph(states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
+function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
+  if (!definition) return { nodes: [], edges: [] }
+
+  const stateNames = new Set(definition.states.map((state) => state.name))
+  const latestStates = latestStateRecordsByName(states)
+  const columns = Math.min(Math.max(definition.states.length + 2, 1), 6)
+  const stateNodes = definition.states.map((state, index) => {
+    const latestState = latestStates.get(state.name)
+    const row = Math.floor((index + 1) / columns)
+    const column = (index + 1) % columns
+    return {
+      id: state.name,
+      type: "default",
+      position: { x: column * 230, y: row * 140 },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      className: cn("tychonic-state-node", `tychonic-state-node-${stateToneClass(latestState?.status ?? "not_run")}`),
+      data: {
+        label: (
+          <div className="flex min-w-0 flex-col gap-1 text-left">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-xs text-muted-foreground">{index + 1}</span>
+              <span className="truncate text-sm font-medium">{state.name}</span>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {state.type}
+              {latestState ? ` / ${latestState.status}` : ""}
+            </span>
+          </div>
+        ),
+      },
+    } satisfies StateGraphNode
+  })
+  const finishIndex = definition.states.length + 1
+  const finishRow = Math.floor(finishIndex / columns)
+  const finishColumn = finishIndex % columns
+  const nodes: StateGraphNode[] = [
+    {
+      id: "__start",
+      type: "input",
+      position: { x: 0, y: 0 },
+      sourcePosition: Position.Right,
+      className: "tychonic-state-node tychonic-state-node-neutral",
+      data: { label: <span className="text-sm font-medium">start</span> },
+    },
+    ...stateNodes,
+    {
+      id: "__finish",
+      type: "output",
+      position: { x: finishColumn * 230, y: finishRow * 140 },
+      targetPosition: Position.Left,
+      className: "tychonic-state-node tychonic-state-node-neutral",
+      data: { label: <span className="text-sm font-medium">finish</span> },
+    },
+  ]
+  const edges: Edge[] = [
+    {
+      id: "__start:pass:start",
+      source: "__start",
+      target: definition.start,
+      type: "smoothstep",
+      markerEnd: { type: MarkerType.ArrowClosed },
+      className: "tychonic-state-edge",
+    },
+    ...definition.edges.flatMap((edge) => {
+      const target = edge.finish ? "__finish" : edge.to
+      if (!target || (!edge.finish && !stateNames.has(target))) return []
+      return [
+        {
+          id: edge.id,
+          source: edge.from,
+          target,
+          type: "smoothstep",
+          label: edge.label,
+          markerEnd: { type: MarkerType.ArrowClosed },
+          className: cn("tychonic-state-edge", edge.label === "fail" ? "tychonic-state-edge-failed" : undefined),
+        } satisfies Edge,
+      ]
+    }),
+  ]
+  return { nodes, edges }
+}
+
+function executionStateGraph(states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
   const columns = Math.min(Math.max(states.length, 1), 5)
   const nodes = states.map((state, index) => {
     const row = Math.floor(index / columns)
@@ -907,6 +1199,16 @@ function workflowStateGraph(states: WorkflowStateRecord[]): { nodes: StateGraphN
     } satisfies Edge
   })
   return { nodes, edges }
+}
+
+function latestStateRecordsByName(states: WorkflowStateRecord[]): Map<string, WorkflowStateRecord> {
+  return new Map(states.map((state) => [state.name, state]))
+}
+
+function latestStateRecordByNameOrId(states: WorkflowStateRecord[], nameOrId: string | undefined): WorkflowStateRecord | undefined {
+  if (!nameOrId) return undefined
+  const byName = latestStateRecordsByName(states).get(nameOrId)
+  return byName ?? states.find((state) => state.id === nameOrId)
 }
 
 function stateToneClass(status: string) {
@@ -949,6 +1251,63 @@ function simpleTable(headers: string[], rows: Array<Array<ReactNode>>) {
         </TableBody>
       </Table>
     </ScrollArea>
+  )
+}
+
+function MermaidDiagram({ source }: { source: string }) {
+  const diagramId = `tychonic-mermaid-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let cancelled = false
+    void import("mermaid")
+      .then(({ default: mermaid }) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "base",
+        })
+        return mermaid.render(diagramId, source)
+      })
+      .then(({ svg }) => {
+        if (cancelled) return
+        setError(undefined)
+        if (containerRef.current) {
+          containerRef.current.innerHTML = svg
+        }
+      })
+      .catch((renderError: unknown) => {
+        if (cancelled) return
+        if (containerRef.current) {
+          containerRef.current.innerHTML = ""
+        }
+        setError(renderError instanceof Error ? renderError.message : String(renderError))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [diagramId, source])
+
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertCircleIcon />
+        <AlertTitle>Mermaid render failed</AlertTitle>
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    )
+  }
+
+  return (
+    <div className="overflow-auto rounded-md border bg-muted/20 p-3">
+      <div
+        ref={containerRef}
+        aria-label="Workflow definition Mermaid diagram"
+        className="min-h-[320px] min-w-[640px]"
+        role="img"
+      />
+    </div>
   )
 }
 
