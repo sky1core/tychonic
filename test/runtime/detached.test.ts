@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -24,7 +24,8 @@ import {
   removePidFileIfOwned,
   writeRuntimePidFile,
   removeRuntimePidFilesIfOwned,
-  isRuntimeParentProcess
+  isRuntimeParentProcess,
+  claimRuntimeStartLock
 } from "../../src/runtime/detached.js";
 
 const execFileAsync = promisify(execFile);
@@ -69,6 +70,13 @@ async function stopChild(child: ChildProcess): Promise<void> {
     child.once("exit", () => resolve());
     setTimeout(resolve, 1000);
   });
+}
+
+async function processStartStamp(pid: number): Promise<string> {
+  const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
+    encoding: "utf8"
+  });
+  return stdout.trim();
 }
 
 describe("spawnDetachedRuntime", () => {
@@ -182,6 +190,169 @@ describe("writeRuntimePidFile/removeRuntimePidFilesIfOwned", () => {
 
     expect(await removeRuntimePidFilesIfOwned(file, 123)).toBe(true);
     expect(await readPidFile(file)).toBe(0);
+  });
+});
+
+describe("claimRuntimeStartLock", () => {
+  it("writes and releases a current-process runtime start claim", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+
+    const lock = await claimRuntimeStartLock(lockFile);
+    await lock.release();
+
+    const next = await claimRuntimeStartLock(lockFile);
+    await next.release();
+  });
+
+  it("refuses a start claim while an active runtime start owner holds the lock", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+    const { child, cliPath } = await spawnRuntimeLikeProcess(dir, ["runtime", "up"]);
+    try {
+      await symlink(
+        JSON.stringify({
+          kind: "tychonic.runtime.startLock",
+          pid: child.pid!,
+          cliPath,
+          processStartStamp: await processStartStamp(child.pid!)
+        }),
+        lockFile
+      );
+
+      await expect(claimRuntimeStartLock(lockFile)).rejects.toThrow(
+        /runtime start is already in progress/
+      );
+    } finally {
+      await stopChild(child);
+    }
+  });
+
+  it("reclaims a start lock owned by a dead process", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+    const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+    const pid = child.pid;
+    if (!pid) {
+      throw new Error("failed to spawn child");
+    }
+    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await symlink(
+      JSON.stringify({
+        kind: "tychonic.runtime.startLock",
+        pid,
+        cliPath: process.argv[1] ?? "",
+        processStartStamp: "dead-process-start-stamp"
+      }),
+      lockFile
+    );
+
+    const lock = await claimRuntimeStartLock(lockFile);
+    await lock.release();
+  });
+
+  it("reclaims a start lock owned by an unrelated live process", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+    const { child, cliPath } = await spawnRuntimeLikeProcess(dir, ["not-runtime"]);
+    try {
+      await symlink(
+        JSON.stringify({
+          kind: "tychonic.runtime.startLock",
+          pid: child.pid!,
+          cliPath,
+          processStartStamp: await processStartStamp(child.pid!)
+        }),
+        lockFile
+      );
+
+      const lock = await claimRuntimeStartLock(lockFile);
+      await lock.release();
+    } finally {
+      await stopChild(child);
+    }
+  });
+
+  it("allows only one claimant while recovering the same stale start lock", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+    const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+    const pid = child.pid;
+    if (!pid) {
+      throw new Error("failed to spawn child");
+    }
+    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await symlink(
+      JSON.stringify({
+        kind: "tychonic.runtime.startLock",
+        pid,
+        cliPath: process.argv[1] ?? "",
+        processStartStamp: "dead-process-start-stamp"
+      }),
+      lockFile
+    );
+
+    const attempts = await Promise.allSettled([
+      claimRuntimeStartLock(lockFile),
+      claimRuntimeStartLock(lockFile)
+    ]);
+    const fulfilled = attempts.filter(
+      (attempt): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof claimRuntimeStartLock>>> =>
+        attempt.status === "fulfilled"
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    await fulfilled[0]!.value.release();
+  });
+
+  it("reclaims a stale recovery lock before recovering the start lock", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+    await symlink(
+      JSON.stringify({
+        kind: "tychonic.runtime.startLock",
+        pid: 999_999,
+        cliPath: process.argv[1] ?? "",
+        processStartStamp: "dead-process-start-stamp"
+      }),
+      lockFile
+    );
+    await symlink(
+      JSON.stringify({
+        kind: "tychonic.runtime.startRecoveryLock",
+        pid: 999_998,
+        cliPath: process.argv[1] ?? "",
+        processStartStamp: "dead-recovery-start-stamp"
+      }),
+      `${lockFile}.recover`
+    );
+
+    const lock = await claimRuntimeStartLock(lockFile);
+    await lock.release();
+  });
+
+  it("reclaims a runtime-shaped start lock whose pid was reused by another start", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+    const { child, cliPath } = await spawnRuntimeLikeProcess(dir, ["runtime", "up"]);
+    try {
+      await symlink(
+        JSON.stringify({
+          kind: "tychonic.runtime.startLock",
+          pid: child.pid!,
+          cliPath,
+          processStartStamp: "different-process-start-stamp"
+        }),
+        lockFile
+      );
+
+      const lock = await claimRuntimeStartLock(lockFile);
+      await lock.release();
+    } finally {
+      await stopChild(child);
+    }
   });
 });
 

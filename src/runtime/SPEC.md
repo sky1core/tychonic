@@ -118,15 +118,18 @@ after reporting a PID.
 
 Lifecycle commands:
 
-- `tychonic runtime up` — starts or reuses the local runtime daemon and returns
-  to the shell. It writes the daemon parent PID to `<state>/runtime.pid` and
-  appends stdout/stderr into `<log>/runtime.log`. If the PID file points to a
-  live runtime, the command is idempotent and reports `already_running`; it must
-  not fail just because the caller's PID differs from the daemon PID.
+- `tychonic runtime up` — starts or reuses the single local runtime daemon for
+  the active instance and returns to the shell. It writes the daemon parent PID
+  to `<state>/runtime.pid` and appends stdout/stderr into `<log>/runtime.log`.
+  If the PID file points to a live runtime, the command is idempotent and
+  reports `already_running`; it must not fail just because the caller's PID
+  differs from the daemon PID. If another `runtime up` is already starting that
+  same instance, the command refuses instead of starting a second worker.
 - `tychonic runtime up --foreground` — development/debug mode. Starts Temporal
   if needed and runs the worker in the current terminal. It records the runtime
-  parent PID in `<state>/runtime.pid` and removes that PID file on normal process
-  exit when it still owns the file.
+  parent PID in `<state>/runtime.pid`, refuses to start when that instance
+  already has a live runtime, and removes that PID file on normal process exit
+  when it still owns the file.
 - `tychonic runtime up --instance <name>` — same daemon contract, scoped to the
   instance-derived state/log/Temporal paths. A fresh instance still requires
   installed bundles before start.

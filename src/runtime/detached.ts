@@ -16,7 +16,7 @@
 
 import { execFile, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
@@ -139,8 +139,234 @@ export interface RuntimePidMetadata {
   cliPath: string;
 }
 
+interface RuntimeStartLockRecord {
+  kind: "tychonic.runtime.startLock";
+  pid: number;
+  cliPath: string;
+  processStartStamp: string;
+}
+
+interface RuntimeStartRecoveryLockRecord {
+  kind: "tychonic.runtime.startRecoveryLock";
+  pid: number;
+  cliPath: string;
+  processStartStamp: string;
+}
+
+export interface RuntimeStartLock {
+  lockFile: string;
+  release: () => Promise<void>;
+}
+
 function runtimePidMetadataFile(pidFile: string): string {
   return `${pidFile}.json`;
+}
+
+export async function claimRuntimeStartLock(lockFile: string): Promise<RuntimeStartLock> {
+  await mkdir(dirname(lockFile), { recursive: true });
+  const record = await currentRuntimeStartLockRecord();
+
+  try {
+    await symlink(JSON.stringify(record), lockFile);
+    return {
+      lockFile,
+      release: async () => {
+        await removeRuntimeStartLockIfOwned(lockFile, process.pid);
+      }
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST") {
+      throw error;
+    }
+  }
+
+  const existing = await readRuntimeStartLock(lockFile);
+  if (existing && (await isRuntimeStartLockOwnerActive(existing))) {
+    throw new Error(`runtime start is already in progress (${lockFile}, pid ${existing.pid})`);
+  }
+
+  await recoverRuntimeStartLock(lockFile);
+  return claimRuntimeStartLock(lockFile);
+}
+
+async function readRuntimeStartLock(lockFile: string): Promise<RuntimeStartLockRecord | undefined> {
+  try {
+    const target = await readlink(lockFile);
+    try {
+      const parsed = JSON.parse(target) as Partial<RuntimeStartLockRecord>;
+      if (
+        parsed.kind === "tychonic.runtime.startLock" &&
+        typeof parsed.pid === "number" &&
+        Number.isInteger(parsed.pid) &&
+        parsed.pid > 0 &&
+        typeof parsed.cliPath === "string" &&
+        typeof parsed.processStartStamp === "string" &&
+        parsed.processStartStamp.length > 0
+      ) {
+        return {
+          kind: "tychonic.runtime.startLock",
+          pid: parsed.pid,
+          cliPath: parsed.cliPath,
+          processStartStamp: parsed.processStartStamp
+        };
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EINVAL") return undefined;
+    return undefined;
+  }
+}
+
+async function recoverRuntimeStartLock(lockFile: string): Promise<void> {
+  const recoveryFile = `${lockFile}.recover`;
+  const recovery = await claimRuntimeStartRecoveryLock(recoveryFile);
+  try {
+    const current = await readRuntimeStartLock(lockFile);
+    if (current && (await isRuntimeStartLockOwnerActive(current))) {
+      throw new Error(`runtime start is already in progress (${lockFile}, pid ${current.pid})`);
+    }
+    await rm(lockFile, { force: true });
+  } finally {
+    await recovery.release();
+  }
+}
+
+async function claimRuntimeStartRecoveryLock(lockFile: string): Promise<RuntimeStartLock> {
+  const record = await currentRuntimeStartRecoveryLockRecord();
+  try {
+    await symlink(JSON.stringify(record), lockFile);
+    return {
+      lockFile,
+      release: async () => {
+        await removeRuntimeStartRecoveryLockIfOwned(lockFile, process.pid, record.processStartStamp);
+      }
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST") {
+      throw error;
+    }
+  }
+
+  const existing = await readRuntimeStartRecoveryLock(lockFile);
+  if (existing && (await isRuntimeStartLockOwnerActive(existing))) {
+    throw new Error(`runtime start lock recovery is already in progress (${lockFile}, pid ${existing.pid})`);
+  }
+
+  await rm(lockFile, { force: true });
+  return claimRuntimeStartRecoveryLock(lockFile);
+}
+
+async function currentRuntimeStartLockRecord(): Promise<RuntimeStartLockRecord> {
+  return {
+    kind: "tychonic.runtime.startLock",
+    pid: process.pid,
+    cliPath: process.argv[1] ?? "",
+    processStartStamp: await processStartStamp(process.pid)
+  };
+}
+
+async function currentRuntimeStartRecoveryLockRecord(): Promise<RuntimeStartRecoveryLockRecord> {
+  return {
+    kind: "tychonic.runtime.startRecoveryLock",
+    pid: process.pid,
+    cliPath: process.argv[1] ?? "",
+    processStartStamp: await processStartStamp(process.pid)
+  };
+}
+
+async function readRuntimeStartRecoveryLock(
+  lockFile: string
+): Promise<RuntimeStartRecoveryLockRecord | undefined> {
+  try {
+    const target = await readlink(lockFile);
+    const parsed = JSON.parse(target) as Partial<RuntimeStartRecoveryLockRecord>;
+    if (
+      parsed.kind === "tychonic.runtime.startRecoveryLock" &&
+      typeof parsed.pid === "number" &&
+      Number.isInteger(parsed.pid) &&
+      parsed.pid > 0 &&
+      typeof parsed.cliPath === "string" &&
+      typeof parsed.processStartStamp === "string" &&
+      parsed.processStartStamp.length > 0
+    ) {
+      return {
+        kind: "tychonic.runtime.startRecoveryLock",
+        pid: parsed.pid,
+        cliPath: parsed.cliPath,
+        processStartStamp: parsed.processStartStamp
+      };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function isRuntimeStartLockOwnerActive(
+  record: RuntimeStartLockRecord | RuntimeStartRecoveryLockRecord
+): Promise<boolean> {
+  if (!isProcessAlive(record.pid)) {
+    return false;
+  }
+  let currentStartStamp: string;
+  try {
+    currentStartStamp = await processStartStamp(record.pid);
+  } catch {
+    return false;
+  }
+  if (currentStartStamp !== record.processStartStamp) {
+    return false;
+  }
+  if (record.pid === process.pid) {
+    return true;
+  }
+  let command: string;
+  try {
+    command = await processCommand(record.pid);
+  } catch {
+    return false;
+  }
+  const tokens = splitCommandLine(command);
+  const runtimeIndex = tokens.indexOf("runtime");
+  return (
+    tokens.includes(record.cliPath) &&
+    runtimeIndex >= 0 &&
+    tokens[runtimeIndex + 1] === "up"
+  );
+}
+
+async function removeRuntimeStartLockIfOwned(lockFile: string, pid: number): Promise<boolean> {
+  const current = await readRuntimeStartLock(lockFile);
+  let currentStartStamp: string;
+  try {
+    currentStartStamp = await processStartStamp(pid);
+  } catch {
+    return false;
+  }
+  if (!current || current.pid !== pid || current.processStartStamp !== currentStartStamp) {
+    return false;
+  }
+  await rm(lockFile, { force: true });
+  return true;
+}
+
+async function removeRuntimeStartRecoveryLockIfOwned(
+  lockFile: string,
+  pid: number,
+  processStartStamp: string
+): Promise<boolean> {
+  const current = await readRuntimeStartRecoveryLock(lockFile);
+  if (!current || current.pid !== pid || current.processStartStamp !== processStartStamp) {
+    return false;
+  }
+  await rm(lockFile, { force: true });
+  return true;
 }
 
 export async function writeRuntimePidFile(
@@ -231,6 +457,15 @@ async function readRuntimePidMetadata(
 async function processCommand(pid: number): Promise<string> {
   const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
   return stdout.trim();
+}
+
+async function processStartStamp(pid: number): Promise<string> {
+  const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" });
+  const stamp = stdout.trim();
+  if (stamp.length === 0) {
+    throw new Error(`failed to read process start time for pid ${pid}`);
+  }
+  return stamp;
 }
 
 function splitCommandLine(command: string): string[] {

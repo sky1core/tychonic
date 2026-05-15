@@ -88,9 +88,9 @@ returns to the shell.
 tychonic runtime up
 ```
 
-`runtime up` is idempotent: if the daemon is already running, it reports the
-existing PID instead of failing because the caller's PID is different. Stop it
-with:
+`runtime up` is idempotent: each runtime instance has one managed daemon. If it
+is already running, the command reports the existing PID instead of failing
+because the caller's PID is different. Stop it with:
 
 ```sh
 tychonic runtime stop

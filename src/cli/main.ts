@@ -33,7 +33,8 @@ import {
   isProcessAlive,
   writeRuntimePidFile,
   removeRuntimePidFilesIfOwned,
-  isRuntimeParentProcess
+  isRuntimeParentProcess,
+  claimRuntimeStartLock
 } from "../runtime/detached.js";
 import { killAndRemoveInstance } from "../runtime/reset.js";
 import { tychonicInstanceRunsParentDir } from "../runtime/runDirs.js";
@@ -154,6 +155,10 @@ function hiddenIncludeResultOption(): Option {
 
 function hiddenReadyFileOption(): Option {
   return new Option("--ready-file <path>", "internal runtime readiness handoff file").hideHelp();
+}
+
+function hiddenDaemonChildOption(): Option {
+  return new Option("--daemon-child", "internal runtime daemon child mode").hideHelp();
 }
 
 /**
@@ -382,6 +387,7 @@ runtimeCommand
     false
   )
   .addOption(hiddenReadyFileOption())
+  .addOption(hiddenDaemonChildOption())
   .description("Start or reuse the local runtime daemon")
   .addHelpText("after", INSTANCE_SELECTION_HELP)
   .action(
@@ -395,12 +401,22 @@ runtimeCommand
       foreground?: boolean;
       detach?: boolean;
       readyFile?: string;
+      daemonChild?: boolean;
     }) => {
       if (options.detach && options.foreground) {
         throw new Error("runtime up cannot combine --detach with --foreground");
       }
+      if (options.daemonChild && !options.foreground) {
+        throw new Error("runtime up --daemon-child is internal and requires --foreground");
+      }
       if (!options.foreground && options.readyFile) {
         throw new Error("runtime up --ready-file is internal and requires --foreground");
+      }
+      if (options.readyFile && !options.daemonChild) {
+        throw new Error("runtime up --ready-file is internal and requires --daemon-child");
+      }
+      if (options.daemonChild && !options.readyFile) {
+        throw new Error("runtime up --daemon-child is internal and requires --ready-file");
       }
       if (!options.foreground) {
         await handleRuntimeUpDaemon(options);
@@ -425,7 +441,9 @@ runtimeCommand
           }
         }
       }
-      const foregroundRuntimePidFile = await claimForegroundRuntimePidFileIfNeeded();
+      const foregroundRuntimePidFile = options.daemonChild
+        ? await parentClaimedRuntimePidFileForDaemonChild()
+        : await claimForegroundRuntimePidFileIfNeeded();
       const foregroundReadyFile = options.readyFile ?? pathJoin(tychonicRuntimeDirs().stateDir, "runtime.ready.json");
       await rm(foregroundReadyFile, { force: true });
       let temporalManagerForCleanup: TemporalManager | undefined;
@@ -1638,124 +1656,131 @@ async function handleRuntimeUpDaemon(options: {
   const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
   const logFile = pathJoin(dirs.logDir, "runtime.log");
   const readyFile = pathJoin(dirs.stateDir, "runtime.ready.json");
+  const lockFile = pathJoin(dirs.stateDir, "runtime.start.lock");
 
   let staleRemoved = false;
-  const existingPid = await readPidFile(pidFile);
-  if (existingPid > 0) {
-    if (isProcessAlive(existingPid)) {
-      if (await isRuntimeParentProcess(existingPid, { instance: instance ?? null, pidFile })) {
-        await waitForRuntimeReady({
-          pid: existingPid,
-          readyFile,
-          logFile,
-          timeoutMs: 60_000
-        });
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
-              state: "already_running",
-              mode: "daemon",
-              pid: existingPid,
-              pidFile,
-              logFile,
-              stopCommand: runtimeStopCommand(instance),
-              _meta: cliInstanceMeta()
-            },
-            null,
-            2
-          )
+  const startLock = await claimRuntimeStartLock(lockFile);
+  try {
+    const existingPid = await readPidFile(pidFile);
+    if (existingPid > 0) {
+      if (isProcessAlive(existingPid)) {
+        if (await isRuntimeParentProcess(existingPid, { instance: instance ?? null, pidFile })) {
+          await waitForRuntimeReady({
+            pid: existingPid,
+            readyFile,
+            logFile,
+            timeoutMs: 60_000
+          });
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                state: "already_running",
+                mode: "daemon",
+                pid: existingPid,
+                pidFile,
+                logFile,
+                stopCommand: runtimeStopCommand(instance),
+                _meta: cliInstanceMeta()
+              },
+              null,
+              2
+            )
+          );
+          return;
+        }
+        throw new Error(
+          `runtime PID file ${pidFile} points at live process ${existingPid}, ` +
+            "but it is not a verified Tychonic runtime parent; refusing to overwrite it"
         );
-        return;
       }
+      staleRemoved = true;
+      await removeRuntimePidFilesIfOwned(pidFile, existingPid);
+    }
+    await rm(readyFile, { force: true });
+
+    // Pre-check: detached child would die immediately if no bundles are installed.
+    // Foreground mode surfaces this error on stderr so the operator sees it, but
+    // detached mode would return a "success" JSON with a PID that silently exits
+    // a few seconds later.
+    const installedBundles = await listRuntimeWorkflowModules();
+    if (instance !== undefined && installedBundles.length === 0) {
       throw new Error(
-        `runtime PID file ${pidFile} points at live process ${existingPid}, ` +
-          "but it is not a verified Tychonic runtime parent; refusing to overwrite it"
+        `no workflow bundles installed in instance '${instance}'. ` +
+          `Install a bundle with \`tychonic workflows install <directory> --instance ${instance}\` ` +
+          "(for example, `workflows install ./examples/workflows/simpleWorkflow`), " +
+          `then rerun \`tychonic runtime up --instance ${instance}\`.`
       );
     }
-    staleRemoved = true;
-    await removeRuntimePidFilesIfOwned(pidFile, existingPid);
-  }
-  await rm(readyFile, { force: true });
+    // Preflight the same bundle compile the foreground child will perform.
+    // Without this, a missing bundle dependency can make the child exit after
+    // the parent already printed a success-looking detached PID.
+    await buildWorkflowBundle();
 
-  // Pre-check: detached child would die immediately if no bundles are installed.
-  // Foreground mode surfaces this error on stderr so the operator sees it, but
-  // detached mode would return a "success" JSON with a PID that silently exits
-  // a few seconds later.
-  const installedBundles = await listRuntimeWorkflowModules();
-  if (instance !== undefined && installedBundles.length === 0) {
-    throw new Error(
-      `no workflow bundles installed in instance '${instance}'. ` +
-        `Install a bundle with \`tychonic workflows install <directory> --instance ${instance}\` ` +
-        "(for example, `workflows install ./examples/workflows/simpleWorkflow`), " +
-        `then rerun \`tychonic runtime up --instance ${instance}\`.`
-    );
-  }
-  // Preflight the same bundle compile the foreground child will perform.
-  // Without this, a missing bundle dependency can make the child exit after
-  // the parent already printed a success-looking detached PID.
-  await buildWorkflowBundle();
+    // Reconstruct the flags the child should receive. The child always receives
+    // `--foreground`; `--instance` is re-passed explicitly inside
+    // spawnDetachedRuntime when present.
+    const extraArgs: string[] = [];
+    if (options.temporalMode) extraArgs.push("--temporal-mode", options.temporalMode);
+    if (options.temporalPort !== undefined)
+      extraArgs.push("--temporal-port", String(options.temporalPort));
+    if (options.temporalAddress) extraArgs.push("--temporal-address", options.temporalAddress);
+    if (options.temporalNamespace) extraArgs.push("--temporal-namespace", options.temporalNamespace);
+    if (options.temporalTaskQueue)
+      extraArgs.push("--temporal-task-queue", options.temporalTaskQueue);
+    if (options.shutdownGraceTime)
+      extraArgs.push("--shutdown-grace-time", options.shutdownGraceTime);
+    extraArgs.push("--daemon-child", "--ready-file", readyFile);
 
-  // Reconstruct the flags the child should receive. The child always receives
-  // `--foreground`; `--instance` is re-passed explicitly inside
-  // spawnDetachedRuntime when present.
-  const extraArgs: string[] = [];
-  if (options.temporalMode) extraArgs.push("--temporal-mode", options.temporalMode);
-  if (options.temporalPort !== undefined)
-    extraArgs.push("--temporal-port", String(options.temporalPort));
-  if (options.temporalAddress) extraArgs.push("--temporal-address", options.temporalAddress);
-  if (options.temporalNamespace) extraArgs.push("--temporal-namespace", options.temporalNamespace);
-  if (options.temporalTaskQueue) extraArgs.push("--temporal-task-queue", options.temporalTaskQueue);
-  if (options.shutdownGraceTime)
-    extraArgs.push("--shutdown-grace-time", options.shutdownGraceTime);
-  extraArgs.push("--ready-file", readyFile);
-
-  const result = await spawnDetachedRuntime({
-    nodePath: process.execPath,
-    cliPath: process.argv[1] ?? "",
-    ...(instance ? { instance } : {}),
-    extraArgs,
-    logFile,
-    pidFile
-  });
-
-  try {
-    await waitForRuntimeReady({
-      pid: result.pid,
-      readyFile,
+    const result = await spawnDetachedRuntime({
+      nodePath: process.execPath,
+      cliPath: process.argv[1] ?? "",
+      ...(instance ? { instance } : {}),
+      extraArgs,
       logFile,
-      timeoutMs: 60_000
+      pidFile
     });
-  } catch (error) {
-    if (isProcessAlive(result.pid)) {
-      try {
-        process.kill(result.pid, "SIGTERM");
-      } catch {
-        // Best-effort cleanup for a child we just spawned. The error below
-        // remains the authoritative startup failure.
-      }
-    }
-    await removeRuntimePidFilesIfOwned(pidFile, result.pid);
-    throw error;
-  }
 
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        state: "started",
-        mode: "daemon",
+    try {
+      await waitForRuntimeReady({
         pid: result.pid,
-        pidFile: result.pidFile,
-        logFile: result.logFile,
-        stopCommand: runtimeStopCommand(instance),
-        ...(staleRemoved ? { staleRemoved: true } : {}),
-        _meta: cliInstanceMeta()
-      },
-      null,
-      2
-    )
-  );
+        readyFile,
+        logFile,
+        timeoutMs: 60_000
+      });
+    } catch (error) {
+      if (isProcessAlive(result.pid)) {
+        try {
+          process.kill(result.pid, "SIGTERM");
+        } catch {
+          // Best-effort cleanup for a child we just spawned. The error below
+          // remains the authoritative startup failure.
+        }
+      }
+      await removeRuntimePidFilesIfOwned(pidFile, result.pid);
+      throw error;
+    }
+
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          state: "started",
+          mode: "daemon",
+          pid: result.pid,
+          pidFile: result.pidFile,
+          logFile: result.logFile,
+          stopCommand: runtimeStopCommand(instance),
+          ...(staleRemoved ? { staleRemoved: true } : {}),
+          _meta: cliInstanceMeta()
+        },
+        null,
+        2
+      )
+    );
+  } finally {
+    await startLock.release();
+  }
 }
 
 function runtimeStopCommand(instance: string | undefined): string {
@@ -1766,28 +1791,55 @@ async function claimForegroundRuntimePidFileIfNeeded(): Promise<string | undefin
   const instance = getActiveInstance();
   const dirs = tychonicRuntimeDirs();
   const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
-  const existingPid = await readPidFile(pidFile);
-  if (existingPid > 0 && existingPid !== process.pid) {
-    if (isProcessAlive(existingPid)) {
-      if (await isRuntimeParentProcess(existingPid, { instance: instance ?? null, pidFile })) {
-        const label = instance ? `instance '${instance}'` : "operational runtime";
-        const stop = runtimeStopCommand(instance);
+  const lockFile = pathJoin(dirs.stateDir, "runtime.start.lock");
+  const startLock = await claimRuntimeStartLock(lockFile);
+  try {
+    const existingPid = await readPidFile(pidFile);
+    if (existingPid > 0 && existingPid !== process.pid) {
+      if (isProcessAlive(existingPid)) {
+        if (await isRuntimeParentProcess(existingPid, { instance: instance ?? null, pidFile })) {
+          const label = instance ? `instance '${instance}'` : "operational runtime";
+          const stop = runtimeStopCommand(instance);
+          throw new Error(
+            `${label} already has a runtime (pid=${existingPid}); stop it with '${stop}'`
+          );
+        }
         throw new Error(
-          `${label} already has a runtime (pid=${existingPid}); stop it with '${stop}'`
+          `runtime PID file ${pidFile} points at live process ${existingPid}, ` +
+            "but it is not a verified Tychonic runtime parent; refusing to overwrite it"
         );
       }
-      throw new Error(
-        `runtime PID file ${pidFile} points at live process ${existingPid}, ` +
-          "but it is not a verified Tychonic runtime parent; refusing to overwrite it"
-      );
+      await removeRuntimePidFilesIfOwned(pidFile, existingPid);
     }
-    await removeRuntimePidFilesIfOwned(pidFile, existingPid);
+    await writeRuntimePidFile(pidFile, process.pid, {
+      instance: instance ?? null,
+      cliPath: process.argv[1] ?? ""
+    });
+    return pidFile;
+  } finally {
+    await startLock.release();
   }
-  await writeRuntimePidFile(pidFile, process.pid, {
-    instance: instance ?? null,
-    cliPath: process.argv[1] ?? ""
-  });
-  return pidFile;
+}
+
+async function parentClaimedRuntimePidFileForDaemonChild(): Promise<string> {
+  const instance = getActiveInstance();
+  const dirs = tychonicRuntimeDirs();
+  const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
+  const deadline = Date.now() + 5_000;
+  let lastMessage = `runtime daemon child expected ${pidFile} to contain its own pid ${process.pid}`;
+  while (Date.now() <= deadline) {
+    const existingPid = await readPidFile(pidFile);
+    if (existingPid === process.pid) {
+      if (await isRuntimeParentProcess(process.pid, { instance: instance ?? null, pidFile })) {
+        return pidFile;
+      }
+      lastMessage = "runtime daemon child pid claim is not a verified Tychonic runtime parent";
+    } else {
+      lastMessage = `runtime daemon child expected ${pidFile} to contain its own pid ${process.pid}, found ${existingPid}`;
+    }
+    await sleep(25);
+  }
+  throw new Error(lastMessage);
 }
 
 /**

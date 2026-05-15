@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -108,6 +108,13 @@ async function stopChild(child: ChildProcess): Promise<void> {
   });
 }
 
+async function processStartStamp(pid: number): Promise<string> {
+  const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
+    encoding: "utf8"
+  });
+  return stdout.trim();
+}
+
 describe("tychonic runtime up daemon start", () => {
   it("explains instance selection in runtime up help", async () => {
     const result = await runCli(["runtime", "up", "--help"]);
@@ -179,6 +186,49 @@ describe("tychonic runtime up daemon start", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr + result.stdout).toContain("not a verified Tychonic runtime parent");
     expect(await readFile(pidFile, "utf8")).toBe(`${process.pid}\n`);
+  });
+
+  it("refuses to start a second daemon while runtime start is in progress", async () => {
+    const fakeHome = await makeStateHome();
+    const env = makeIsolatedEnv(fakeHome);
+    const stateDir = defaultStateDirForHome(fakeHome);
+    await mkdir(stateDir, { recursive: true });
+    const { child, cliPath } = await spawnRuntimeLikeProcess(fakeHome, ["runtime", "up"]);
+    try {
+      await symlink(
+        JSON.stringify({
+          kind: "tychonic.runtime.startLock",
+          pid: child.pid!,
+          cliPath,
+          processStartStamp: await processStartStamp(child.pid!)
+        }),
+        join(stateDir, "runtime.start.lock")
+      );
+
+      const result = await runCli(["runtime", "up"], { env });
+
+      expect(result.exitCode).not.toBe(0);
+      const output = result.stderr + result.stdout;
+      expect(output).toContain("runtime start is already in progress");
+      expect(output).not.toMatch(/"mode": "daemon"/);
+    } finally {
+      await stopChild(child);
+    }
+  });
+
+  it("does not allow the internal ready-file path outside daemon child mode", async () => {
+    const fakeHome = await makeStateHome();
+    const env = makeIsolatedEnv(fakeHome);
+    const readyFile = join(fakeHome, "runtime.ready.json");
+
+    const result = await runCli(["runtime", "up", "--foreground", "--ready-file", readyFile], {
+      env
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain(
+      "runtime up --ready-file is internal and requires --daemon-child"
+    );
   });
 
   it("foreground runtime up also refuses pre-start when the instance has no bundles", async () => {

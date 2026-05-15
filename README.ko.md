@@ -83,8 +83,9 @@ shell로 돌아옵니다.
 tychonic runtime up
 ```
 
-`runtime up`은 idempotent합니다. daemon이 이미 떠 있으면 caller PID가 다르다는
-이유로 실패하지 않고 기존 PID를 보고합니다. 종료는 다음 명령으로 합니다.
+`runtime up`은 idempotent합니다. 각 runtime instance에는 managed daemon이 하나만
+있습니다. daemon이 이미 떠 있으면 caller PID가 다르다는 이유로 실패하지 않고
+기존 PID를 보고합니다. 종료는 다음 명령으로 합니다.
 
 ```sh
 tychonic runtime stop

@@ -50,9 +50,9 @@ Runtime daemon:
 tychonic runtime up
 ```
 
-`runtime up` returns to the shell. If the daemon is already running, it reports
-`already_running` with the existing PID instead of failing because the caller PID
-differs. Stop it with:
+`runtime up` returns to the shell. Each runtime instance has one managed daemon.
+If the daemon is already running, it reports `already_running` with the existing
+PID instead of failing because the caller PID differs. Stop it with:
 
 ```sh
 tychonic runtime stop
