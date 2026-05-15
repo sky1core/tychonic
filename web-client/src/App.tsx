@@ -1,11 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react"
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
   MarkerType,
   Position,
   ReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeMouseHandler,
 } from "@xyflow/react"
@@ -418,6 +421,8 @@ function App() {
     () => definitionStateGraph(workflowDetail?.workflowGraph?.definition, workflowDetail?.evidence?.states ?? []),
     [workflowDetail],
   )
+  const stateGraphHeight = workflowGraphViewportHeight(stateGraph.nodes.length)
+  const definitionGraphHeight = workflowGraphViewportHeight(definitionGraph.nodes.length)
   const selectedState = useMemo(
     () => latestStateRecordByNameOrId(workflowDetail?.evidence?.states ?? [], selectedStateId),
     [selectedStateId, workflowDetail],
@@ -761,10 +766,11 @@ function App() {
                             </TabsList>
                             <TabsContent value="execution">
                               {stateGraph.nodes.length > 0 ? (
-                                <div className="h-[520px] min-w-0 overflow-hidden rounded-md border">
+                                <div className="min-w-0 overflow-hidden rounded-md border" style={{ height: stateGraphHeight }}>
                                   <ReactFlow
                                     nodes={stateGraph.nodes}
                                     edges={stateGraph.edges}
+                                    edgeTypes={graphEdgeTypes}
                                     onNodeClick={onStateNodeClick}
                                     nodesConnectable={false}
                                     nodesDraggable={false}
@@ -783,10 +789,11 @@ function App() {
                             </TabsContent>
                             <TabsContent value="definition">
                               {definitionGraph.nodes.length > 0 ? (
-                                <div className="h-[520px] min-w-0 overflow-hidden rounded-md border">
+                                <div className="min-w-0 overflow-hidden rounded-md border" style={{ height: definitionGraphHeight }}>
                                   <ReactFlow
                                     nodes={definitionGraph.nodes}
                                     edges={definitionGraph.edges}
+                                    edgeTypes={graphEdgeTypes}
                                     onNodeClick={onStateNodeClick}
                                     nodesConnectable={false}
                                     nodesDraggable={false}
@@ -1077,23 +1084,76 @@ function isProblemStatus(status: string) {
 }
 
 type StateGraphNode = Node<{ label: ReactNode }>
+type StateTone = "running" | "succeeded" | "failed" | "neutral"
+type OutcomeEdgeData = {
+  outcome?: "start" | "pass" | "fail" | "sequence"
+  offset?: number
+  tone?: StateTone
+}
+
+const graphEdgeTypes = {
+  outcome: OutcomeEdge,
+}
+
+function workflowGraphViewportHeight(nodeCount: number) {
+  return Math.min(860, Math.max(520, nodeCount * 118))
+}
+
+function OutcomeEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  markerEnd,
+  label,
+  data,
+}: EdgeProps<Edge<OutcomeEdgeData>>) {
+  const offset = typeof data?.offset === "number" ? data.offset : 0
+  const edgeClassName = cn(
+    "tychonic-state-edge",
+    data?.outcome === "fail" ? "tychonic-state-edge-failed" : undefined,
+    data?.tone ? `tychonic-state-edge-${data.tone}` : undefined,
+  )
+  const edgeSourceX = sourceX + offset
+  const edgeTargetX = targetX + offset
+  const midY = sourceY + (targetY - sourceY) / 2
+  const path = `M ${edgeSourceX} ${sourceY} C ${edgeSourceX} ${midY} ${edgeTargetX} ${midY} ${edgeTargetX} ${targetY}`
+  const labelX = edgeSourceX + (edgeTargetX - edgeSourceX) / 2
+  const labelY = midY
+
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} className={edgeClassName} />
+      {label ? (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan rounded-sm border bg-background px-1.5 py-0.5 text-xs font-medium text-muted-foreground shadow-sm"
+            style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  )
+}
 
 function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
   if (!definition) return { nodes: [], edges: [] }
 
   const stateNames = new Set(definition.states.map((state) => state.name))
   const latestStates = latestStateRecordsByName(states)
-  const columns = Math.min(Math.max(definition.states.length + 2, 1), 6)
+  const graphX = 220
+  const rowHeight = 150
   const stateNodes = definition.states.map((state, index) => {
     const latestState = latestStates.get(state.name)
-    const row = Math.floor((index + 1) / columns)
-    const column = (index + 1) % columns
     return {
       id: state.name,
       type: "default",
-      position: { x: column * 230, y: row * 140 },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
+      position: { x: graphX, y: (index + 1) * rowHeight },
+      sourcePosition: Position.Bottom,
+      targetPosition: Position.Top,
       className: cn("tychonic-state-node", `tychonic-state-node-${stateToneClass(latestState?.status ?? "not_run")}`),
       data: {
         label: (
@@ -1111,15 +1171,12 @@ function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, s
       },
     } satisfies StateGraphNode
   })
-  const finishIndex = definition.states.length + 1
-  const finishRow = Math.floor(finishIndex / columns)
-  const finishColumn = finishIndex % columns
   const nodes: StateGraphNode[] = [
     {
       id: "__start",
       type: "input",
-      position: { x: 0, y: 0 },
-      sourcePosition: Position.Right,
+      position: { x: graphX, y: 0 },
+      sourcePosition: Position.Bottom,
       className: "tychonic-state-node tychonic-state-node-neutral",
       data: { label: <span className="text-sm font-medium">start</span> },
     },
@@ -1127,8 +1184,8 @@ function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, s
     {
       id: "__finish",
       type: "output",
-      position: { x: finishColumn * 230, y: finishRow * 140 },
-      targetPosition: Position.Left,
+      position: { x: graphX, y: (definition.states.length + 1) * rowHeight },
+      targetPosition: Position.Top,
       className: "tychonic-state-node tychonic-state-node-neutral",
       data: { label: <span className="text-sm font-medium">finish</span> },
     },
@@ -1138,9 +1195,10 @@ function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, s
       id: "__start:pass:start",
       source: "__start",
       target: definition.start,
-      type: "smoothstep",
+      type: "outcome",
       markerEnd: { type: MarkerType.ArrowClosed },
       className: "tychonic-state-edge",
+      data: { outcome: "start", offset: 0 },
     },
     ...definition.edges.flatMap((edge) => {
       const target = edge.finish ? "__finish" : edge.to
@@ -1150,10 +1208,11 @@ function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, s
           id: edge.id,
           source: edge.from,
           target,
-          type: "smoothstep",
+          type: "outcome",
           label: edge.label,
           markerEnd: { type: MarkerType.ArrowClosed },
           className: cn("tychonic-state-edge", edge.label === "fail" ? "tychonic-state-edge-failed" : undefined),
+          data: { outcome: edge.label, offset: edge.label === "fail" ? 92 : -92 },
         } satisfies Edge,
       ]
     }),
@@ -1162,16 +1221,15 @@ function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, s
 }
 
 function executionStateGraph(states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
-  const columns = Math.min(Math.max(states.length, 1), 5)
+  const graphX = 220
+  const rowHeight = 130
   const nodes = states.map((state, index) => {
-    const row = Math.floor(index / columns)
-    const column = index % columns
     return {
       id: state.id,
       type: "default",
-      position: { x: column * 230, y: row * 140 },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
+      position: { x: graphX, y: index * rowHeight },
+      sourcePosition: Position.Bottom,
+      targetPosition: Position.Top,
       className: cn("tychonic-state-node", `tychonic-state-node-${stateToneClass(state.status)}`),
       data: {
         label: (
@@ -1192,10 +1250,11 @@ function executionStateGraph(states: WorkflowStateRecord[]): { nodes: StateGraph
       id: `${previous.id}:${state.id}:${index}`,
       source: previous.id,
       target: state.id,
-      type: "smoothstep",
+      type: "outcome",
       markerEnd: { type: MarkerType.ArrowClosed },
       className: cn("tychonic-state-edge", `tychonic-state-edge-${stateToneClass(state.status)}`),
       animated: state.status === "running",
+      data: { outcome: "sequence", offset: 0, tone: stateToneClass(state.status) },
     } satisfies Edge
   })
   return { nodes, edges }
@@ -1211,7 +1270,7 @@ function latestStateRecordByNameOrId(states: WorkflowStateRecord[], nameOrId: st
   return byName ?? states.find((state) => state.id === nameOrId)
 }
 
-function stateToneClass(status: string) {
+function stateToneClass(status: string): StateTone {
   if (status === "succeeded" || status === "COMPLETED") return "succeeded"
   if (status === "failed" || status === "blocked" || status === "timed_out" || status === "FAILED") return "failed"
   if (status === "running" || status === "RUNNING") return "running"
