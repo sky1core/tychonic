@@ -154,6 +154,8 @@ export interface TychonicTemporalPendingWorkflowTask {
 export interface TychonicTemporalWorkflowStatus extends TychonicTemporalWorkflowSummary {
   pendingActivities: TychonicTemporalPendingActivity[];
   pendingWorkflowTask?: TychonicTemporalPendingWorkflowTask;
+  input?: unknown;
+  inputError?: string;
   result?: unknown;
   resultError?: string;
 }
@@ -212,6 +214,7 @@ export async function describeTychonicTemporalWorkflow(
     const handle = client.workflow.getHandle(options.workflowId, options.runId);
     const description = await handle.describe();
     const status = summarizeTemporalWorkflowDescription(description);
+    const inputState = options.includeResult ? await workflowStartInput(handle) : {};
 
     if (!options.includeResult) {
       return status;
@@ -219,11 +222,12 @@ export async function describeTychonicTemporalWorkflow(
 
     if (status.status === "RUNNING") {
       if (!shouldQueryRunningWorkflowState(status)) {
-        return status;
+        return { ...status, ...inputState };
       }
       const queriedState = await queryTychonicWorkflowState(handle);
       return {
         ...status,
+        ...inputState,
         ...(queriedState.result ? { result: queriedState.result } : {}),
         ...(queriedState.resultError ? { resultError: queriedState.resultError } : {})
       };
@@ -232,11 +236,13 @@ export async function describeTychonicTemporalWorkflow(
     try {
       return {
         ...status,
+        ...inputState,
         result: await handle.result()
       };
     } catch (error) {
       return {
         ...status,
+        ...inputState,
         resultError: error instanceof Error ? error.message : String(error)
       };
     }
@@ -558,6 +564,43 @@ async function queryTychonicWorkflowState(
   }
 }
 
+async function workflowStartInput(
+  handle: ReturnType<Client["workflow"]["getHandle"]>
+): Promise<{ input?: unknown; inputError?: string }> {
+  try {
+    const history = await withTimeout(
+      handle.fetchHistory(),
+      RUNNING_WORKFLOW_QUERY_TIMEOUT_MS,
+      `workflow input history fetch timed out after ${RUNNING_WORKFLOW_QUERY_TIMEOUT_MS}ms`
+    );
+    const input = decodeWorkflowStartInput(history);
+    return input === undefined ? {} : { input };
+  } catch (error) {
+    return {
+      inputError: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function decodeWorkflowStartInput(history: unknown): unknown | undefined {
+  if (!isRecord(history) || !Array.isArray(history.events)) {
+    return undefined;
+  }
+  for (const event of history.events) {
+    if (!isRecord(event)) continue;
+    const attrs = event.workflowExecutionStartedEventAttributes;
+    if (!isRecord(attrs)) continue;
+    const input = attrs.input;
+    if (!isRecord(input) || !Array.isArray(input.payloads)) continue;
+    try {
+      return arrayFromPayloads(defaultDataConverter.payloadConverter, input.payloads)[0];
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -621,6 +664,10 @@ function isWorkflowRunStatus(status: string): status is WorkflowRunStatus {
     status === "succeeded" ||
     status === "cancelled"
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function sleep(ms: number): Promise<void> {

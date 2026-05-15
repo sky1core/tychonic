@@ -15,6 +15,7 @@ export interface TychonicWorkflowResult {
   status: WorkflowRunStatus;
   run: WorkflowRunRecord;
   artifactRoot?: string;
+  activeState?: WorkflowStateRecord;
   summary?: string;
   worktreePath?: string;
 }
@@ -123,7 +124,7 @@ export function workflowEvidenceView(
 ): WorkflowEvidenceView {
   const logs = listLiveOutputAttempts(result);
   const states = result.run.states;
-  const latestState = states.length > 0 ? states[states.length - 1] : undefined;
+  const latestState = result.activeState ?? (states.length > 0 ? states[states.length - 1] : undefined);
   const stateNameById = stateNameMap(result.run);
   return {
     runId: result.run.id,

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { defaultDataConverter } from "@temporalio/common";
 
 describe("describeTychonicTemporalWorkflow running result queries", () => {
   afterEach(() => {
@@ -55,6 +56,67 @@ describe("describeTychonicTemporalWorkflow running result queries", () => {
       workflowId: "wf_timeout",
       status: "RUNNING",
       resultError: "running workflow state query timed out after 2000ms"
+    });
+  });
+
+  it("returns start input when a running workflow is too early for state query", async () => {
+    const startInput = { cwd: "/tmp/target", goal: "inspect this run" };
+    const startPayload = await defaultDataConverter.payloadConverter.toPayload(startInput);
+    if (!startPayload) {
+      throw new Error("expected Temporal payload converter to encode start input");
+    }
+    const fetchHistory = vi.fn(async () => ({
+      events: [
+        {
+          workflowExecutionStartedEventAttributes: {
+            input: { payloads: [startPayload] }
+          }
+        }
+      ]
+    }));
+    const describeWorkflow = vi.fn(async () => ({
+      workflowId: "wf_early",
+      runId: "run_early",
+      type: "simpleWorkflow",
+      taskQueue: "tychonic",
+      status: { code: 1, name: "RUNNING" },
+      historyLength: 0,
+      startTime: new Date("2026-04-19T00:00:00.000Z"),
+      searchAttributes: {},
+      typedSearchAttributes: {},
+      raw: { pendingActivities: [], pendingWorkflowTask: {} },
+      staticDetails: async () => undefined,
+      staticSummary: async () => undefined
+    }));
+    const getHandle = vi.fn(() => ({ describe: describeWorkflow, fetchHistory }));
+    const connect = vi.fn(async () => ({ close: vi.fn() }));
+
+    vi.doMock("@temporalio/client", async () => {
+      const actual = await vi.importActual<typeof import("@temporalio/client")>("@temporalio/client");
+      class FakeClient {
+        workflow = { getHandle };
+      }
+      return {
+        ...actual,
+        Connection: { connect },
+        Client: FakeClient
+      };
+    });
+
+    const mod = await import("../src/temporal/client.js");
+
+    await expect(
+      mod.describeTychonicTemporalWorkflow({
+        workflowId: "wf_early",
+        includeResult: true,
+        address: "127.0.0.1:7233",
+        namespace: "default",
+        taskQueue: "tychonic"
+      })
+    ).resolves.toMatchObject({
+      workflowId: "wf_early",
+      status: "RUNNING",
+      input: startInput
     });
   });
 

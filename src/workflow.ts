@@ -44,12 +44,14 @@ export interface TychonicWorkflowResult {
   status: WorkflowRunStatus;
   run: WorkflowRunRecord;
   artifactRoot: string;
+  activeState?: WorkflowStateRecord;
   summary?: string;
   worktreePath?: string;
 }
 
 export interface TychonicRunStateSnapshotFields {
   artifactRoot?: string;
+  activeState?: WorkflowStateRecord;
   summary?: string;
   worktreePath?: string;
 }
@@ -252,6 +254,23 @@ export function createTychonicWorkflowContext(options: {
     return runState.update(run, currentWorktreePath ? { worktreePath: currentWorktreePath } : {});
   }
 
+  function publishActiveState(stateName: string, kind: "work" | "verify" | "review"): void {
+    const timestamp = nowIso();
+    runState.update(requireRun(), {
+      ...(currentWorktreePath ? { worktreePath: currentWorktreePath } : {}),
+      activeState: {
+        id: `active_${stateName}`,
+        name: stateName,
+        status: "running",
+        reason: `running ${kind} state '${stateName}'`,
+        activity_attempt_ids: [],
+        artifact_ids: [],
+        finding_ids: [],
+        started_at: timestamp
+      }
+    });
+  }
+
   async function runAgentState(
     stateName: string,
     activity: TychonicAgentActivity,
@@ -270,6 +289,7 @@ export function createTychonicWorkflowContext(options: {
 
       let result: ActivityResult;
       try {
+        publishActiveState(stateName, kind);
         result = await activity({
           stateName,
           run: requireRun(),
@@ -510,6 +530,7 @@ export function createTychonicWorkflowContext(options: {
       while (true) {
         let result: ActivityResult;
         try {
+          publishActiveState(stateName, "verify");
           result = await activities.runVerifyActivity({
             stateName,
             run: requireRun(),
@@ -668,6 +689,7 @@ function toWorkflowResult(
     status: run.status,
     run,
     artifactRoot: fields.artifactRoot ?? artifactRootForRun(run),
+    ...(fields.activeState !== undefined ? { activeState: fields.activeState } : {}),
     ...(run.summary !== undefined ? { summary: run.summary } : {}),
     ...(fields.summary !== undefined ? { summary: fields.summary } : {}),
     ...(fields.worktreePath !== undefined ? { worktreePath: fields.worktreePath } : {})

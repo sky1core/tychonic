@@ -109,6 +109,28 @@ describe("Temporal result views", () => {
       activity_count: 1
     });
   });
+
+  it("surfaces an active running state ahead of completed state history", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-active-"));
+    const result = fakeResult(cwd);
+    result.status = "running";
+    result.run.status = "running";
+    result.activeState = {
+      id: "active_review",
+      name: "review",
+      status: "running",
+      reason: "running review state 'review'",
+      activity_attempt_ids: [],
+      artifact_ids: [],
+      finding_ids: [],
+      started_at: "2026-04-19T00:00:02.000Z"
+    };
+
+    expect(workflowEvidenceView(result, "wf_1", "run_1").latest_state).toMatchObject({
+      name: "review",
+      status: "running"
+    });
+  });
 });
 
 function fakeResult(cwd: string): TychonicWorkflowResult {

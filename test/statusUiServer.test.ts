@@ -52,6 +52,14 @@ describe("status UI server", () => {
         status: "RUNNING",
         startTime: now,
         pendingActivities: [],
+        input: {
+          cwd: staticDir,
+          goal: "check the target project",
+          promptAdditions: {
+            verify: "include npm diagnostics"
+          },
+          profile: { states: {} }
+        },
         result: {
           runId: "run_1",
           status: "succeeded",
@@ -60,6 +68,7 @@ describe("status UI server", () => {
             id: "run_1",
             template: "simpleWorkflow",
             status: "succeeded",
+            goal: "check the target project",
             cwd: staticDir,
             artifact_root: join(staticDir, "runs", "run_1"),
             created_at: now,
@@ -158,6 +167,16 @@ describe("status UI server", () => {
         counts: { states: 1, attempts: 0 },
         state_attempt_summaries: []
       },
+      runContext: {
+        cwd: staticDir,
+        goal: "check the target project",
+        promptAdditions: {
+          verify: "include npm diagnostics"
+        },
+        createdAt: now,
+        updatedAt: now,
+        artifactRoot: join(staticDir, "runs", "run_1")
+      },
       workflowGraph: {
         mermaid: "flowchart TD\n  __start --> s0\n",
         definition: {
@@ -172,6 +191,7 @@ describe("status UI server", () => {
       }
     });
     expect(detail?.workflow.result).toBeUndefined();
+    expect(JSON.stringify(detail?.runContext)).not.toContain("states");
   });
 
   it("rejects non-loopback bind hosts", async () => {

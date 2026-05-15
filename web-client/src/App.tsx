@@ -168,7 +168,18 @@ type WorkflowDetail = {
   workflow: WorkflowSummary & {
     pendingActivityCount?: number
     pendingActivities?: unknown[]
+    inputError?: string
     resultError?: string
+  }
+  runContext?: {
+    cwd?: string
+    goal?: string
+    promptAdditions?: Record<string, string>
+    createdAt?: string
+    updatedAt?: string
+    artifactRoot?: string
+    profileSnapshotArtifactId?: string
+    inputError?: string
   }
   evidence?: WorkflowEvidence
   evidenceError?: string
@@ -246,7 +257,18 @@ const inboxStatusTone: Record<string, BadgeTone> = {
 
 function App() {
   const selectedRunRef = useRef<{ workflowId?: string; runId?: string }>({})
+  const listRequestSeqRef = useRef(0)
+  const listLoadingRequestSeqRef = useRef<number | undefined>(undefined)
+  const loadWorkflowsRef = useRef<
+    | ((
+        nextSelection?: { workflowId: string; runId: string },
+        reloadCurrentDetail?: boolean,
+        options?: { showLoading?: boolean },
+      ) => Promise<void>)
+    | undefined
+  >(undefined)
   const detailRequestSeqRef = useRef(0)
+  const detailLoadingRequestSeqRef = useRef<number | undefined>(undefined)
   const selectedStateRunRef = useRef<string | undefined>(undefined)
   const [workflowList, setWorkflowList] = useState<WorkflowList>()
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>()
@@ -260,11 +282,14 @@ function App() {
   const selectedWorkflow = workflowList?.workflows.find(
     (workflow) => workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId,
   )
+  const hasSelectedRun = selectedWorkflowId !== undefined && selectedRunId !== undefined
 
   function applySelection(selection: { workflowId: string; runId: string } | undefined) {
     const previous = selectedRunRef.current
     if (previous.workflowId !== selection?.workflowId || previous.runId !== selection?.runId) {
       detailRequestSeqRef.current += 1
+      detailLoadingRequestSeqRef.current = undefined
+      setDetailLoading(false)
       setWorkflowDetail(undefined)
     }
     selectedRunRef.current = selection ?? {}
@@ -272,14 +297,27 @@ function App() {
     setSelectedRunId(selection?.runId)
   }
 
-  async function loadWorkflows(nextSelection?: { workflowId: string; runId: string }, reloadCurrentDetail = false) {
-    setListLoading(true)
+  async function loadWorkflows(
+    nextSelection?: { workflowId: string; runId: string },
+    reloadCurrentDetail = false,
+    options: { showLoading?: boolean } = {},
+  ) {
+    const requestSeq = listRequestSeqRef.current + 1
+    listRequestSeqRef.current = requestSeq
+    const showLoading = options.showLoading ?? true
+    if (showLoading) {
+      listLoadingRequestSeqRef.current = requestSeq
+      setListLoading(true)
+    }
     setError(undefined)
     try {
       const response = await fetch("/api/workflows?limit=30")
       const body = (await response.json()) as WorkflowList
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `workflow list request failed with ${response.status}`)
+      }
+      if (listRequestSeqRef.current !== requestSeq) {
+        return
       }
       setWorkflowList(body)
       const explicitSelection = nextSelection
@@ -288,15 +326,7 @@ function App() {
         currentRunSelection.workflowId && currentRunSelection.runId
           ? { workflowId: currentRunSelection.workflowId, runId: currentRunSelection.runId }
           : undefined
-      const currentSelectionInList = currentSelection
-        ? body.workflows.some(
-            (workflow) =>
-              workflow.workflowId === currentSelection.workflowId && workflow.runId === currentSelection.runId,
-          )
-        : false
-      const next =
-        explicitSelection ??
-        (currentSelectionInList ? currentSelection : undefined)
+      const next = explicitSelection ?? currentSelection
       const selectionChanged = next?.workflowId !== currentSelection?.workflowId || next?.runId !== currentSelection?.runId
       applySelection(next)
       if (!next) {
@@ -307,16 +337,25 @@ function App() {
         await loadWorkflowDetail(next.workflowId, next.runId)
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError))
+      if (listRequestSeqRef.current === requestSeq) {
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      }
     } finally {
-      setListLoading(false)
+      if (showLoading && listLoadingRequestSeqRef.current === requestSeq) {
+        listLoadingRequestSeqRef.current = undefined
+        setListLoading(false)
+      }
     }
   }
 
-  async function loadWorkflowDetail(workflowId: string, runId: string) {
+  async function loadWorkflowDetail(workflowId: string, runId: string, options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true
     const requestSeq = detailRequestSeqRef.current + 1
     detailRequestSeqRef.current = requestSeq
-    setDetailLoading(true)
+    if (showLoading) {
+      detailLoadingRequestSeqRef.current = requestSeq
+      setDetailLoading(true)
+    }
     setError(undefined)
     setWorkflowDetail((current) =>
       current?.request.workflowId === workflowId && current.request.runId === runId ? current : undefined,
@@ -346,11 +385,16 @@ function App() {
         setError(loadError instanceof Error ? loadError.message : String(loadError))
       }
     } finally {
-      if (detailRequestSeqRef.current === requestSeq) {
+      if (showLoading && detailLoadingRequestSeqRef.current === requestSeq) {
+        detailLoadingRequestSeqRef.current = undefined
         setDetailLoading(false)
       }
     }
   }
+
+  useEffect(() => {
+    loadWorkflowsRef.current = loadWorkflows
+  })
 
   useEffect(() => {
     let active = true
@@ -380,6 +424,29 @@ function App() {
     if (!selectedWorkflowId || !selectedRunId) return
     void loadWorkflowDetail(selectedWorkflowId, selectedRunId)
   }, [selectedWorkflowId, selectedRunId])
+
+  const workflows = useMemo(() => workflowList?.workflows ?? [], [workflowList])
+  const selectedRunIsLive =
+    selectedWorkflow?.status === "RUNNING" ||
+    workflowDetail?.workflow.status === "RUNNING" ||
+    workflowDetail?.evidence?.status === "running"
+  const hasLiveWorkflow = workflows.some((workflow) => workflow.status === "RUNNING")
+
+  useEffect(() => {
+    if (!hasLiveWorkflow) return
+    const interval = window.setInterval(() => {
+      void loadWorkflowsRef.current?.(undefined, false, { showLoading: false })
+    }, 2_000)
+    return () => window.clearInterval(interval)
+  }, [hasLiveWorkflow])
+
+  useEffect(() => {
+    if (!selectedWorkflowId || !selectedRunId || !selectedRunIsLive) return
+    const interval = window.setInterval(() => {
+      void loadWorkflowDetail(selectedWorkflowId, selectedRunId, { showLoading: false })
+    }, 2_000)
+    return () => window.clearInterval(interval)
+  }, [selectedWorkflowId, selectedRunId, selectedRunIsLive])
 
   const workflowDetailWorkflowId = workflowDetail?.request.workflowId
   const workflowDetailRunId = workflowDetail?.request.runId
@@ -439,7 +506,7 @@ function App() {
     () => workflowDetail?.evidence ? reviewReturnEvents(workflowDetail.evidence) : [],
     [workflowDetail],
   )
-  const workflows = useMemo(() => workflowList?.workflows ?? [], [workflowList])
+  const promptAdditionEntries = Object.entries(workflowDetail?.runContext?.promptAdditions ?? {})
   const onStateNodeClick: NodeMouseHandler = (_, node) => {
     setSelectedStateId(node.id)
   }
@@ -573,8 +640,8 @@ function App() {
                 </CardContent>
               </Card>
             </>
-          ) : (
-            <>
+            ) : (
+              <>
               <Card className="min-h-[420px]">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
@@ -643,7 +710,7 @@ function App() {
               </Alert>
             ) : null}
 
-            {!selectedWorkflow ? (
+            {!hasSelectedRun ? (
               <Card>
                 <CardContent>
                   <Empty>
@@ -658,16 +725,16 @@ function App() {
                 </CardContent>
               </Card>
             ) : (
-              <>
+	              <>
                 <Card>
                   <CardHeader>
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div className="flex min-w-0 flex-col gap-2">
                         <CardTitle className="truncate">Run status</CardTitle>
-                        <CardDescription className="truncate">{selectedWorkflow.workflowId}</CardDescription>
+                        <CardDescription className="truncate">{selectedWorkflowId}</CardDescription>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        {statusBadgeCell(workflowDetail?.workflow.status ?? selectedWorkflow.status)}
+                        {statusBadgeCell(workflowDetail?.workflow.status ?? selectedWorkflow?.status ?? "unknown")}
                         {workflowDetail?.evidence ? (
                           <Badge variant={statusTone[workflowDetail.evidence.status] ?? "outline"}>
                             {workflowDetail.evidence.status}
@@ -703,6 +770,65 @@ function App() {
                                   ? workflowDetail.workflow.resultError
                                   : "No workflow evidence summary is available yet."}
                             </p>
+                            <div className="grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+                              <div className="rounded-md border p-3">
+                                <div className="text-xs text-muted-foreground">current state</div>
+                                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                                  {runSummary?.activeState ? (
+                                    <>
+                                      <Badge variant={statusTone[runSummary.activeState.status] ?? "outline"}>
+                                        {runSummary.activeState.status}
+                                      </Badge>
+                                      <span className="min-w-0 break-all text-sm font-medium">{runSummary.activeState.name}</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-sm font-medium">no state evidence yet</span>
+                                  )}
+                                </div>
+                                <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                                  {runSummary?.activeState?.reason ?? "Waiting for Temporal workflow state query or final result."}
+                                </div>
+                              </div>
+                              <div className="rounded-md border p-3">
+                                <div className="text-xs text-muted-foreground">project cwd</div>
+                                <div className="mt-1 break-all text-sm font-medium">
+                                  {workflowDetail?.runContext?.cwd ?? "not available"}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="grid gap-2 lg:grid-cols-2">
+                              <div className="rounded-md border p-3">
+                                <div className="text-xs text-muted-foreground">goal</div>
+                                <div className="mt-1 line-clamp-3 text-sm">
+                                  {workflowDetail?.runContext?.goal ?? "not provided"}
+                                </div>
+                              </div>
+                              <div className="rounded-md border p-3">
+                                <div className="text-xs text-muted-foreground">run parameters</div>
+                                {promptAdditionEntries.length > 0 ? (
+                                  <div className="mt-2 flex flex-col gap-2">
+                                    {promptAdditionEntries.map(([state, text]) => (
+                                      <div key={state} className="min-w-0">
+                                        <Badge variant="outline">{state}</Badge>
+                                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{text}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="mt-1 text-sm font-medium">no prompt additions</div>
+                                )}
+                                {workflowDetail?.runContext?.profileSnapshotArtifactId ? (
+                                  <div className="mt-2 text-xs text-muted-foreground">
+                                    config snapshot: {workflowDetail.runContext.profileSnapshotArtifactId}
+                                  </div>
+                                ) : null}
+                                {workflowDetail?.runContext?.inputError ?? workflowDetail?.workflow.inputError ? (
+                                  <div className="mt-2 text-xs text-destructive">
+                                    input read error: {workflowDetail?.runContext?.inputError ?? workflowDetail?.workflow.inputError}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
                             <div className="grid gap-2 sm:grid-cols-3">
                               <div className="rounded-md border p-2">
                                 <div className="text-xs text-muted-foreground">next action</div>
@@ -1034,8 +1160,8 @@ function formatWorkflowDuration(workflow: WorkflowSummary) {
 
 function workflowRunSummary(evidence: WorkflowEvidence) {
   const activeState =
-    evidence.states.findLast((state) => state.status === "running" || state.status === "blocked" || state.status === "timed_out") ??
     evidence.latest_state ??
+    evidence.states.findLast((state) => state.status === "running" || state.status === "blocked" || state.status === "timed_out") ??
     evidence.states.at(-1)
   const openInboxCount = evidence.inbox.filter((item) => item.status === "open" || item.status === "waiting" || item.status === "waiting_user").length
   const lastProblemState = evidence.states.findLast((state) => isProblemStatus(state.status))

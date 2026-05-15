@@ -191,6 +191,7 @@ async function handleWorkflowDetailApi(
   if (workflow.result !== undefined) {
     try {
       assertTychonicWorkflowResult(workflow.result);
+      output.runContext = workflowRunContextView(workflow.result, workflow.input, workflow.inputError);
       output.evidence = {
         ...workflowEvidenceView(workflow.result, workflow.workflowId, workflow.runId),
         states: workflow.result.run.states,
@@ -198,6 +199,11 @@ async function handleWorkflowDetailApi(
       };
     } catch (error) {
       output.evidenceError = error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    const runContext = workflowRunContextView(undefined, workflow.input, workflow.inputError);
+    if (runContext !== undefined) {
+      output.runContext = runContext;
     }
   }
   writeJson(response, 200, output);
@@ -394,8 +400,45 @@ function workflowStatusUiView(workflow: TychonicTemporalWorkflowStatus): Record<
     ...(workflow.executionTime ? { executionTime: workflow.executionTime } : {}),
     ...(workflow.closeTime ? { closeTime: workflow.closeTime } : {}),
     ...(workflow.pendingActivities.length > 0 ? { pendingActivityCount: workflow.pendingActivities.length } : {}),
+    ...(workflow.inputError ? { inputError: workflow.inputError } : {}),
     ...(workflow.resultError ? { resultError: workflow.resultError } : {})
   };
+}
+
+function workflowRunContextView(
+  result: TychonicWorkflowResult | undefined,
+  input: unknown,
+  inputError: string | undefined
+): Record<string, unknown> | undefined {
+  const inputRecord = isRecord(input) ? input : undefined;
+  const promptAdditions = promptAdditionsView(inputRecord?.promptAdditions);
+  const cwd = stringValue(inputRecord?.cwd) ?? result?.run.cwd;
+  const goal = stringValue(inputRecord?.goal) ?? result?.run.goal;
+  const view = {
+    ...(cwd ? { cwd } : {}),
+    ...(goal ? { goal } : {}),
+    ...(promptAdditions ? { promptAdditions } : {}),
+    ...(result?.run.created_at ? { createdAt: result.run.created_at } : {}),
+    ...(result?.run.updated_at ? { updatedAt: result.run.updated_at } : {}),
+    ...(result?.run.artifact_root ? { artifactRoot: result.run.artifact_root } : {}),
+    ...(result?.run.profile_snapshot_artifact_id ? { profileSnapshotArtifactId: result.run.profile_snapshot_artifact_id } : {}),
+    ...(inputError ? { inputError } : {})
+  };
+  return Object.keys(view).length > 0 ? view : undefined;
+}
+
+function promptAdditionsView(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function normalizeLoopbackBindHost(host: string): string | undefined {
