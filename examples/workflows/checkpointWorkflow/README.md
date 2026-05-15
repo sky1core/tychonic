@@ -46,7 +46,7 @@ tychonic workflows install ./examples/workflows/checkpointWorkflow
 tychonic runtime up
 ```
 
-In another terminal:
+Then start a run:
 
 ```sh
 cat > ./checkpoint-input.json <<'JSON'

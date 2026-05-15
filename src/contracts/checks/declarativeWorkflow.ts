@@ -163,6 +163,46 @@ export const declarativeWorkflowContractChecks: readonly ContractCheck[] = [
   },
   {
     area: "declarativeWorkflow",
+    name: "generated workflows retry dead workers promptly",
+    run() {
+      expectAccept("declarative generated activity heartbeat timeout", () => {
+        const spec = parseDeclarativeWorkflowSpecYaml({
+          bundleName: "heartbeatWorkflow",
+          source: [
+            "version: tychonic.workflow.v1",
+            "name: heartbeatWorkflow",
+            "worktree: false",
+            "max_steps: 3",
+            "start: verify",
+            "states:",
+            "  verify:",
+            "    type: verify",
+            "    command: echo ok",
+            "    on_pass:",
+            "      finish: true",
+            "    on_fail:",
+            "      finish: verify failed",
+            ""
+          ].join("\n")
+        });
+        const source = generateDeclarativeWorkflowModule({
+          bundleName: "heartbeatWorkflow",
+          spec
+        });
+        if (!source.includes("heartbeatTimeout: \"30 seconds\"")) {
+          throw new Error("generated workflow activity heartbeat timeout is not bounded for runtime restart recovery");
+        }
+        if (!source.includes("createWorktreeActivity: act.createWorktreeActivity")) {
+          throw new Error("generated workflow applies heartbeat timeout to non-heartbeating worktree creation");
+        }
+        if (!source.includes("runVerifyActivity: heartbeatAct.runVerifyActivity")) {
+          throw new Error("generated workflow does not route command activity through heartbeat proxy");
+        }
+      });
+    }
+  },
+  {
+    area: "declarativeWorkflow",
     name: "generated review fail transitions attach feedback to return target prompts",
     run() {
       expectAccept("declarative generated review feedback routing", () => {

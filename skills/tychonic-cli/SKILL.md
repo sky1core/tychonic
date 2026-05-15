@@ -44,15 +44,22 @@ tychonic temporal status
 tychonic status
 ```
 
-Foreground runtime:
+Runtime daemon:
 
 ```sh
 tychonic runtime up
 ```
 
-Stop a foreground runtime with `Ctrl-C`. Detached isolated runtimes print a
-`stopCommand`; use that command instead of reading pid files or killing
-processes manually.
+`runtime up` returns to the shell. If the daemon is already running, it reports
+`already_running` with the existing PID instead of failing because the caller PID
+differs. Stop it with:
+
+```sh
+tychonic runtime stop
+```
+
+Use `tychonic runtime up --foreground` only for development/debugging; stop that
+foreground process with `Ctrl-C`.
 
 Detached/isolated instance flags are development tools. Use them only when the
 task explicitly needs isolated runtime state. Prefer `tychonic --help` and
@@ -73,13 +80,13 @@ tychonic workflows install ./examples/workflows/<name>
 tychonic run <workflow-name> --input-file ./input.json --wait
 ```
 
-Run commands require a Tychonic runtime started in another terminal:
+Run commands require a Tychonic runtime daemon:
 
 ```sh
 tychonic runtime up
 ```
 
-Stop that foreground terminal with `Ctrl-C` when the workflow work is done.
+Stop it with `tychonic runtime stop` when the workflow work is done.
 
 To start work and continue with other tasks, omit the wait flag:
 

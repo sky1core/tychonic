@@ -1,8 +1,8 @@
 /**
  * `runtime stop --instance <name>` CLI tests. These exercise the safe
  * stop contract without starting Temporal: stale PID files are cleaned,
- * instance state/log directories are preserved, and the command refuses
- * the operational path.
+ * instance state/log directories are preserved, and the operational runtime
+ * can be stopped through the same command.
  */
 
 import { describe, expect, it } from "vitest";
@@ -93,14 +93,26 @@ describe("tychonic runtime stop", () => {
     expect(stopHelp.stdout).toContain("TYCHONIC_INSTANCE");
   });
 
-  it("refuses without --instance", async () => {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    delete env.TYCHONIC_INSTANCE;
+  it("reports not_running for the operational runtime when no pid file exists", async () => {
+    const fakeHome = await makeStateHome();
+    const env = makeIsolatedEnv(fakeHome);
 
     const result = await runCli(["runtime", "stop"], { env });
 
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr + result.stdout).toMatch(/requires --instance/);
+    expect(result.exitCode).toBe(0);
+    const payload = parseJsonStdout(result.stdout);
+    expect(payload).toMatchObject({
+      ok: true,
+      target: "operational",
+      instance: null,
+      state: "not_running",
+      pid: null,
+      pidFileRemoved: false,
+      temporal: {
+        ok: true,
+        state: "not_running"
+      }
+    });
   });
 
   it("reports not_running when the instance has no runtime pid file", async () => {

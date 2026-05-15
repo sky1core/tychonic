@@ -45,7 +45,7 @@ tychonic workflows install ./examples/workflows/architectBuilderQaWorkflow
 tychonic runtime up
 ```
 
-In another terminal:
+Then start a run:
 
 ```sh
 cat > ./architect-builder-qa-input.json <<'JSON'

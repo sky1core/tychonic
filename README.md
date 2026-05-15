@@ -80,15 +80,24 @@ tychonic workflows install "$EXAMPLES_DIR/verifyOnlyWorkflow"
 tychonic workflows list
 ```
 
-Start the local runtime in one terminal. This starts Temporal if needed and
-runs the worker.
+Start or reuse the local runtime daemon. This starts Temporal if needed, starts
+the worker, writes a runtime PID/log under the Tychonic runtime directories, and
+returns to the shell.
 
 ```sh
 tychonic runtime up
 ```
 
-Stop the foreground runtime with `Ctrl-C`. Detached isolated runtimes print a
-`stopCommand`; run that command to stop them.
+`runtime up` is idempotent: if the daemon is already running, it reports the
+existing PID instead of failing because the caller's PID is different. Stop it
+with:
+
+```sh
+tychonic runtime stop
+```
+
+For development/debugging, use `tychonic runtime up --foreground` to keep the
+worker attached to the current terminal and stop it with `Ctrl-C`.
 
 Start a run from another terminal:
 

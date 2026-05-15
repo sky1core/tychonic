@@ -118,22 +118,28 @@ after reporting a PID.
 
 Lifecycle commands:
 
-- `tychonic runtime up --instance <name>` — starts Temporal if needed and runs
-  the worker in the foreground. It records the runtime parent PID in
-  `<instance-state>/runtime.pid` and removes that PID file on normal process
+- `tychonic runtime up` — starts or reuses the local runtime daemon and returns
+  to the shell. It writes the daemon parent PID to `<state>/runtime.pid` and
+  appends stdout/stderr into `<log>/runtime.log`. If the PID file points to a
+  live runtime, the command is idempotent and reports `already_running`; it must
+  not fail just because the caller's PID differs from the daemon PID.
+- `tychonic runtime up --foreground` — development/debug mode. Starts Temporal
+  if needed and runs the worker in the current terminal. It records the runtime
+  parent PID in `<state>/runtime.pid` and removes that PID file on normal process
   exit when it still owns the file.
-- `tychonic runtime up --instance <name> --detach` — spawns the same runtime in
-  a new session and exits. Writes the child PID to
-  `<instance-state>/runtime.pid` and appends stdout/stderr into
-  `<instance-log>/runtime.log`. Requires `--instance`; `--detach` is not
-  available on the operational path. If a live PID already occupies the PID
-  file, the command refuses rather than overwriting it.
+- `tychonic runtime up --instance <name>` — same daemon contract, scoped to the
+  instance-derived state/log/Temporal paths. A fresh instance still requires
+  installed bundles before start.
+- `tychonic runtime up --detach` — deprecated alias for the default daemon
+  start. It is accepted for compatibility and is no longer instance-only.
 - `tychonic runtime stop --instance <name>` — sends SIGTERM to the runtime PID
   recorded in `<instance-state>/runtime.pid`, waits for it to exit, removes only
   that PID file, and then asks the same instance's managed-local Temporal
   process to stop if one remains. It never escalates to SIGKILL and never
   removes state or log directories. If the runtime process remains alive, the
   command reports timeout instead of forcing cleanup.
+- `tychonic runtime stop` — same graceful stop contract for the operational
+  runtime.
 - `tychonic workflows install <bundle> --instance <name>` — copies the bundle
   into `<instance-state>/workflows/modules/<name>/`. Does not call any launchd
   operation. The JSON response includes a note that the operator must restart

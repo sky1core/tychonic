@@ -96,7 +96,7 @@ tychonic workflows install ./examples/workflows/structuralIssueDiscoveryWorkflow
 tychonic runtime up
 ```
 
-In another terminal:
+Then start a run:
 
 ```sh
 cat > ./structural-issue-discovery-input.json <<'JSON'

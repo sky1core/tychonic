@@ -3,7 +3,7 @@
  *
  * The happy path here spawns a throwaway node child that exits
  * immediately (the child argv mirrors the shape the real CLI uses —
- * `node <cliPath> --instance <name> runtime up <extraArgs...>` — but
+ * `node <cliPath> [--instance <name>] runtime up --foreground <extraArgs...>` — but
  * `cliPath` is a stub script that calls `process.exit(0)`). This keeps
  * the detached-spawn plumbing (stdio redirect to the log file, pid
  * written to the pid file, parent `unref` lets the event loop drain)
@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +21,10 @@ import {
   readPidFile,
   isProcessAlive,
   writePidFile,
-  removePidFileIfOwned
+  removePidFileIfOwned,
+  writeRuntimePidFile,
+  removeRuntimePidFilesIfOwned,
+  isRuntimeParentProcess
 } from "../../src/runtime/detached.js";
 
 const execFileAsync = promisify(execFile);
@@ -43,6 +46,29 @@ async function readUntilContains(file: string, expected: string): Promise<string
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   return lastContent;
+}
+
+async function spawnRuntimeLikeProcess(dir: string, args: string[]): Promise<{ child: ChildProcess; cliPath: string }> {
+  const cliPath = join(dir, `runtime-like-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
+  await writeFile(cliPath, "setInterval(() => undefined, 1000);\n", "utf8");
+  const child = spawn(
+    process.execPath,
+    [cliPath, ...args],
+    { stdio: "ignore" }
+  );
+  if (!child.pid) {
+    throw new Error("failed to spawn runtime-like process");
+  }
+  return { child, cliPath };
+}
+
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (!child.pid) return;
+  child.kill("SIGTERM");
+  await new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+    setTimeout(resolve, 1000);
+  });
 }
 
 describe("spawnDetachedRuntime", () => {
@@ -140,6 +166,62 @@ describe("writePidFile/removePidFileIfOwned", () => {
 
     expect(await removePidFileIfOwned(file, 123)).toBe(true);
     expect(await readPidFile(file)).toBe(0);
+  });
+});
+
+describe("writeRuntimePidFile/removeRuntimePidFilesIfOwned", () => {
+  it("removes runtime pid metadata only when the stored pid matches", async () => {
+    const dir = await makeTempDir();
+    const file = join(dir, "runtime.pid");
+
+    await writeRuntimePidFile(file, 123, { instance: "foo" });
+    expect(await readPidFile(file)).toBe(123);
+
+    expect(await removeRuntimePidFilesIfOwned(file, 456)).toBe(false);
+    expect(await readPidFile(file)).toBe(123);
+
+    expect(await removeRuntimePidFilesIfOwned(file, 123)).toBe(true);
+    expect(await readPidFile(file)).toBe(0);
+  });
+});
+
+describe("isRuntimeParentProcess", () => {
+  it("accepts a live runtime parent command for the matching instance", async () => {
+    const dir = await makeTempDir();
+    const { child, cliPath } = await spawnRuntimeLikeProcess(dir, ["--instance", "foo", "runtime", "up", "--foreground"]);
+    const pidFile = join(dir, "runtime.pid");
+    await writeRuntimePidFile(pidFile, child.pid!, { instance: "foo", cliPath });
+    try {
+      expect(
+        await isRuntimeParentProcess(child.pid!, {
+          instance: "foo",
+          pidFile
+        })
+      ).toBe(true);
+      expect(
+        await isRuntimeParentProcess(child.pid!, {
+          instance: "bar",
+          pidFile
+        })
+      ).toBe(false);
+    } finally {
+      await stopChild(child);
+    }
+  });
+
+  it("rejects an unrelated live process", async () => {
+    const dir = await makeTempDir();
+    const { child } = await spawnRuntimeLikeProcess(dir, ["not-runtime"]);
+    try {
+      expect(
+        await isRuntimeParentProcess(child.pid!, {
+          instance: null,
+          pidFile: join(dir, "runtime.pid")
+        })
+      ).toBe(false);
+    } finally {
+      await stopChild(child);
+    }
   });
 });
 

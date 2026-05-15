@@ -75,15 +75,23 @@ tychonic workflows install "$EXAMPLES_DIR/verifyOnlyWorkflow"
 tychonic workflows list
 ```
 
-한 terminal에서 local runtime을 시작합니다. 이 명령은 필요하면 Temporal을 시작하고
-worker를 실행합니다.
+local runtime daemon을 시작하거나 이미 떠 있으면 재사용합니다. 이 명령은 필요하면
+Temporal과 worker를 시작하고, Tychonic runtime directory 아래에 PID/log를 남긴 뒤
+shell로 돌아옵니다.
 
 ```sh
 tychonic runtime up
 ```
 
-foreground runtime은 `Ctrl-C`로 종료합니다. detached isolated runtime은 출력에
-`stopCommand`가 들어 있으므로 그 명령으로 종료합니다.
+`runtime up`은 idempotent합니다. daemon이 이미 떠 있으면 caller PID가 다르다는
+이유로 실패하지 않고 기존 PID를 보고합니다. 종료는 다음 명령으로 합니다.
+
+```sh
+tychonic runtime stop
+```
+
+개발/디버깅용으로 현재 terminal에 worker를 붙여 두려면
+`tychonic runtime up --foreground`를 사용하고 `Ctrl-C`로 종료합니다.
 
 다른 terminal에서 run을 시작합니다.
 

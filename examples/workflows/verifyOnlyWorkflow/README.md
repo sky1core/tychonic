@@ -29,7 +29,7 @@ tychonic workflows install ./examples/workflows/verifyOnlyWorkflow
 tychonic runtime up
 ```
 
-In another terminal:
+Then start a run:
 
 ```sh
 cat > ./verify-input.json <<'JSON'

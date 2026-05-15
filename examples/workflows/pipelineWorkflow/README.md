@@ -50,7 +50,7 @@ tychonic workflows install ./examples/workflows/pipelineWorkflow
 tychonic runtime up
 ```
 
-In another terminal:
+Then start a run:
 
 ```sh
 cat > ./pipeline-input.json <<'JSON'

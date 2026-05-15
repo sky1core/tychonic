@@ -7,10 +7,10 @@
  */
 
 import { rm } from "node:fs/promises";
-import { readPidFile, isProcessAlive } from "./detached.js";
+import { readPidFile, isProcessAlive, isRuntimeParentProcess } from "./detached.js";
 
 export interface StopRuntimeOptions {
-  instance: string;
+  instance?: string;
   pidFile: string;
   waitForExitMs?: number;
   pollIntervalMs?: number;
@@ -20,15 +20,17 @@ export interface StopRuntimeOptions {
 export interface StopRuntimeDeps {
   readPid?: (pidFile: string) => Promise<number>;
   processAlive?: (pid: number) => boolean;
+  runtimeParentProcess?: (pid: number, instance: string | null, pidFile: string) => Promise<boolean>;
   signalProcess?: (pid: number, signal: NodeJS.Signals) => void;
   sleep?: (ms: number) => Promise<void>;
   removePidFile?: (pidFile: string) => Promise<void>;
 }
 
 export interface StopRuntimeResult {
-  instance: string;
+  target: "operational" | "instance";
+  instance: string | null;
   ok: boolean;
-  state: "stopped" | "not_running" | "signal_failed" | "timeout";
+  state: "stopped" | "not_running" | "pid_unverified" | "signal_failed" | "timeout";
   pid: number | null;
   signalSent: "SIGTERM" | null;
   pidFile: string;
@@ -42,17 +44,29 @@ function defaultSleep(ms: number): Promise<void> {
 
 export async function stopRuntimeParent(options: StopRuntimeOptions): Promise<StopRuntimeResult> {
   const { instance, pidFile, waitForExitMs = 5_000, pollIntervalMs = 100 } = options;
+  const target = instance ? "instance" : "operational";
+  const instanceValue = instance ?? null;
   const deps = options.deps ?? {};
   const readPid = deps.readPid ?? readPidFile;
   const processAlive = deps.processAlive ?? isProcessAlive;
+  const runtimeParentProcess =
+    deps.runtimeParentProcess ??
+    ((pid, runtimeInstance, runtimePidFile) =>
+      isRuntimeParentProcess(pid, { instance: runtimeInstance, pidFile: runtimePidFile }));
   const signalProcess = deps.signalProcess ?? process.kill;
   const sleep = deps.sleep ?? defaultSleep;
-  const removePidFile = deps.removePidFile ?? ((path) => rm(path, { force: true }));
+  const removePidFile =
+    deps.removePidFile ??
+    (async (path) => {
+      await rm(path, { force: true });
+      await rm(`${path}.json`, { force: true });
+    });
 
   const pid = await readPid(pidFile);
   if (pid <= 0) {
     return {
-      instance,
+      target,
+      instance: instanceValue,
       ok: true,
       state: "not_running",
       pid: null,
@@ -66,7 +80,8 @@ export async function stopRuntimeParent(options: StopRuntimeOptions): Promise<St
   if (!processAlive(pid)) {
     await removePidFile(pidFile);
     return {
-      instance,
+      target,
+      instance: instanceValue,
       ok: true,
       state: "not_running",
       pid,
@@ -77,12 +92,27 @@ export async function stopRuntimeParent(options: StopRuntimeOptions): Promise<St
     };
   }
 
+  if (!(await runtimeParentProcess(pid, instanceValue, pidFile))) {
+    return {
+      target,
+      instance: instanceValue,
+      ok: false,
+      state: "pid_unverified",
+      pid,
+      signalSent: null,
+      pidFile,
+      pidFileRemoved: false,
+      message: `Runtime PID file ${pidFile} points at live process ${pid}, but it is not a verified Tychonic runtime parent`
+    };
+  }
+
   try {
     signalProcess(pid, "SIGTERM");
   } catch (error) {
     if (processAlive(pid)) {
       return {
-        instance,
+        target,
+        instance: instanceValue,
         ok: false,
         state: "signal_failed",
         pid,
@@ -101,7 +131,8 @@ export async function stopRuntimeParent(options: StopRuntimeOptions): Promise<St
     if (!processAlive(pid)) {
       await removePidFile(pidFile);
       return {
-        instance,
+        target,
+        instance: instanceValue,
         ok: true,
         state: "stopped",
         pid,
@@ -117,7 +148,8 @@ export async function stopRuntimeParent(options: StopRuntimeOptions): Promise<St
   if (!processAlive(pid)) {
     await removePidFile(pidFile);
     return {
-      instance,
+      target,
+      instance: instanceValue,
       ok: true,
       state: "stopped",
       pid,
@@ -129,7 +161,8 @@ export async function stopRuntimeParent(options: StopRuntimeOptions): Promise<St
   }
 
   return {
-    instance,
+    target,
+    instance: instanceValue,
     ok: false,
     state: "timeout",
     pid,

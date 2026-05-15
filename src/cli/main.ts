@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { Command, Option } from "commander";
 import { stringify } from "yaml";
@@ -31,8 +31,9 @@ import {
   spawnDetachedRuntime,
   readPidFile,
   isProcessAlive,
-  writePidFile,
-  removePidFileIfOwned
+  writeRuntimePidFile,
+  removeRuntimePidFilesIfOwned,
+  isRuntimeParentProcess
 } from "../runtime/detached.js";
 import { killAndRemoveInstance } from "../runtime/reset.js";
 import { tychonicInstanceRunsParentDir } from "../runtime/runDirs.js";
@@ -149,6 +150,10 @@ function hiddenVisibilityQueryOption(): Option {
 
 function hiddenIncludeResultOption(): Option {
   return new Option("--include-result", "advanced: include the full raw Tychonic workflow result").hideHelp();
+}
+
+function hiddenReadyFileOption(): Option {
+  return new Option("--ready-file <path>", "internal runtime readiness handoff file").hideHelp();
 }
 
 /**
@@ -370,12 +375,14 @@ runtimeCommand
   .option("--temporal-namespace <name>", "advanced: Temporal namespace")
   .option("--temporal-task-queue <name>", "advanced: Temporal task queue")
   .option("--shutdown-grace-time <duration>", "advanced: worker drain time on shutdown before cancelling in-flight activities")
+  .option("--foreground", "run the runtime in this terminal for development/debugging", false)
   .option(
     "--detach",
-    "spawn the runtime in a new session and exit; requires an active instance from --instance or TYCHONIC_INSTANCE. PID is written under <stateDir>/runtime.pid, stdout/stderr tee into <logDir>/runtime.log.",
+    "deprecated alias for the default daemon start. PID is written under <stateDir>/runtime.pid, stdout/stderr tee into <logDir>/runtime.log.",
     false
   )
-  .description("Start Temporal if needed, then run the worker in the foreground")
+  .addOption(hiddenReadyFileOption())
+  .description("Start or reuse the local runtime daemon")
   .addHelpText("after", INSTANCE_SELECTION_HELP)
   .action(
     async (options: {
@@ -385,10 +392,18 @@ runtimeCommand
       temporalNamespace?: string;
       temporalTaskQueue?: string;
       shutdownGraceTime?: string;
+      foreground?: boolean;
       detach?: boolean;
+      readyFile?: string;
     }) => {
-      if (options.detach) {
-        await handleRuntimeUpDetach(options);
+      if (options.detach && options.foreground) {
+        throw new Error("runtime up cannot combine --detach with --foreground");
+      }
+      if (!options.foreground && options.readyFile) {
+        throw new Error("runtime up --ready-file is internal and requires --foreground");
+      }
+      if (!options.foreground) {
+        await handleRuntimeUpDaemon(options);
         return;
       }
       // Pre-check for isolated instance: bundles are explicit, not provided
@@ -411,6 +426,8 @@ runtimeCommand
         }
       }
       const foregroundRuntimePidFile = await claimForegroundRuntimePidFileIfNeeded();
+      const foregroundReadyFile = options.readyFile ?? pathJoin(tychonicRuntimeDirs().stateDir, "runtime.ready.json");
+      await rm(foregroundReadyFile, { force: true });
       let temporalManagerForCleanup: TemporalManager | undefined;
       let stopTemporalOnFailure = false;
       try {
@@ -475,9 +492,7 @@ runtimeCommand
               mode: "foreground",
               temporal,
               worker: { status: "running" },
-              ...(getActiveInstance()
-                ? { stopCommand: `tychonic runtime stop --instance ${getActiveInstance()}` }
-                : {}),
+              stopCommand: runtimeStopCommand(getActiveInstance()),
               workflows: { modules: await listRuntimeWorkflowModules() },
               _meta: cliInstanceMeta()
             },
@@ -489,7 +504,20 @@ runtimeCommand
         await runTemporalWorker({
           ...temporalConfig,
           workflowBundle,
-          ...(options.shutdownGraceTime ? { shutdownGraceTime: options.shutdownGraceTime } : {})
+          ...(options.shutdownGraceTime ? { shutdownGraceTime: options.shutdownGraceTime } : {}),
+          onReady: async () => {
+            await writeFile(
+              foregroundReadyFile,
+              `${JSON.stringify({
+                ok: true,
+                state: "ready",
+                mode: "foreground",
+                pid: process.pid,
+                timestamp: new Date().toISOString()
+              })}\n`,
+              "utf8"
+            );
+          }
         });
       } catch (error) {
         if (stopTemporalOnFailure && temporalManagerForCleanup) {
@@ -506,7 +534,7 @@ runtimeCommand
         throw error;
       } finally {
         if (foregroundRuntimePidFile) {
-          await removePidFileIfOwned(foregroundRuntimePidFile, process.pid);
+          await removeRuntimePidFilesIfOwned(foregroundRuntimePidFile, process.pid);
         }
       }
     }
@@ -524,7 +552,7 @@ runtimeCommand
 
 runtimeCommand
   .command("stop")
-  .description("Gracefully stop an isolated runtime for --instance <name> or TYCHONIC_INSTANCE")
+  .description("Gracefully stop the local runtime daemon")
   .addHelpText("after", INSTANCE_SELECTION_HELP)
   .action(async () => {
     await handleRuntimeStop();
@@ -1567,10 +1595,10 @@ async function tryReplaceLaunchdWorker(): Promise<{ worker_replacement: unknown 
     return {
       worker_replacement: null,
       note:
-        `instance='${active}' is a foreground-only isolated instance. ` +
+        `instance='${active}' is an isolated runtime instance. ` +
         `If its runtime is already running, stop it with 'tychonic runtime stop --instance ${active}' ` +
         `and restart with 'tychonic runtime up --instance ${active}' ` +
-        `(or 'tychonic runtime up --instance ${active} --detach') to pick up the new bundle. ` +
+        `to pick up the new bundle. ` +
         `When TYCHONIC_INSTANCE=${active} is set in the shell, the --instance flag may be omitted.`
     };
   }
@@ -1593,13 +1621,11 @@ async function tryReplaceLaunchdWorker(): Promise<{ worker_replacement: unknown 
 }
 
 /**
- * `runtime up --detach` handler. Spawns the current CLI again (same
- * `--instance <name>`) in a new session with stdio → `runtime.log`, then
- * exits 0. Refuses without an active instance — operational launchd
- * already supervises the production runtime; `--detach` is for isolated
- * instances only.
+ * `runtime up` user path. Spawns the foreground runtime in a detached session
+ * and returns immediately. The foreground worker remains available as
+ * `runtime up --foreground` for development/debugging.
  */
-async function handleRuntimeUpDetach(options: {
+async function handleRuntimeUpDaemon(options: {
   temporalMode?: TemporalConfig["mode"];
   temporalPort?: number;
   temporalAddress?: string;
@@ -1608,39 +1634,61 @@ async function handleRuntimeUpDetach(options: {
   shutdownGraceTime?: string;
 }): Promise<void> {
   const instance = getActiveInstance();
-  if (instance === undefined) {
-    throw new Error(
-      "runtime up --detach requires an active instance from --instance <name> or TYCHONIC_INSTANCE; detached mode is for isolated instances only"
-    );
-  }
-
   const dirs = tychonicRuntimeDirs();
   const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
   const logFile = pathJoin(dirs.logDir, "runtime.log");
+  const readyFile = pathJoin(dirs.stateDir, "runtime.ready.json");
 
   let staleRemoved = false;
   const existingPid = await readPidFile(pidFile);
   if (existingPid > 0) {
     if (isProcessAlive(existingPid)) {
+      if (await isRuntimeParentProcess(existingPid, { instance: instance ?? null, pidFile })) {
+        await waitForRuntimeReady({
+          pid: existingPid,
+          readyFile,
+          logFile,
+          timeoutMs: 60_000
+        });
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              state: "already_running",
+              mode: "daemon",
+              pid: existingPid,
+              pidFile,
+              logFile,
+              stopCommand: runtimeStopCommand(instance),
+              _meta: cliInstanceMeta()
+            },
+            null,
+            2
+          )
+        );
+        return;
+      }
       throw new Error(
-        `instance '${instance}' already has a runtime (pid=${existingPid}); stop it with ` +
-          `'tychonic runtime stop --instance ${instance}' or use 'runtime reset --instance ${instance}' only for destructive cleanup`
+        `runtime PID file ${pidFile} points at live process ${existingPid}, ` +
+          "but it is not a verified Tychonic runtime parent; refusing to overwrite it"
       );
     }
     staleRemoved = true;
+    await removeRuntimePidFilesIfOwned(pidFile, existingPid);
   }
+  await rm(readyFile, { force: true });
 
   // Pre-check: detached child would die immediately if no bundles are installed.
   // Foreground mode surfaces this error on stderr so the operator sees it, but
   // detached mode would return a "success" JSON with a PID that silently exits
   // a few seconds later.
   const installedBundles = await listRuntimeWorkflowModules();
-  if (installedBundles.length === 0) {
+  if (instance !== undefined && installedBundles.length === 0) {
     throw new Error(
       `no workflow bundles installed in instance '${instance}'. ` +
         `Install a bundle with \`tychonic workflows install <directory> --instance ${instance}\` ` +
         "(for example, `workflows install ./examples/workflows/simpleWorkflow`), " +
-        `then rerun \`tychonic runtime up --instance ${instance} --detach\`.`
+        `then rerun \`tychonic runtime up --instance ${instance}\`.`
     );
   }
   // Preflight the same bundle compile the foreground child will perform.
@@ -1648,9 +1696,9 @@ async function handleRuntimeUpDetach(options: {
   // the parent already printed a success-looking detached PID.
   await buildWorkflowBundle();
 
-  // Reconstruct the flags the child should receive. `--detach` itself is
-  // not forwarded (child runs foreground); `--instance` is re-passed
-  // explicitly inside spawnDetachedRuntime.
+  // Reconstruct the flags the child should receive. The child always receives
+  // `--foreground`; `--instance` is re-passed explicitly inside
+  // spawnDetachedRuntime when present.
   const extraArgs: string[] = [];
   if (options.temporalMode) extraArgs.push("--temporal-mode", options.temporalMode);
   if (options.temporalPort !== undefined)
@@ -1660,25 +1708,47 @@ async function handleRuntimeUpDetach(options: {
   if (options.temporalTaskQueue) extraArgs.push("--temporal-task-queue", options.temporalTaskQueue);
   if (options.shutdownGraceTime)
     extraArgs.push("--shutdown-grace-time", options.shutdownGraceTime);
+  extraArgs.push("--ready-file", readyFile);
 
   const result = await spawnDetachedRuntime({
     nodePath: process.execPath,
     cliPath: process.argv[1] ?? "",
-    instance,
+    ...(instance ? { instance } : {}),
     extraArgs,
     logFile,
     pidFile
   });
 
+  try {
+    await waitForRuntimeReady({
+      pid: result.pid,
+      readyFile,
+      logFile,
+      timeoutMs: 60_000
+    });
+  } catch (error) {
+    if (isProcessAlive(result.pid)) {
+      try {
+        process.kill(result.pid, "SIGTERM");
+      } catch {
+        // Best-effort cleanup for a child we just spawned. The error below
+        // remains the authoritative startup failure.
+      }
+    }
+    await removeRuntimePidFilesIfOwned(pidFile, result.pid);
+    throw error;
+  }
+
   console.log(
     JSON.stringify(
       {
         ok: true,
-        mode: "detached",
+        state: "started",
+        mode: "daemon",
         pid: result.pid,
         pidFile: result.pidFile,
         logFile: result.logFile,
-        stopCommand: `tychonic runtime stop --instance ${instance}`,
+        stopCommand: runtimeStopCommand(instance),
         ...(staleRemoved ? { staleRemoved: true } : {}),
         _meta: cliInstanceMeta()
       },
@@ -1688,21 +1758,35 @@ async function handleRuntimeUpDetach(options: {
   );
 }
 
+function runtimeStopCommand(instance: string | undefined): string {
+  return instance ? `tychonic runtime stop --instance ${instance}` : "tychonic runtime stop";
+}
+
 async function claimForegroundRuntimePidFileIfNeeded(): Promise<string | undefined> {
   const instance = getActiveInstance();
-  if (instance === undefined) {
-    return undefined;
-  }
   const dirs = tychonicRuntimeDirs();
   const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
   const existingPid = await readPidFile(pidFile);
-  if (existingPid > 0 && existingPid !== process.pid && isProcessAlive(existingPid)) {
-    throw new Error(
-      `instance '${instance}' already has a runtime (pid=${existingPid}); stop it with ` +
-        `'tychonic runtime stop --instance ${instance}' or use 'runtime reset --instance ${instance}' only for destructive cleanup`
-    );
+  if (existingPid > 0 && existingPid !== process.pid) {
+    if (isProcessAlive(existingPid)) {
+      if (await isRuntimeParentProcess(existingPid, { instance: instance ?? null, pidFile })) {
+        const label = instance ? `instance '${instance}'` : "operational runtime";
+        const stop = runtimeStopCommand(instance);
+        throw new Error(
+          `${label} already has a runtime (pid=${existingPid}); stop it with '${stop}'`
+        );
+      }
+      throw new Error(
+        `runtime PID file ${pidFile} points at live process ${existingPid}, ` +
+          "but it is not a verified Tychonic runtime parent; refusing to overwrite it"
+      );
+    }
+    await removeRuntimePidFilesIfOwned(pidFile, existingPid);
   }
-  await writePidFile(pidFile, process.pid);
+  await writeRuntimePidFile(pidFile, process.pid, {
+    instance: instance ?? null,
+    cliPath: process.argv[1] ?? ""
+  });
   return pidFile;
 }
 
@@ -1815,13 +1899,12 @@ async function handleRuntimeReset(options: { yes: boolean }): Promise<void> {
 
 async function handleRuntimeStop(): Promise<void> {
   const instance = getActiveInstance();
-  if (instance === undefined) {
-    throw new Error("runtime stop requires --instance <name>; operational paths must not be stopped through this command");
+  if (instance !== undefined) {
+    validateInstanceName(instance);
   }
-  validateInstanceName(instance);
   const dirs = tychonicRuntimeDirs();
   const pidFile = pathJoin(dirs.stateDir, "runtime.pid");
-  const result = await stopRuntimeParent({ instance, pidFile });
+  const result = await stopRuntimeParent({ ...(instance ? { instance } : {}), pidFile });
   const temporal =
     result.ok && (result.state === "stopped" || result.state === "not_running")
       ? await new TemporalManager(temporalConfigFromOptions({})).stop()
@@ -1853,6 +1936,46 @@ function temporalConfigFromOptions(options: {
     ...(options.temporalNamespace ? { namespace: options.temporalNamespace } : {}),
     ...(options.temporalTaskQueue ? { taskQueue: options.temporalTaskQueue } : {})
   };
+}
+
+async function waitForRuntimeReady(options: {
+  pid: number;
+  readyFile: string;
+  logFile: string;
+  timeoutMs: number;
+}): Promise<void> {
+  const deadline = Date.now() + options.timeoutMs;
+  while (Date.now() <= deadline) {
+    if (!isProcessAlive(options.pid)) {
+      throw new Error(
+        `runtime daemon process ${options.pid} exited before it became ready. ${await runtimeLogTail(options.logFile)}`
+      );
+    }
+    try {
+      const raw = await readFile(options.readyFile, "utf8");
+      const payload = JSON.parse(raw) as { state?: unknown; pid?: unknown };
+      if (payload.state === "ready" && payload.pid === options.pid) {
+        return;
+      }
+    } catch {
+      // The foreground child creates the ready file after Temporal is reachable
+      // and the worker has entered run mode.
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `runtime daemon process ${options.pid} did not become ready within ${options.timeoutMs}ms. ${await runtimeLogTail(options.logFile)}`
+  );
+}
+
+async function runtimeLogTail(logFile: string): Promise<string> {
+  try {
+    const raw = await readFile(logFile, "utf8");
+    const tail = raw.slice(-4000).trim();
+    return tail ? `Last runtime log output:\n${tail}` : "Runtime log is empty.";
+  } catch {
+    return `Runtime log is not available at ${logFile}.`;
+  }
 }
 
 async function waitForTemporalReady(manager: TemporalManager, timeoutMs = 15_000): Promise<void> {

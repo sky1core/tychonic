@@ -66,6 +66,7 @@ describe("stopRuntimeParent", () => {
           probes += 1;
           return probes < 3;
         },
+        runtimeParentProcess: async () => true,
         signalProcess: (pid, signal) => {
           signals.push({ pid, signal });
         },
@@ -98,6 +99,7 @@ describe("stopRuntimeParent", () => {
       deps: {
         readPid: async () => 789,
         processAlive: () => true,
+        runtimeParentProcess: async () => true,
         signalProcess: (pid, signal) => {
           signals.push({ pid, signal });
         },
@@ -113,5 +115,31 @@ describe("stopRuntimeParent", () => {
       pidFileRemoved: false
     });
     expect(signals).toEqual([{ pid: 789, signal: "SIGTERM" }]);
+  });
+
+  it("does not signal a live pid that is not a verified runtime parent", async () => {
+    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+    const result = await stopRuntimeParent({
+      instance: "spec-audit",
+      pidFile: "/tmp/runtime.pid",
+      deps: {
+        readPid: async () => 321,
+        processAlive: () => true,
+        runtimeParentProcess: async () => false,
+        signalProcess: (pid, signal) => {
+          signals.push({ pid, signal });
+        }
+      }
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      state: "pid_unverified",
+      pid: 321,
+      signalSent: null,
+      pidFileRemoved: false
+    });
+    expect(signals).toEqual([]);
   });
 });

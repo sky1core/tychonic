@@ -114,9 +114,14 @@ below. An explicit `timeout` on the block overrides that per-TYPE default.
 | `work` | 120 minutes |
 | `review` | 45 minutes |
 
-Temporal activity envelopes and worker drain defaults are intentionally more
-generous than these command defaults so long-running local checks can finish or
-hit their own configured timeout.
+Temporal activity start-to-close envelopes and worker drain defaults are
+intentionally more generous than these command defaults so long-running local
+checks can finish or hit their own configured timeout. Temporal heartbeat
+timeout is shorter on generated declarative workflow activities that actually
+send heartbeats (`work`, `verify`, `review`, and worktree cleanup): they use
+`30 seconds` so a worker/runtime crash releases the in-flight activity back to
+Temporal promptly after restart instead of pinning an open workflow behind a
+dead worker PID.
 
 Heartbeat timeout is a liveness contract, not a normal failure mode. Any
 activity that Temporal runs with a heartbeat timeout must send heartbeats for

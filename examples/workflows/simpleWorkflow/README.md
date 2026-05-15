@@ -58,13 +58,13 @@ Unknown fields are rejected. `promptAdditions` keys must be `work` or `review`.
 
 ## Minimal Run
 
-Start the runtime in one terminal:
+Start or reuse the runtime daemon:
 
 ```sh
 tychonic runtime up
 ```
 
-In another terminal:
+Then start a run:
 
 ```sh
 cat > ./simple-input.json <<'JSON'

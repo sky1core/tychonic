@@ -1,35 +1,34 @@
 /**
- * Detached runtime spawner for `tychonic runtime up --detach`.
+ * Detached runtime spawner for `tychonic runtime up`.
  *
  * The parent process invokes `spawnDetachedRuntime` once and exits 0
  * immediately. The child is an independent session (`setsid` via node's
  * `{ detached: true }` + `child.unref()`) whose stdout/stderr are appended
  * to `runtime.log` and whose pid is written to `runtime.pid`.
  *
- * Only works when an isolated instance is active; enforcement lives in
- * the CLI layer (`runtime up --detach` action). This module is a pure
- * spawn utility — it does not consult active-instance state.
+ * This module is a pure spawn utility — it does not consult active-instance
+ * state. The CLI layer decides whether to pass an instance flag.
  *
  * Contract (§2 no magic): if a live pid already occupies `pidFile`, the
  * caller must refuse. This function overwrites `pidFile` unconditionally;
  * stale-pid detection happens above it in the CLI action.
  */
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export interface SpawnDetachedRuntimeOptions {
   /** Absolute path to the node executable used to run the CLI. */
   nodePath: string;
   /** Absolute path to the Tychonic CLI entry (e.g. `.../dist/cli/main.js`). */
   cliPath: string;
-  /**
-   * Instance name. The child is invoked with `--instance <name>` so its
-   * own preAction hook reproduces the same isolation as the parent.
-   */
-  instance: string;
+  /** Optional isolated instance name to pass through to the child. */
+  instance?: string;
   /**
    * Additional CLI arguments that follow `runtime up`. Must NOT include
    * `--detach` — the child runs in foreground mode.
@@ -40,8 +39,9 @@ export interface SpawnDetachedRuntimeOptions {
   /** Absolute path to `runtime.pid` under the instance state dir. */
   pidFile: string;
   /**
-   * Optional environment. `TYCHONIC_INSTANCE` is not injected here — the
-   * child receives `--instance` on argv, which wins over env per §3.
+   * Optional environment. `TYCHONIC_INSTANCE` is not injected here; when an
+   * instance is active, the child receives `--instance` on argv, which wins
+   * over env per §3.
    */
   env?: NodeJS.ProcessEnv;
 }
@@ -53,10 +53,10 @@ export interface SpawnDetachedRuntimeResult {
 }
 
 /**
- * Spawn `tychonic --instance <name> runtime up <extraArgs...>` as a
- * detached foreground runtime. Returns when the child has been spawned
- * and its pid written. Does not wait for Temporal readiness — that is a
- * caller concern.
+ * Spawn `tychonic [--instance <name>] runtime up --foreground <extraArgs...>`
+ * as a detached foreground runtime. Returns when the child has been spawned
+ * and its pid written. Does not wait for Temporal readiness — that is a caller
+ * concern.
  */
 export async function spawnDetachedRuntime(
   options: SpawnDetachedRuntimeOptions
@@ -70,10 +70,14 @@ export async function spawnDetachedRuntime(
   // descriptor is handed to the child and then closed in the parent.
   const logFd = openSync(logFile, "a");
   try {
-    // Child argv: drop `--detach` from the parent invocation, keep
-    // `--instance <name>` so the child's own preAction reactivates the
-    // same instance context.
-    const childArgs = [cliPath, "--instance", instance, "runtime", "up", ...extraArgs];
+    const childArgs = [
+      cliPath,
+      ...(instance ? ["--instance", instance] : []),
+      "runtime",
+      "up",
+      "--foreground",
+      ...extraArgs
+    ];
     const child = spawn(nodePath, childArgs, {
       detached: true,
       stdio: ["ignore", logFd, logFd],
@@ -84,7 +88,7 @@ export async function spawnDetachedRuntime(
       throw new Error("failed to spawn detached runtime: child pid is undefined");
     }
     child.unref();
-    await writeFile(pidFile, `${pid}\n`, "utf8");
+    await writeRuntimePidFile(pidFile, pid, { instance: instance ?? null, cliPath });
     return { pid, logFile, pidFile };
   } finally {
     closeSync(logFd);
@@ -120,6 +124,157 @@ export async function removePidFileIfOwned(pidFile: string, pid: number): Promis
   }
   await rm(pidFile, { force: true });
   return true;
+}
+
+export interface RuntimePidIdentity {
+  instance: string | null;
+  cliPath?: string;
+  pidFile?: string;
+}
+
+export interface RuntimePidMetadata {
+  kind: "tychonic.runtime";
+  pid: number;
+  instance: string | null;
+  cliPath: string;
+}
+
+function runtimePidMetadataFile(pidFile: string): string {
+  return `${pidFile}.json`;
+}
+
+export async function writeRuntimePidFile(
+  pidFile: string,
+  pid: number,
+  identity: RuntimePidIdentity
+): Promise<void> {
+  await writePidFile(pidFile, pid);
+  const metadata: RuntimePidMetadata = {
+    kind: "tychonic.runtime",
+    pid,
+    instance: identity.instance,
+    cliPath: identity.cliPath ?? process.argv[1] ?? ""
+  };
+  await writeFile(runtimePidMetadataFile(pidFile), `${JSON.stringify(metadata)}\n`, "utf8");
+}
+
+export async function removeRuntimePidFilesIfOwned(pidFile: string, pid: number): Promise<boolean> {
+  const removed = await removePidFileIfOwned(pidFile, pid);
+  if (removed) {
+    await rm(runtimePidMetadataFile(pidFile), { force: true });
+  }
+  return removed;
+}
+
+export async function isRuntimeParentProcess(
+  pid: number,
+  identity: RuntimePidIdentity
+): Promise<boolean> {
+  if (!isProcessAlive(pid)) {
+    return false;
+  }
+  const metadata = await readRuntimePidMetadata(
+    pid,
+    identity.pidFile ? runtimePidMetadataFile(identity.pidFile) : undefined
+  );
+  if (!metadata || metadata.instance !== identity.instance || metadata.cliPath.length === 0) {
+    return false;
+  }
+  let command: string;
+  try {
+    command = await processCommand(pid);
+  } catch {
+    return false;
+  }
+  const tokens = splitCommandLine(command);
+  const runtimeIndex = tokens.indexOf("runtime");
+  if (
+    runtimeIndex < 0 ||
+    tokens[runtimeIndex + 1] !== "up" ||
+    !tokens.slice(runtimeIndex + 2).includes("--foreground") ||
+    !tokens.includes(metadata.cliPath)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+async function readRuntimePidMetadata(
+  pid: number,
+  metadataFile: string | undefined
+): Promise<RuntimePidMetadata | undefined> {
+  if (!metadataFile) {
+    return undefined;
+  }
+  try {
+    const raw = await readFile(metadataFile, "utf8");
+    const parsed = JSON.parse(raw) as Partial<RuntimePidMetadata>;
+    if (
+      parsed.kind !== "tychonic.runtime" ||
+      parsed.pid !== pid ||
+      (parsed.instance !== null && typeof parsed.instance !== "string") ||
+      typeof parsed.cliPath !== "string"
+    ) {
+      return undefined;
+    }
+    return {
+      kind: "tychonic.runtime",
+      pid,
+      instance: parsed.instance ?? null,
+      cliPath: parsed.cliPath
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function processCommand(pid: number): Promise<string> {
+  const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+  return stdout.trim();
+}
+
+function splitCommandLine(command: string): string[] {
+  const tokens: string[] = [];
+  let token = "";
+  let quote: "'" | "\"" | undefined;
+  let escaped = false;
+
+  for (const char of command.trim()) {
+    if (escaped) {
+      token += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = undefined;
+      } else {
+        token += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (token) {
+        tokens.push(token);
+        token = "";
+      }
+      continue;
+    }
+    token += char;
+  }
+
+  if (token) {
+    tokens.push(token);
+  }
+  return tokens;
 }
 
 /**

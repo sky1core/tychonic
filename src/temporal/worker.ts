@@ -33,6 +33,7 @@ export interface RunTemporalWorkerOptions extends TemporalConfig {
   shutdownGraceTime?: string | number;
   shutdownForceTime?: string | number;
   workflowBundle?: { code: string };
+  onReady?: () => void | Promise<void>;
 }
 
 export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}): Promise<void> {
@@ -72,7 +73,14 @@ export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}):
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
     try {
-      await worker.run();
+      const run = worker.run();
+      try {
+        await options.onReady?.();
+        await run;
+      } catch (error) {
+        shutdown();
+        throw error;
+      }
     } finally {
       process.removeListener("SIGINT", shutdown);
       process.removeListener("SIGTERM", shutdown);
@@ -80,7 +88,14 @@ export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}):
     return;
   }
 
-  await worker.run();
+  const run = worker.run();
+  try {
+    await options.onReady?.();
+    await run;
+  } catch (error) {
+    worker.shutdown();
+    throw error;
+  }
 }
 
 /**
