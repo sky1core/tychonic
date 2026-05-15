@@ -14,6 +14,7 @@ try {
     encoding: "utf8"
   });
   const tarball = join(tmp, packStdout.trim().split(/\r?\n/).at(-1));
+  await assertPackedCliBinExecutable(tarball);
   const app = join(tmp, "app");
   await execFileAsync("npm", ["install", "--prefix", app, tarball, "--omit=dev"], { encoding: "utf8" });
   const bin = join(app, "node_modules", ".bin", process.platform === "win32" ? "tychonic.cmd" : "tychonic");
@@ -26,4 +27,14 @@ try {
   console.log(JSON.stringify({ ok: true, version: version.trim() }, null, 2));
 } finally {
   await rm(tmp, { recursive: true, force: true });
+}
+
+async function assertPackedCliBinExecutable(tarball) {
+  const { stdout } = await execFileAsync("tar", ["-tvf", tarball, "package/dist/cli/main.js"], {
+    encoding: "utf8"
+  });
+  const line = stdout.trim();
+  if (!line.startsWith("-rwx")) {
+    throw new Error(`package bin target is not executable in tarball: ${line}`);
+  }
 }

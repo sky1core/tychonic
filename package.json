@@ -50,7 +50,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "tsx src/cli/main.ts",
-    "build": "npm run clean && tsc -p tsconfig.json && npm run build:web-client",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/prepare-package-bin.mjs && npm run build:web-client",
     "build:web-client": "npm --prefix web-client run build",
     "dev:web-client": "npm --prefix web-client run dev",
     "lint": "npm run typecheck && npm --prefix web-client run lint",

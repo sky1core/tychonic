@@ -266,6 +266,7 @@ states:
       npm test
   qa:
     type: review
+    on_fail_return_to: builder
     agent: codex
     approval: never
 ```
