@@ -217,6 +217,72 @@ describe("status UI server", () => {
     ).rejects.toThrow("loopback");
   });
 
+  it("streams workflow refresh events over server-sent events", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-events-"));
+    tempDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>Tychonic</title>");
+
+    const now = "2026-05-12T00:00:00.000Z";
+    let listCalls = 0;
+    let describeCalls = 0;
+    const deps: StatusUiServerDeps = {
+      listWorkflows: async () => {
+        listCalls += 1;
+        return {
+          address: "127.0.0.1:7233",
+          namespace: "default",
+          taskQueue: "tychonic",
+          workflows: [
+            {
+              workflowId: "tychonic_simpleWorkflow_events",
+              runId: "temporal_run_events",
+              type: "simpleWorkflow",
+              taskQueue: "tychonic",
+              status: "RUNNING",
+              historyLength: 7,
+              startTime: now
+            }
+          ]
+        };
+      },
+      describeWorkflow: async () => {
+        describeCalls += 1;
+        return {
+          workflowId: "tychonic_simpleWorkflow_events",
+          runId: "temporal_run_events",
+          type: "simpleWorkflow",
+          taskQueue: "tychonic",
+          status: "RUNNING",
+          historyLength: 7,
+          startTime: now,
+          pendingActivities: []
+        };
+      }
+    };
+
+    const handle = await startStatusUiServerWithDeps({ uiPort: 0, staticDir }, deps);
+    try {
+      const response = await fetch(
+        `${handle.url}/api/events?workflowId=tychonic_simpleWorkflow_events&runId=temporal_run_events`
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const text = await readEventStreamChunk(reader!);
+      await reader!.cancel();
+      expect(text).toContain("event: refresh");
+      expect(text).toContain("\"workflowId\":\"tychonic_simpleWorkflow_events\"");
+      const callsAfterCancel = { listCalls, describeCalls };
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      expect({ listCalls, describeCalls }).toEqual(callsAfterCancel);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        handle.server.close((error) => (error ? rejectClose(error) : resolveClose()));
+      });
+    }
+  });
+
   it("rejects localhost bind hosts instead of trusting name resolution", async () => {
     const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-"));
     tempDirs.push(staticDir);
@@ -293,4 +359,21 @@ async function statusUiRequest(
     deps
   });
   return { status, headers, body };
+}
+
+async function readEventStreamChunk(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  const deadline = Date.now() + 2_000;
+  while (!text.includes("event: refresh")) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error(`timed out waiting for refresh event; received: ${text}`);
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("event stream read timed out")), remainingMs))
+    ]);
+    if (result.done) break;
+    text += decoder.decode(result.value, { stream: true });
+  }
+  return text;
 }

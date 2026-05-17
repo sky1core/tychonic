@@ -17,9 +17,16 @@ filesystem evidence directories as a state database or create any repo-local
 state store.
 
 The UI may expose summaries of workflows, states, inbox items, findings,
-artifacts, logs, sessions, and timing. It must keep raw artifact and log content
-behind the focused CLI commands already carried by the evidence view instead of
-dumping raw content by default.
+artifacts, logs, sessions, and timing. For a selected state, the UI may also
+show focused evidence content that answers the operator's primary question:
+the prompt sent to the agent, the terminal agent response or structured review
+result, and small related artifact excerpts. Large raw artifacts, full logs,
+and complete run-record dumps must stay behind the focused CLI commands already
+carried by the evidence view. Any truncation in the UI must be explicit.
+
+The UI may listen to a local event stream for refresh notifications, but event
+delivery is only a convenience trigger to re-read Temporal-backed status data.
+It must not become a second product state channel.
 
 The UI may also expose the installed workflow bundle's generated Mermaid graph
 preview (`workflow.generated.mmd`) and a React Flow definition graph derived

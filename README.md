@@ -15,6 +15,8 @@ checks, and review gates.
 - Run work as explicit workflow states: `work`, `verify`, and `review`.
 - Keep run state in Temporal so progress survives CLI exits and restarts.
 - Execute agent work in isolated worktrees until the operator applies a result.
+  Worktrees are preserved on finish so the operator can inspect, hand-apply, or
+  remove them; repositories with git submodules are initialized automatically.
 - Record prompts, outputs, sessions, artifacts, findings, and inbox items.
 - Select the right agent, model, and reasoning effort per state instead of
   forcing one global model.
@@ -182,6 +184,19 @@ tychonic web
 
 The command binds to `127.0.0.1` by default and serves a local status view over
 Temporal-backed workflow summaries. It is not a team service or public API.
+The browser view lists recent workflow runs, shows the selected run's state
+flow, and opens a focused state detail pane with the prompt, agent response,
+artifacts, sessions, and workflow definition metadata relevant to that state.
+Completed states stay compact; running, failed, and agent states expose the
+evidence needed to answer what was asked and what the agent returned.
+
+The page listens to `/api/events` for status-change notifications and refreshes
+its Temporal-backed data when the selected workflow changes. If that event
+connection fails, the `Refresh` button still performs a manual read. When the
+local UI is viewed through a loopback reverse proxy or Tailscale serve path,
+keep `tychonic web` bound to loopback and set
+`TYCHONIC_WEB_ALLOWED_HOSTS=<host1>,<host2>` for the proxied `Host` headers.
+The proxy must allow `text/event-stream` responses without buffering.
 
 After the no-agent smoke passes, install an agent workflow such as
 `simpleWorkflow`. Its `defaultProfile` uses external agent CLIs and verifies

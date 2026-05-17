@@ -128,6 +128,7 @@ export interface TychonicTemporalWorkflowSummary {
   startTime: string;
   executionTime?: string;
   closeTime?: string;
+  cwd?: string;
 }
 
 export interface TychonicTemporalPendingActivity {
@@ -178,6 +179,7 @@ type WorkflowExecutionInfoForSummary = Pick<
   | "startTime"
   | "executionTime"
   | "closeTime"
+  | "memo"
 >;
 
 export async function startNamedTemporalWorkflow(
@@ -187,10 +189,13 @@ export async function startNamedTemporalWorkflow(
   const connection = await Connection.connect({ address: config.address });
   const client = new Client({ connection, namespace: config.namespace });
   const workflowId = options.workflowId ?? createNamedWorkflowId(options.workflowType);
+  const inputRecord = isRecord(options.input) ? options.input : undefined;
+  const memoCwd = typeof inputRecord?.cwd === "string" ? inputRecord.cwd : undefined;
   const handle = await client.workflow.start(options.workflowType, {
     ...(Object.prototype.hasOwnProperty.call(options, "input") ? { args: [options.input] } : {}),
     taskQueue: config.taskQueue,
-    workflowId
+    workflowId,
+    ...(memoCwd ? { memo: { cwd: memoCwd } } : {})
   });
 
   if (!options.wait) {
@@ -520,6 +525,7 @@ export function summarizeTemporalWorkflowDescription(
 export function summarizeTemporalWorkflowInfo(
   info: WorkflowExecutionInfoForSummary
 ): TychonicTemporalWorkflowSummary {
+  const memoCwd = typeof info.memo?.cwd === "string" ? info.memo.cwd : undefined;
   return {
     workflowId: info.workflowId,
     runId: info.runId,
@@ -529,7 +535,8 @@ export function summarizeTemporalWorkflowInfo(
     ...(!(info.status.name === "RUNNING" && info.historyLength === 0) ? { historyLength: info.historyLength } : {}),
     startTime: info.startTime.toISOString(),
     ...(info.executionTime ? { executionTime: info.executionTime.toISOString() } : {}),
-    ...(info.closeTime ? { closeTime: info.closeTime.toISOString() } : {})
+    ...(info.closeTime ? { closeTime: info.closeTime.toISOString() } : {}),
+    ...(memoCwd ? { cwd: memoCwd } : {})
   };
 }
 

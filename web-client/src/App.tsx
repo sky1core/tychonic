@@ -1,40 +1,31 @@
-import { useEffect, useId, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react"
-import {
-  Background,
-  BaseEdge,
-  Controls,
-  EdgeLabelRenderer,
-  MarkerType,
-  Position,
-  ReactFlow,
-  type Edge,
-  type EdgeProps,
-  type Node,
-  type NodeMouseHandler,
-} from "@xyflow/react"
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react"
+import { Streamdown } from "streamdown"
 import {
   AlertCircleIcon,
-  ArrowLeftIcon,
-  ClockIcon,
-  FileTextIcon,
+  CheckCircle2Icon,
   InboxIcon,
   ListRestartIcon,
   RefreshCcwIcon,
-  SearchXIcon,
-  TerminalIcon,
-  TimerIcon,
-  UserRoundIcon,
 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Message,
+  MessageContent,
+  MessageMetadata,
+  MessageMetadataItem,
+} from "@/components/ai-elements/message"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Empty,
   EmptyContent,
@@ -44,24 +35,28 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+  Sidebar,
+  SidebarContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { uiLabAccent } from "@/lib/ui-lab/style-contract"
 import { cn } from "@/lib/utils"
+import { extractAgentResult } from "./agentResult"
+import { responseTextForDisplay, stateCommandForDisplay } from "./stateEvidence"
 
 type WorkflowSummary = {
   workflowId: string
@@ -73,6 +68,7 @@ type WorkflowSummary = {
   startTime: string
   executionTime?: string
   closeTime?: string
+  cwd?: string
 }
 
 type WorkflowStateRecord = {
@@ -100,6 +96,8 @@ type WorkflowEvidence = {
     state_name?: string
     kind: string
     status: string
+    command?: string
+    agent_session_id?: string
   }>
   counts: Record<"states" | "attempts" | "artifacts" | "logs" | "inbox" | "sessions" | "findings", number>
   inbox: Array<{
@@ -131,6 +129,10 @@ type WorkflowEvidence = {
     role: string
     status: string
     resumable?: boolean
+    prompt_artifact_id?: string
+    result_artifact_id?: string
+    transcript_artifact_id?: string
+    diff_artifact_id?: string
     started_at: string
     finished_at?: string
   }>
@@ -183,6 +185,8 @@ type WorkflowDetail = {
   }
   evidence?: WorkflowEvidence
   evidenceError?: string
+  artifactContents?: Record<string, { content: string } | { truncated: true; size: number }>
+  stateConfigs?: Record<string, { type?: string; command?: string; agent?: string; model?: string; timeout?: string }>
   workflowGraph?: {
     mermaid: string
     definition: WorkflowDefinitionGraph
@@ -245,18 +249,30 @@ const findingSeverityTone: Record<string, BadgeTone> = {
   info: "outline",
 }
 
-const inboxStatusTone: Record<string, BadgeTone> = {
-  open: "destructive",
-  pending: "default",
-  waiting: "default",
-  waiting_user: "default",
-  resolved: "secondary",
-  closed: "secondary",
-  dismissed: "outline",
+const streamdownLinkSafety = { enabled: false } as const
+
+function parseHashSelection(): { workflowId: string; runId: string } | undefined {
+  const hash = window.location.hash.slice(1)
+  if (!hash) return undefined
+  const params = new URLSearchParams(hash)
+  const workflowId = params.get("wf")
+  const runId = params.get("run")
+  if (workflowId && runId) return { workflowId, runId }
+  return undefined
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function App() {
-  const selectedRunRef = useRef<{ workflowId?: string; runId?: string }>({})
+  const initialSelection = useRef(parseHashSelection()).current
+  const selectedRunRef = useRef<{ workflowId?: string; runId?: string }>(initialSelection ?? {})
   const listRequestSeqRef = useRef(0)
   const listLoadingRequestSeqRef = useRef<number | undefined>(undefined)
   const loadWorkflowsRef = useRef<
@@ -269,16 +285,14 @@ function App() {
   >(undefined)
   const detailRequestSeqRef = useRef(0)
   const detailLoadingRequestSeqRef = useRef<number | undefined>(undefined)
-  const selectedStateRunRef = useRef<string | undefined>(undefined)
   const [workflowList, setWorkflowList] = useState<WorkflowList>()
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>()
-  const [selectedRunId, setSelectedRunId] = useState<string>()
-  const [selectedStateId, setSelectedStateId] = useState<string>()
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | undefined>(initialSelection?.workflowId)
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(initialSelection?.runId)
   const [workflowDetail, setWorkflowDetail] = useState<WorkflowDetail>()
-  const [activeView, setActiveView] = useState<"runs" | "detail">("runs")
   const [listLoading, setListLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState<string>()
+  const [definitionOpen, setDefinitionOpen] = useState(false)
   const selectedWorkflow = workflowList?.workflows.find(
     (workflow) => workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId,
   )
@@ -295,6 +309,12 @@ function App() {
     selectedRunRef.current = selection ?? {}
     setSelectedWorkflowId(selection?.workflowId)
     setSelectedRunId(selection?.runId)
+    if (selection) {
+      const params = new URLSearchParams({ wf: selection.workflowId, run: selection.runId })
+      window.history.replaceState(null, "", `#${params.toString()}`)
+    } else {
+      window.history.replaceState(null, "", window.location.pathname)
+    }
   }
 
   async function loadWorkflows(
@@ -311,7 +331,7 @@ function App() {
     }
     setError(undefined)
     try {
-      const response = await fetch("/api/workflows?limit=30")
+      const response = await fetch("api/workflows?limit=30")
       const body = (await response.json()) as WorkflowList
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `workflow list request failed with ${response.status}`)
@@ -332,9 +352,8 @@ function App() {
       if (!next) {
         setWorkflowDetail(undefined)
         setDetailLoading(false)
-        setActiveView("runs")
       } else if (reloadCurrentDetail && !selectionChanged) {
-        await loadWorkflowDetail(next.workflowId, next.runId)
+        await loadWorkflowDetail(next.workflowId, next.runId, { showLoading })
       }
     } catch (loadError) {
       if (listRequestSeqRef.current === requestSeq) {
@@ -361,7 +380,7 @@ function App() {
       current?.request.workflowId === workflowId && current.request.runId === runId ? current : undefined,
     )
     try {
-      const response = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}?runId=${encodeURIComponent(runId)}`)
+      const response = await fetch(`api/workflows/${encodeURIComponent(workflowId)}?runId=${encodeURIComponent(runId)}`)
       const body = (await response.json()) as WorkflowDetail
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `workflow detail request failed with ${response.status}`)
@@ -402,7 +421,7 @@ function App() {
       setListLoading(true)
       setError(undefined)
       try {
-        const response = await fetch("/api/workflows?limit=30")
+        const response = await fetch("api/workflows?limit=30")
         const body = (await response.json()) as WorkflowList
         if (!response.ok || !body.ok) {
           throw new Error(body.error ?? `workflow list request failed with ${response.status}`)
@@ -426,138 +445,320 @@ function App() {
   }, [selectedWorkflowId, selectedRunId])
 
   const workflows = useMemo(() => workflowList?.workflows ?? [], [workflowList])
-  const selectedRunIsLive =
+  const hasRunningWorkflow = workflows.some((workflow) => workflow.status === "RUNNING")
+  const selectedRunReceivesEvents =
     selectedWorkflow?.status === "RUNNING" ||
     workflowDetail?.workflow.status === "RUNNING" ||
     workflowDetail?.evidence?.status === "running"
-  const hasLiveWorkflow = workflows.some((workflow) => workflow.status === "RUNNING")
 
   useEffect(() => {
-    if (!hasLiveWorkflow) return
-    const interval = window.setInterval(() => {
-      void loadWorkflowsRef.current?.(undefined, false, { showLoading: false })
-    }, 2_000)
-    return () => window.clearInterval(interval)
-  }, [hasLiveWorkflow])
-
-  useEffect(() => {
-    if (!selectedWorkflowId || !selectedRunId || !selectedRunIsLive) return
-    const interval = window.setInterval(() => {
-      void loadWorkflowDetail(selectedWorkflowId, selectedRunId, { showLoading: false })
-    }, 2_000)
-    return () => window.clearInterval(interval)
-  }, [selectedWorkflowId, selectedRunId, selectedRunIsLive])
-
-  const workflowDetailWorkflowId = workflowDetail?.request.workflowId
-  const workflowDetailRunId = workflowDetail?.request.runId
-  const workflowDetailStates = workflowDetail?.evidence?.states
-  const workflowDefinitionStates = workflowDetail?.workflowGraph?.definition.states
-
-  useEffect(() => {
-    const runKey = workflowDetailWorkflowId && workflowDetailRunId ? `${workflowDetailWorkflowId}:${workflowDetailRunId}` : undefined
-    const states = workflowDetailStates ?? []
-    const definitionStateNames = workflowDefinitionStates?.map((state) => state.name)
-    const selectableStateNames =
-      states.length > 0
-        ? states.map((state) => state.id)
-        : definitionStateNames && definitionStateNames.length > 0
-          ? definitionStateNames
-          : []
-    const runChanged = selectedStateRunRef.current !== runKey
-    selectedStateRunRef.current = runKey
-    if (!runKey || selectableStateNames.length === 0) {
-      setSelectedStateId(undefined)
+    if (typeof EventSource === "undefined") {
+      setError("This browser does not support workflow event refresh. Use Refresh to update status.")
       return
     }
-    setSelectedStateId((current) => {
-      if (!runChanged && current && selectableStateNames.includes(current)) {
-        return current
-      }
-      const latestExecuted = [...states]
-        .reverse()
-        .find((state) => selectableStateNames.includes(state.id))
-      return latestExecuted ? latestExecuted.id : selectableStateNames[0]
-    })
-  }, [workflowDetailWorkflowId, workflowDetailRunId, workflowDetailStates, workflowDefinitionStates])
+    if (!hasRunningWorkflow && !selectedRunReceivesEvents) return
+    const params = new URLSearchParams({ limit: "30" })
+    if (selectedRunReceivesEvents && selectedWorkflowId && selectedRunId) {
+      params.set("workflowId", selectedWorkflowId)
+      params.set("runId", selectedRunId)
+    }
+    const events = new EventSource(`api/events?${params.toString()}`)
+    const refresh = () => {
+      void loadWorkflowsRef.current?.(undefined, selectedRunReceivesEvents, { showLoading: false })
+    }
+    const statusError = (event: Event) => {
+      const payload = event instanceof MessageEvent ? parseJsonRecord(event.data) : undefined
+      setError(typeof payload?.message === "string" ? payload.message : "workflow event refresh failed")
+    }
+    const connectionError = () => {
+      setError("Workflow event refresh connection failed. Use Refresh to update status.")
+    }
+    events.addEventListener("refresh", refresh)
+    events.addEventListener("error", connectionError)
+    events.addEventListener("status_error", statusError)
+    return () => events.close()
+  }, [hasRunningWorkflow, selectedWorkflowId, selectedRunId, selectedRunReceivesEvents])
 
-  const stateGraph = useMemo(
-    () => executionStateGraph(workflowDetail?.evidence?.states ?? []),
-    [workflowDetail],
-  )
-  const definitionGraph = useMemo(
-    () => definitionStateGraph(workflowDetail?.workflowGraph?.definition, workflowDetail?.evidence?.states ?? []),
-    [workflowDetail],
-  )
-  const stateGraphHeight = workflowGraphViewportHeight(stateGraph.nodes.length)
-  const definitionGraphHeight = workflowGraphViewportHeight(definitionGraph.nodes.length)
-  const selectedState = useMemo(
-    () => latestStateRecordByNameOrId(workflowDetail?.evidence?.states ?? [], selectedStateId),
-    [selectedStateId, workflowDetail],
-  )
-  const selectedDefinitionState = useMemo(
-    () => workflowDetail?.workflowGraph?.definition.states.find((state) => state.name === (selectedState?.name ?? selectedStateId)),
-    [selectedStateId, selectedState, workflowDetail],
-  )
+  useEffect(() => {
+    if (!workflowDetail?.workflowGraph) setDefinitionOpen(false)
+  }, [workflowDetail?.workflowGraph])
+
   const runSummary = useMemo(
     () => workflowDetail?.evidence ? workflowRunSummary(workflowDetail.evidence) : undefined,
     [workflowDetail],
   )
-  const reviewReturns = useMemo(
-    () => workflowDetail?.evidence ? reviewReturnEvents(workflowDetail.evidence) : [],
-    [workflowDetail],
+  const currentWorkflowStatus = workflowDetail?.evidence?.status ?? workflowDetail?.workflow.status ?? selectedWorkflow?.status
+  const selectedWorkflowDuration =
+    currentWorkflowStatus === "running" || currentWorkflowStatus === "RUNNING"
+      ? selectedWorkflow
+        ? formatOpenWorkflowDuration(selectedWorkflow)
+        : ""
+      : workflowDetail?.evidence?.timing.run_ms != null
+        ? formatDuration(workflowDetail.evidence.timing.run_ms)
+        : selectedWorkflow
+          ? formatWorkflowDuration(selectedWorkflow)
+          : ""
+  const completedActivitySummary = workflowDetail?.evidence?.timing.run_ms != null
+    ? `${formatDuration(workflowDetail.evidence.timing.activity_ms)} / ${workflowDetail.evidence.timing.activity_count} act`
+    : undefined
+  const pendingActivitySummary = workflowDetail?.workflow.pendingActivityCount
+    ? `${workflowDetail.workflow.pendingActivityCount} pending`
+    : undefined
+  const executionSteps = useMemo(() => {
+    const evidence = workflowDetail?.evidence
+    if (!evidence) return []
+    const states = [...evidence.states]
+    if (evidence.latest_state && !states.some((state) => state.id === evidence.latest_state?.id)) {
+      states.push(evidence.latest_state)
+    }
+    const attemptByStateId = new Map(evidence.state_attempt_summaries.map((attempt) => [attempt.state_id, attempt]))
+    return states.map((state, index) => ({
+      state,
+      index,
+      attempt: attemptByStateId.get(state.id),
+    }))
+  }, [workflowDetail])
+  const [selectedExecutionStateId, setSelectedExecutionStateId] = useState<string>()
+  const executionRunKey = `${selectedWorkflowId ?? ""}:${selectedRunId ?? ""}`
+  const previousExecutionRunKeyRef = useRef(executionRunKey)
+  const stateFlowListRef = useRef<HTMLDivElement>(null)
+  const stateFlowDotRefs = useRef<Array<HTMLSpanElement | null>>([])
+  const [stateFlowLine, setStateFlowLine] = useState<{ top: number; height: number }>()
+  const selectedExecutionStep = useMemo(
+    () => executionSteps.find(({ state }) => state.id === selectedExecutionStateId),
+    [executionSteps, selectedExecutionStateId],
   )
-  const promptAdditionEntries = Object.entries(workflowDetail?.runContext?.promptAdditions ?? {})
-  const onStateNodeClick: NodeMouseHandler = (_, node) => {
-    setSelectedStateId(node.id)
-  }
+  useEffect(() => {
+    if (previousExecutionRunKeyRef.current === executionRunKey) return
+    previousExecutionRunKeyRef.current = executionRunKey
+    setSelectedExecutionStateId(undefined)
+  }, [executionRunKey])
+  useEffect(() => {
+    if (executionSteps.length === 0) {
+      if (selectedExecutionStateId !== undefined) setSelectedExecutionStateId(undefined)
+      return
+    }
+    if (selectedExecutionStateId && executionSteps.some(({ state }) => state.id === selectedExecutionStateId)) return
+    const latestProblem = executionSteps.findLast(({ state }) => isProblemStatus(state.status))
+    setSelectedExecutionStateId((latestProblem ?? executionSteps.at(-1))?.state.id)
+  }, [executionSteps, selectedExecutionStateId])
+  useLayoutEffect(() => {
+    stateFlowDotRefs.current = stateFlowDotRefs.current.slice(0, executionSteps.length)
+    const list = stateFlowListRef.current
+    const firstDot = stateFlowDotRefs.current[0]
+    const lastDot = stateFlowDotRefs.current.at(-1)
+    if (!list || !firstDot || !lastDot || executionSteps.length < 2) {
+      setStateFlowLine(undefined)
+      return
+    }
+    const updateLine = () => {
+      const listRect = list.getBoundingClientRect()
+      const firstRect = firstDot.getBoundingClientRect()
+      const lastRect = lastDot.getBoundingClientRect()
+      const top = firstRect.top + firstRect.height / 2 - listRect.top
+      const bottom = lastRect.top + lastRect.height / 2 - listRect.top
+      const next = { top, height: Math.max(0, bottom - top) }
+      setStateFlowLine((current) =>
+        current && Math.abs(current.top - next.top) < 0.5 && Math.abs(current.height - next.height) < 0.5
+          ? current
+          : next,
+      )
+    }
+    updateLine()
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(updateLine)
+    observer?.observe(list)
+    observer?.observe(firstDot)
+    observer?.observe(lastDot)
+    window.addEventListener("resize", updateLine)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener("resize", updateLine)
+    }
+  }, [executionSteps])
+  const selectedExecutionDetail = useMemo(() => {
+    const step = selectedExecutionStep
+    const detail = workflowDetail
+    if (!step || !detail?.evidence) return undefined
+    const state = step.state
+    const session = step.attempt?.agent_session_id
+      ? detail.evidence.sessions.find((candidate) => candidate.id === step.attempt?.agent_session_id)
+      : undefined
+    const promptContent = session?.prompt_artifact_id
+      ? artifactDisplayContent(detail.artifactContents?.[session.prompt_artifact_id])
+      : undefined
+    const stateArtifacts = detail.evidence.artifacts.filter((artifact) => state.artifact_ids.includes(artifact.id))
+    const responseArtifact = session?.result_artifact_id ? detail.artifactContents?.[session.result_artifact_id] : undefined
+    const responseArtifactMeta = session?.result_artifact_id
+      ? detail.evidence.artifacts.find((artifact) => artifact.id === session.result_artifact_id)
+      : undefined
+    const parsedResponseArtifact = stateArtifacts.find((artifact) => artifact.kind === `${state.name}_parsed`)
+    const parsedResponseContent = parsedResponseArtifact
+      ? artifactDisplayContent(detail.artifactContents?.[parsedResponseArtifact.id])
+      : undefined
+    const responseContent =
+      responseArtifact && "content" in responseArtifact
+        ? extractAgentResult(responseArtifact.content)
+        : parsedResponseContent
+          ? extractAgentResult(parsedResponseContent)
+          : undefined
+    const responsePreviewNote =
+      responseArtifact && !("content" in responseArtifact) && !parsedResponseContent
+        ? `Response is too large for inline preview (${formatBytes(responseArtifact.size)}). Artifact: ${responseArtifactMeta?.path ?? session?.result_artifact_id}.`
+        : undefined
+    const hasResponseContent = Boolean(responseContent?.trim() || responsePreviewNote)
+    const shouldShowPromptAsAgentMessage =
+      Boolean(promptContent) && (session?.agent !== "custom" || hasResponseContent || state.status !== "succeeded")
+    const outputArtifacts = stateArtifacts.filter(
+      (artifact) =>
+        isOutputArtifactKind(artifact.kind) &&
+        artifact.id !== session?.prompt_artifact_id &&
+        artifact.id !== session?.result_artifact_id,
+    )
+    const outputItems = outputArtifacts.map((artifact) => ({
+      artifact,
+      content: artifactDisplayContent(detail.artifactContents?.[artifact.id]),
+    }))
+    const findings = detail.evidence.findings.filter((finding) => state.finding_ids.includes(finding.id))
+    const stateConfig = detail.stateConfigs?.[state.name]
+    return {
+      command: stateCommandForDisplay({
+        attemptAgentSessionId: step.attempt?.agent_session_id,
+        attemptCommand: step.attempt?.command,
+        sessionAgent: session?.agent,
+        stateConfigAgent: stateConfig?.agent,
+        stateConfigCommand: stateConfig?.command,
+      }),
+      findings,
+      outputItems,
+      promptContent: shouldShowPromptAsAgentMessage ? promptContent : undefined,
+      responseContent,
+      responsePreviewNote,
+      session,
+      stateConfig,
+    }
+  }, [selectedExecutionStep, workflowDetail])
   function openWorkflow(workflow: WorkflowSummary) {
     const currentSelection = selectedRunRef.current
     const sameSelection = currentSelection.workflowId === workflow.workflowId && currentSelection.runId === workflow.runId
     applySelection({ workflowId: workflow.workflowId, runId: workflow.runId })
-    setActiveView("detail")
     if (sameSelection) {
       void loadWorkflowDetail(workflow.workflowId, workflow.runId)
     }
   }
+  const sidebarContent = (
+    <>
+      <SidebarHeader className="h-14 justify-center border-b px-3 py-0">
+        <span className="text-sm font-semibold">Runs</span>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarMenu className="py-1">
+          {listLoading ? (
+            <SidebarMenuItem>
+              <div className="flex flex-col gap-1 px-2 py-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            </SidebarMenuItem>
+          ) : workflows.length === 0 ? (
+            <SidebarMenuItem>
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                No workflows
+              </div>
+            </SidebarMenuItem>
+          ) : (
+            workflows.map((workflow) => {
+              const selected = workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId
+              const statusIcon = workflow.status === "COMPLETED"
+                ? <span className="text-emerald-600 dark:text-emerald-400"><CheckCircle2Icon className="h-3.5 w-3.5" /></span>
+                : workflow.status === "RUNNING"
+                  ? <span className="relative flex h-3.5 w-3.5 items-center justify-center"><span className="absolute h-2.5 w-2.5 animate-ping rounded-full bg-blue-500 opacity-40" /><span className="relative h-2 w-2 rounded-full bg-blue-500" /></span>
+                  : workflow.status === "FAILED" || workflow.status === "TERMINATED" || workflow.status === "TIMED_OUT"
+                    ? <span className="text-destructive"><AlertCircleIcon className="h-3.5 w-3.5" /></span>
+                    : <span className="h-3.5 w-3.5 rounded-full border-2 border-muted-foreground/30" />
+              const workflowButton = (
+                <button
+                  type="button"
+                  onClick={() => openWorkflow(workflow)}
+                  className="flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden px-3 py-2 text-left"
+                >
+                  {statusIcon}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-baseline justify-between gap-1">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{projectName(workflow.cwd) ?? workflow.type}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatWorkflowDuration(workflow)}</span>
+                    </div>
+                    <div className="min-w-0 truncate text-xs text-muted-foreground">
+                      {workflow.type}
+                    </div>
+                    <div className="flex min-w-0 items-baseline justify-between gap-2 text-xs text-muted-foreground">
+                      <span className="min-w-0 truncate tabular-nums">{formatTimePrecise(workflow.startTime)}</span>
+                      <span className="shrink-0">{formatRelativeTime(workflow.startTime)}</span>
+                    </div>
+                  </div>
+                </button>
+              )
+              return (
+                <SidebarMenuItem key={`${workflow.workflowId}:${workflow.runId}`}>
+                  <SidebarMenuButton
+                    asChild
+                    closeOnClick
+                    isActive={selected}
+                    className={cn("h-auto min-h-16 rounded-none p-0", selected && uiLabAccent.navSelected)}
+                    tooltip={projectName(workflow.cwd) ?? workflow.type}
+                  >
+                    {workflowButton}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )
+            })
+          )}
+        </SidebarMenu>
+      </SidebarContent>
+    </>
+  )
 
   return (
     <TooltipProvider>
-      <main className="grid min-h-dvh grid-rows-[auto_1fr] bg-background text-foreground">
-        <header className="border-b bg-card">
-          <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
-            <div className="flex min-w-0 flex-col gap-1">
-              <h1 className="truncate text-xl font-semibold">Tychonic Workflows</h1>
-              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                <span>{workflowList ? workflowList.address : "Temporal connection pending"}</span>
-                {workflowList ? <Badge variant="outline">{workflowList.taskQueue}</Badge> : null}
+      <SidebarProvider
+        style={{
+          "--sidebar-width": "280px",
+        } as CSSProperties}
+      >
+        <Sidebar collapsible="offcanvas">
+          {sidebarContent}
+        </Sidebar>
+
+        <SidebarInset className="min-w-0">
+          <header className="border-b bg-card">
+            <div className="flex h-14 w-full items-center justify-between gap-2 px-3 lg:px-6">
+              <div className="flex min-w-0 items-center gap-2">
+                <SidebarTrigger className="shrink-0" />
+                <h1 className="truncate text-base font-semibold lg:text-xl">Tychonic Workflows</h1>
+                <div className="hidden items-center gap-2 text-sm text-muted-foreground lg:flex">
+                  <span>{workflowList?.address}</span>
+                  {workflowList ? <Badge variant="outline">{workflowList.taskQueue}</Badge> : null}
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="outline"
+                    size="sm"
                     onClick={() => void loadWorkflows(undefined, true)}
                     disabled={listLoading || detailLoading}
                   >
                     <RefreshCcwIcon data-icon="inline-start" />
-                    Refresh
+                    <span className="hidden sm:inline">Refresh</span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Reload workflow list and selected evidence</TooltipContent>
               </Tooltip>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <section
-          className={cn(
-            "mx-auto w-full max-w-7xl px-4 py-4 md:px-6",
-            activeView === "detail" ? "grid grid-cols-1 gap-4 md:grid-cols-[360px_minmax(0,1fr)]" : "flex flex-col gap-4",
-          )}
-        >
-          {activeView === "runs" ? (
-            <>
+          <div className="flex-1 overflow-x-hidden overflow-y-auto p-3 lg:p-6">
+            <div className="flex flex-col gap-2 lg:gap-4">
               {error ? (
                 <Alert variant="destructive">
                   <AlertCircleIcon />
@@ -566,440 +767,306 @@ function App() {
                 </Alert>
               ) : null}
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Recent Runs</CardTitle>
-                  <CardDescription>{workflowList ? `${workflowList.workflows.length} workflows` : "Loading workflows"}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {listLoading ? (
-                    <div className="flex flex-col gap-3">
-                      <Skeleton className="h-12 w-full" />
-                      <Skeleton className="h-12 w-full" />
-                      <Skeleton className="h-12 w-full" />
-                    </div>
-                  ) : workflowList && workflows.length === 0 ? (
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">
-                          <SearchXIcon />
-                        </EmptyMedia>
-                        <EmptyTitle>No workflows</EmptyTitle>
-                        <EmptyDescription>Temporal did not return Tychonic workflow executions.</EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  ) : !workflowList ? (
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">
-                          <AlertCircleIcon />
-                        </EmptyMedia>
-                        <EmptyTitle>Workflow list unavailable</EmptyTitle>
-                        <EmptyDescription>Check the status UI error above, then refresh the workflow list.</EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  ) : (
-                    <ScrollArea className="h-[calc(100dvh-260px)] min-h-[420px]">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Execution</TableHead>
-                            <TableHead>Workflow</TableHead>
-                            <TableHead>Task Queue</TableHead>
-                            <TableHead>Started</TableHead>
-                            <TableHead>Duration</TableHead>
-                            <TableHead>History</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {workflows.map((workflow) => (
-                            <TableRow key={`${workflow.workflowId}:${workflow.runId}`}>
-                              <TableCell className="w-[150px]">{statusBadgeCell(workflow.status)}</TableCell>
-                              <TableCell className="max-w-[420px]">
-                                <Button
-                                  variant="ghost"
-                                  className="h-auto w-full justify-start px-2 py-2 text-left"
-                                  onClick={() => openWorkflow(workflow)}
-                                >
-                                  <div className="flex min-w-0 flex-col gap-1">
-                                    <span className="truncate font-medium">{workflow.type}</span>
-                                    <span className="truncate text-xs text-muted-foreground">{workflow.workflowId}</span>
-                                  </div>
-                                </Button>
-                              </TableCell>
-                              <TableCell>{workflow.taskQueue}</TableCell>
-                              <TableCell>{formatDate(workflow.startTime)}</TableCell>
-                              <TableCell>{formatWorkflowDuration(workflow)}</TableCell>
-                              <TableCell>{workflow.historyLength !== undefined ? workflow.historyLength : "not reported"}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </ScrollArea>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-            ) : (
-              <>
-              <Card className="min-h-[420px]">
-                <CardHeader>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <CardTitle>Recent Runs</CardTitle>
-                      <CardDescription>{workflowList ? `${workflowList.workflows.length} workflows` : "Loading workflows"}</CardDescription>
-                    </div>
-                    <Button variant="outline" onClick={() => setActiveView("runs")}>
-                      <ArrowLeftIcon data-icon="inline-start" />
-                      Runs
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {listLoading ? (
-                    <div className="flex flex-col gap-3">
-                      <Skeleton className="h-16 w-full" />
-                      <Skeleton className="h-16 w-full" />
-                      <Skeleton className="h-16 w-full" />
-                    </div>
-                  ) : workflowList && workflowList.workflows.length === 0 ? (
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">
-                          <SearchXIcon />
-                        </EmptyMedia>
-                        <EmptyTitle>No workflows</EmptyTitle>
-                        <EmptyDescription>Temporal did not return Tychonic workflow executions.</EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  ) : (
-                    <ScrollArea className="h-[calc(100dvh-260px)] min-h-[320px]">
-                      <div className="flex flex-col gap-2 pr-3">
-                        {workflowList?.workflows.map((workflow) => {
-                          const selected = workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId
-                          return (
-                            <Button
-                              key={`${workflow.workflowId}:${workflow.runId}`}
-                              variant={selected ? "secondary" : "ghost"}
-                              className="h-auto justify-start px-3 py-3 text-left"
-                              onClick={() => openWorkflow(workflow)}
-                            >
-                              <div className="flex min-w-0 flex-1 flex-col gap-2">
-                                <div className="flex min-w-0 items-center justify-between gap-2">
-                                  <span className="truncate font-medium">{workflow.type}</span>
-                                  <Badge variant={statusTone[workflow.status] ?? "outline"}>{workflow.status}</Badge>
-                                </div>
-                                <span className="truncate text-xs text-muted-foreground">{workflow.workflowId}</span>
-                                <span className="text-xs text-muted-foreground">{formatDate(workflow.startTime)}</span>
-                              </div>
-                            </Button>
-                          )
-                        })}
-                      </div>
-                    </ScrollArea>
-                  )}
-                </CardContent>
-              </Card>
-
-              <div className="flex min-w-0 flex-col gap-4">
-            {error ? (
-              <Alert variant="destructive">
-                <AlertCircleIcon />
-                <AlertTitle>Status UI error</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            ) : null}
-
-            {!hasSelectedRun ? (
-              <Card>
-                <CardContent>
-                  <Empty>
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <InboxIcon />
-                      </EmptyMedia>
-                      <EmptyTitle>Select a workflow</EmptyTitle>
-                      <EmptyDescription>Choose a run from the recent workflow list.</EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                </CardContent>
-              </Card>
-            ) : (
-	              <>
+              {!hasSelectedRun ? (
                 <Card>
-                  <CardHeader>
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div className="flex min-w-0 flex-col gap-2">
-                        <CardTitle className="truncate">Run status</CardTitle>
-                        <CardDescription className="truncate">{selectedWorkflowId}</CardDescription>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {statusBadgeCell(workflowDetail?.workflow.status ?? selectedWorkflow?.status ?? "unknown")}
-                        {workflowDetail?.evidence ? (
-                          <Badge variant={statusTone[workflowDetail.evidence.status] ?? "outline"}>
-                            {workflowDetail.evidence.status}
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </div>
-                  </CardHeader>
                   <CardContent>
-                    {detailLoading ? (
-                      <div className="flex flex-col gap-3">
-                        <Skeleton className="h-8 w-full" />
-                        <Skeleton className="h-[420px] w-full" />
-                      </div>
-                    ) : (
-                      <div className="flex min-w-0 flex-col gap-4">
-                        <div className="rounded-md border p-4">
-                          <div className="flex min-w-0 flex-col gap-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant={statusTone[runSummary?.runStatus ?? workflowDetail?.evidence?.status ?? ""] ?? "outline"}>
-                                {runSummary?.runStatus ?? workflowDetail?.evidence?.status ?? "no evidence"}
-                              </Badge>
-                              {runSummary?.activeState ? (
-                                <Badge variant={statusTone[runSummary.activeState.status] ?? "outline"}>
-                                  {runSummary.activeState.name} / {runSummary.activeState.status}
-                                </Badge>
-                              ) : null}
-                            </div>
-                            <p className="text-sm text-muted-foreground">
-                              {workflowDetail?.evidence?.summary !== undefined
-                                ? workflowDetail.evidence.summary
-                                : workflowDetail?.workflow.resultError !== undefined
-                                  ? workflowDetail.workflow.resultError
-                                  : "No workflow evidence summary is available yet."}
-                            </p>
-                            <div className="grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-                              <div className="rounded-md border p-3">
-                                <div className="text-xs text-muted-foreground">current state</div>
-                                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-                                  {runSummary?.activeState ? (
-                                    <>
-                                      <Badge variant={statusTone[runSummary.activeState.status] ?? "outline"}>
-                                        {runSummary.activeState.status}
-                                      </Badge>
-                                      <span className="min-w-0 break-all text-sm font-medium">{runSummary.activeState.name}</span>
-                                    </>
-                                  ) : (
-                                    <span className="text-sm font-medium">no state evidence yet</span>
-                                  )}
-                                </div>
-                                <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
-                                  {runSummary?.activeState?.reason ?? "Waiting for Temporal workflow state query or final result."}
-                                </div>
-                              </div>
-                              <div className="rounded-md border p-3">
-                                <div className="text-xs text-muted-foreground">project cwd</div>
-                                <div className="mt-1 break-all text-sm font-medium">
-                                  {workflowDetail?.runContext?.cwd ?? "not available"}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="grid gap-2 lg:grid-cols-2">
-                              <div className="rounded-md border p-3">
-                                <div className="text-xs text-muted-foreground">goal</div>
-                                <div className="mt-1 line-clamp-3 text-sm">
-                                  {workflowDetail?.runContext?.goal ?? "not provided"}
-                                </div>
-                              </div>
-                              <div className="rounded-md border p-3">
-                                <div className="text-xs text-muted-foreground">run parameters</div>
-                                {promptAdditionEntries.length > 0 ? (
-                                  <div className="mt-2 flex flex-col gap-2">
-                                    {promptAdditionEntries.map(([state, text]) => (
-                                      <div key={state} className="min-w-0">
-                                        <Badge variant="outline">{state}</Badge>
-                                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{text}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div className="mt-1 text-sm font-medium">no prompt additions</div>
-                                )}
-                                {workflowDetail?.runContext?.profileSnapshotArtifactId ? (
-                                  <div className="mt-2 text-xs text-muted-foreground">
-                                    config snapshot: {workflowDetail.runContext.profileSnapshotArtifactId}
-                                  </div>
-                                ) : null}
-                                {workflowDetail?.runContext?.inputError ?? workflowDetail?.workflow.inputError ? (
-                                  <div className="mt-2 text-xs text-destructive">
-                                    input read error: {workflowDetail?.runContext?.inputError ?? workflowDetail?.workflow.inputError}
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                            <div className="grid gap-2 sm:grid-cols-3">
-                              <div className="rounded-md border p-2">
-                                <div className="text-xs text-muted-foreground">next action</div>
-                                <div className="mt-1 text-sm font-medium">{runSummary?.nextAction ?? "Select a run"}</div>
-                              </div>
-                              <div className="rounded-md border p-2">
-                                <div className="text-xs text-muted-foreground">review returns</div>
-                                <div className="mt-1 text-sm font-medium">
-                                  {reviewReturns.length > 0
-                                    ? `${reviewReturns.length} observed`
-                                    : "none observed"}
-                                </div>
-                              </div>
-                              <div className="rounded-md border p-2">
-                                <div className="text-xs text-muted-foreground">open inbox</div>
-                                <div className="mt-1 text-sm font-medium">{runSummary?.openInboxCount ?? 0}</div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {reviewReturns.length > 0 ? (
-                          <div className="rounded-md border p-3">
-                            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                              <ListRestartIcon />
-                              Review return path
-                            </div>
-                            <div className="flex flex-col gap-2">
-                              {reviewReturns.slice(-3).map((event) => (
-                                <div key={`${event.fromState.id}:${event.toState.id}`} className="flex flex-wrap items-center gap-2 text-sm">
-                                  <Badge variant="destructive">{event.fromState.name} failed</Badge>
-                                  <span className="text-muted-foreground">returned to</span>
-                                  <Badge variant={statusTone[event.toState.status] ?? "outline"}>
-                                    {event.toState.name} / {event.toState.status}
-                                  </Badge>
-                                  <span className="min-w-0 truncate text-xs text-muted-foreground">{event.fromState.reason}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
-
-                        <Separator />
-
-                        <div className="grid gap-2 sm:grid-cols-4 lg:grid-cols-7">
-                          {workflowDetail?.evidence
-                            ? Object.entries(workflowDetail.evidence.counts).map(([key, value]) => (
-                                <div key={key} className="rounded-md border px-3 py-2">
-                                  <div className="text-xs text-muted-foreground">{key}</div>
-                                  <div className="text-lg font-semibold">{value}</div>
-                                </div>
-                              ))
-                            : null}
-                        </div>
-
-                        <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
-                          <Tabs defaultValue="execution" className="min-w-0">
-                            <TabsList className="flex h-auto flex-wrap justify-start">
-                              <TabsTrigger value="execution">Execution path</TabsTrigger>
-                              <TabsTrigger value="definition">Definition graph</TabsTrigger>
-                            </TabsList>
-                            <TabsContent value="execution">
-                              {stateGraph.nodes.length > 0 ? (
-                                <div className="min-w-0 overflow-hidden rounded-md border" style={{ height: stateGraphHeight }}>
-                                  <ReactFlow
-                                    nodes={stateGraph.nodes}
-                                    edges={stateGraph.edges}
-                                    edgeTypes={graphEdgeTypes}
-                                    onNodeClick={onStateNodeClick}
-                                    nodesConnectable={false}
-                                    nodesDraggable={false}
-                                    fitView
-                                    fitViewOptions={{ padding: 0.08 }}
-                                  >
-                                    <Background />
-                                    <Controls showInteractive={false} />
-                                  </ReactFlow>
-                                </div>
-                              ) : (
-                                <div className="rounded-md border">
-                                  {emptyPanel(ListRestartIcon, "No execution path", "The workflow has not exposed state records.")}
-                                </div>
-                              )}
-                            </TabsContent>
-                            <TabsContent value="definition">
-                              {definitionGraph.nodes.length > 0 ? (
-                                <div className="min-w-0 overflow-hidden rounded-md border" style={{ height: definitionGraphHeight }}>
-                                  <ReactFlow
-                                    nodes={definitionGraph.nodes}
-                                    edges={definitionGraph.edges}
-                                    edgeTypes={graphEdgeTypes}
-                                    onNodeClick={onStateNodeClick}
-                                    nodesConnectable={false}
-                                    nodesDraggable={false}
-                                    fitView
-                                    fitViewOptions={{ padding: 0.08 }}
-                                  >
-                                    <Background />
-                                    <Controls showInteractive={false} />
-                                  </ReactFlow>
-                                </div>
-                              ) : (
-                                <div className="rounded-md border">
-                                  {emptyPanel(ListRestartIcon, "No definition graph", "This installed workflow has no YAML definition graph.")}
-                                </div>
-                              )}
-                            </TabsContent>
-                          </Tabs>
-
-                          <div className="rounded-md border p-3">
-                            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                              <ClockIcon />
-                              Selected state
-                            </div>
-                            {selectedState || selectedDefinitionState ? (
-                              <div className="flex min-w-0 flex-col gap-3">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="truncate text-sm">{selectedDefinitionState?.name ?? selectedState?.name}</span>
-                                  <Badge variant={statusTone[selectedState?.status ?? "not_run"] ?? "outline"}>
-                                    {selectedState?.status ?? selectedDefinitionState?.type}
-                                  </Badge>
-                                </div>
-                                <p className="line-clamp-6 text-xs text-muted-foreground">
-                                  {selectedState?.reason ?? "Defined in workflow.yaml; no execution evidence for this state yet."}
-                                </p>
-                                <Separator />
-                                <div className="grid grid-cols-3 gap-2 text-center">
-                                  <div className="rounded-md border p-2">
-                                    <div className="text-xs text-muted-foreground">attempts</div>
-                                    <div className="text-sm font-semibold">{selectedState?.activity_attempt_ids.length ?? 0}</div>
-                                  </div>
-                                  <div className="rounded-md border p-2">
-                                    <div className="text-xs text-muted-foreground">artifacts</div>
-                                    <div className="text-sm font-semibold">{selectedState?.artifact_ids.length ?? 0}</div>
-                                  </div>
-                                  <div className="rounded-md border p-2">
-                                    <div className="text-xs text-muted-foreground">findings</div>
-                                    <div className="text-sm font-semibold">{selectedState?.finding_ids.length ?? 0}</div>
-                                  </div>
-                                </div>
-                                <div className="grid gap-2 text-xs text-muted-foreground">
-                                  {selectedState?.started_at ? (
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span>started</span>
-                                      <span>{formatDate(selectedState.started_at)}</span>
-                                    </div>
-                                  ) : null}
-                                  {selectedState?.finished_at ? (
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span>finished</span>
-                                      <span>{formatDate(selectedState.finished_at)}</span>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-                            ) : (
-                              <p className="text-sm text-muted-foreground">No state selected.</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                    <Empty>
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <InboxIcon />
+                        </EmptyMedia>
+                        <EmptyTitle>Select a workflow</EmptyTitle>
+                        <EmptyDescription>Choose a run from the recent workflow list.</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
                   </CardContent>
                 </Card>
+              ) : (
+                <>
+                  {/* Header */}
+                  <div className="flex min-h-11 items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <h2 className="truncate text-base font-semibold lg:text-lg">
+                        {workflowDetail?.evidence?.template ?? selectedWorkflow?.type ?? "Workflow"}
+                      </h2>
+                      <Badge variant={statusTone[workflowDetail?.evidence?.status ?? workflowDetail?.workflow.status ?? selectedWorkflow?.status ?? ""] ?? "outline"}>
+                        {workflowDetail?.evidence?.status ?? workflowDetail?.workflow.status ?? selectedWorkflow?.status ?? "unknown"}
+                      </Badge>
+                    </div>
+                    <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
+                      {selectedWorkflowDuration}
+                    </span>
+                  </div>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                    {workflowDetail?.runContext?.cwd ? (
+                      <span className="max-w-[180px] truncate font-mono lg:max-w-none">{workflowDetail.runContext.cwd}</span>
+                    ) : null}
+                    {selectedWorkflow?.startTime ? <span>{formatDatePrecise(selectedWorkflow.startTime)}</span> : null}
+                    {completedActivitySummary ? <span>{completedActivitySummary}</span> : null}
+                    {pendingActivitySummary ? <span>{pendingActivitySummary}</span> : null}
+                  </div>
+                  {runSummary?.activeState?.status === "running" ? (
+                    <Alert aria-live="polite" className="border-blue-500/30 bg-blue-500/10">
+                      <span className="relative mt-0.5 flex h-4 w-4 items-center justify-center">
+                        <span className="absolute h-3.5 w-3.5 animate-ping rounded-full bg-blue-500 opacity-40" />
+                        <span className="relative h-2.5 w-2.5 rounded-full bg-blue-500" />
+                      </span>
+                      <AlertTitle>Running now</AlertTitle>
+                      <AlertDescription className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-medium text-foreground">{runSummary.activeState.name}</span>
+                        {runSummary.activeState.started_at ? (
+                          <span className="text-xs tabular-nums text-muted-foreground">
+                            started {formatTimePrecise(runSummary.activeState.started_at)}
+                          </span>
+                        ) : null}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                  {workflowDetail?.runContext?.goal ? (
+                    <section className="rounded-md border bg-muted/20 px-3 py-2">
+                      <h3 className="mb-1 text-xs font-medium text-muted-foreground">Goal</h3>
+                      <p className="whitespace-pre-wrap break-words text-sm">{workflowDetail.runContext.goal}</p>
+                    </section>
+                  ) : null}
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Evidence</CardTitle>
-                    <CardDescription>Inbox, findings, logs, artifacts, sessions, and timing</CardDescription>
-                  </CardHeader>
-                  <CardContent>
+                  {(runSummary?.openInboxCount ?? 0) > 0 ? (
+                    <Alert variant="destructive">
+                      <AlertCircleIcon />
+                      <AlertTitle>{runSummary!.openInboxCount} operator decision(s) pending</AlertTitle>
+                      <AlertDescription>
+                        {workflowDetail?.evidence?.inbox.find(
+                          (i) => i.status === "open" || i.status === "waiting" || i.status === "waiting_user",
+                        )?.title ?? "Check inbox for details."}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  {detailLoading ? (
+                    <div className="flex flex-col gap-3">
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-[420px] w-full" />
+                    </div>
+                  ) : (
+                    <>
+                    {executionSteps.length > 0 ? (
+                      <section className="grid min-w-0 gap-3 lg:grid-cols-[minmax(260px,360px)_minmax(0,1fr)] lg:items-start">
+                        <div className="order-2 min-w-0 rounded-md border lg:order-1">
+                          <div className="flex h-11 items-center justify-between gap-2 border-b px-3">
+                            <h3 className="text-sm font-medium">State flow</h3>
+                            <div className="flex items-center gap-2">
+                              {workflowDetail?.workflowGraph ? (
+                                <Button variant="outline" onClick={() => setDefinitionOpen(true)}>
+                                  Definition
+                                </Button>
+                              ) : null}
+                              <span className="text-xs tabular-nums text-muted-foreground">{executionSteps.length} events</span>
+                            </div>
+                          </div>
+                          <div ref={stateFlowListRef} className="relative">
+                            {stateFlowLine ? (
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute left-7 z-10 w-px bg-border"
+                                style={{ top: stateFlowLine.top, height: stateFlowLine.height }}
+                              />
+                            ) : null}
+                            {executionSteps.map(({ state, index }) => {
+                              const durationMs = stateDurationMs(state)
+                              const failed = state.status === "failed" || state.status === "timed_out"
+                              const running = state.status === "running"
+                              const blocked = state.status === "blocked"
+                              const succeeded = state.status === "succeeded"
+                              const selected = state.id === selectedExecutionStateId
+                              return (
+                                <Message key={state.id} from="assistant" className="max-w-full gap-0">
+                                  <MessageContent className="w-full">
+                                    <button
+                                      type="button"
+                                      aria-current={selected ? "true" : undefined}
+                                      onClick={() => setSelectedExecutionStateId(state.id)}
+                                      className={cn(
+                                        "relative flex w-full gap-2 px-3 py-2 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                                        (failed || blocked) && "bg-destructive/5",
+                                        running && "bg-blue-500/10",
+                                        selected && "bg-primary/10 text-foreground ring-2 ring-primary/70 shadow-sm",
+                                      )}
+                                    >
+                                      {selected ? (
+                                        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-primary" />
+                                      ) : null}
+                                      <span className="relative flex w-8 shrink-0 justify-center pt-0.5">
+                                        <span
+                                          ref={(element) => {
+                                            stateFlowDotRefs.current[index] = element
+                                          }}
+                                          className={cn(
+                                            "relative z-20 flex h-5 w-5 items-center justify-center rounded-full bg-background",
+                                            selected && "ring-2 ring-primary",
+                                          )}
+                                        >
+                                          {succeeded ? (
+                                            <span className="text-emerald-600 dark:text-emerald-400"><CheckCircle2Icon className="h-4 w-4" /></span>
+                                          ) : failed || blocked ? (
+                                            <span className="text-destructive"><AlertCircleIcon className="h-4 w-4" /></span>
+                                          ) : running ? (
+                                            <span className="relative flex h-4 w-4 items-center justify-center">
+                                              <span className="absolute h-3 w-3 animate-ping rounded-full bg-blue-500 opacity-40" />
+                                              <span className="relative h-2.5 w-2.5 rounded-full bg-blue-500" />
+                                            </span>
+                                          ) : (
+                                            <span className="h-2.5 w-2.5 rounded-full border-2 border-muted-foreground/30" />
+                                          )}
+                                        </span>
+                                      </span>
+                                      <span className="min-w-0 flex-1">
+                                        <MessageMetadata>
+                                          <MessageMetadataItem className="tabular-nums">#{index + 1}</MessageMetadataItem>
+                                          {durationMs != null && durationMs > 0 ? (
+                                            <MessageMetadataItem className="tabular-nums">{formatDuration(durationMs)}</MessageMetadataItem>
+                                          ) : null}
+                                        </MessageMetadata>
+                                        <span className="mt-1 flex min-w-0 items-center gap-2">
+                                          <span className={cn("min-w-0 truncate text-sm font-medium", (failed || blocked) && "text-destructive")}>
+                                            {state.name}
+                                          </span>
+                                          <Badge variant={statusTone[state.status] ?? "outline"} className="shrink-0">
+                                            {state.status}
+                                          </Badge>
+                                        </span>
+                                      </span>
+                                    </button>
+                                  </MessageContent>
+                                </Message>
+                              )
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="order-1 min-w-0 rounded-md border bg-card lg:sticky lg:top-3 lg:order-2">
+                          {selectedExecutionStep ? (
+                            <div>
+                              <div
+                                className={cn(
+                                  "flex h-11 items-center border-b px-3",
+                                  selectedExecutionStep.state.status === "running" && "bg-blue-500/10",
+                                )}
+                              >
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  {selectedExecutionStep.state.status === "running" ? (
+                                    <span className="relative flex h-3.5 w-3.5 items-center justify-center">
+                                      <span className="absolute h-3 w-3 animate-ping rounded-full bg-blue-500 opacity-40" />
+                                      <span className="relative h-2.5 w-2.5 rounded-full bg-blue-500" />
+                                    </span>
+                                  ) : null}
+                                  <span className="text-sm font-medium">
+                                    {selectedExecutionStep.index + 1}. {selectedExecutionStep.state.name}
+                                  </span>
+                                  <Badge variant={statusTone[selectedExecutionStep.state.status] ?? "outline"}>
+                                    {selectedExecutionStep.state.status}
+                                  </Badge>
+                                  {stateDurationMs(selectedExecutionStep.state) != null ? (
+                                    <span className="text-xs tabular-nums text-muted-foreground">
+                                      {formatDuration(stateDurationMs(selectedExecutionStep.state)!)}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              <div className="space-y-4 p-3">
+                                {selectedExecutionDetail?.session ||
+                                selectedExecutionDetail?.stateConfig?.agent ||
+                                selectedExecutionDetail?.stateConfig?.model ? (
+                                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                    {selectedExecutionDetail?.session ? (
+                                      <>
+                                        <Badge variant="outline">{selectedExecutionDetail.session.agent}</Badge>
+                                        <span>{selectedExecutionDetail.session.role}</span>
+                                        <span>{selectedExecutionDetail.session.status}</span>
+                                      </>
+                                    ) : selectedExecutionDetail?.stateConfig?.agent ? (
+                                      <Badge variant="outline">{selectedExecutionDetail.stateConfig.agent}</Badge>
+                                    ) : null}
+                                    {selectedExecutionDetail?.stateConfig?.model ? <span>{selectedExecutionDetail.stateConfig.model}</span> : null}
+                                  </div>
+                                ) : null}
+                                {selectedExecutionDetail?.command ? (
+                                  <div className="rounded-md border bg-muted/20">
+                                    <div className="border-b px-3 py-1.5 text-xs font-medium text-muted-foreground">Tool command</div>
+                                    <pre className="max-h-36 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap break-words">{selectedExecutionDetail.command}</pre>
+                                  </div>
+                                ) : null}
+                                {selectedExecutionDetail?.promptContent ? (
+                                  <Message from="user">
+                                    <MessageMetadata className="justify-end">
+                                      <MessageMetadataItem>Prompt</MessageMetadataItem>
+                                    </MessageMetadata>
+                                    <MessageContent className="max-h-72 overflow-auto">
+                                      <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
+                                        {selectedExecutionDetail.promptContent}
+                                      </Streamdown>
+                                    </MessageContent>
+                                  </Message>
+                                ) : null}
+                                {responseTextForDisplay(selectedExecutionDetail?.responseContent) !== undefined ||
+                                selectedExecutionDetail?.responsePreviewNote ? (
+                                  <Message from="assistant" className="max-w-full">
+                                    <MessageMetadata>
+                                      <MessageMetadataItem>Response</MessageMetadataItem>
+                                    </MessageMetadata>
+                                    <MessageContent className="max-h-[520px] w-full overflow-auto rounded-md px-1 py-1">
+                                      {responseTextForDisplay(selectedExecutionDetail?.responseContent) !== undefined ? (
+                                        <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
+                                          {responseTextForDisplay(selectedExecutionDetail?.responseContent)}
+                                        </Streamdown>
+                                      ) : (
+                                        <p className="text-sm text-muted-foreground">{selectedExecutionDetail?.responsePreviewNote}</p>
+                                      )}
+                                    </MessageContent>
+                                  </Message>
+                                ) : null}
+                                {selectedExecutionDetail?.outputItems.map(({ artifact, content }) => (
+                                  <div key={artifact.id} className="rounded-md border bg-muted/20">
+                                    <div className="flex min-w-0 items-center gap-2 border-b px-3 py-1.5">
+                                      <Badge variant="outline">{artifact.kind}</Badge>
+                                      <span className="min-w-0 truncate text-xs text-muted-foreground">{artifact.path}</span>
+                                    </div>
+                                    <pre className="max-h-56 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap">{content !== undefined ? content || "(empty output)" : "(artifact content unavailable)"}</pre>
+                                  </div>
+                                ))}
+                                {selectedExecutionDetail?.findings.map((finding) => (
+                                  <div key={finding.id} className="rounded-md border px-2 py-1.5 text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"}>Severity: {finding.severity}</Badge>
+                                      <span className="font-medium">{finding.title}</span>
+                                    </div>
+                                    {finding.detail ? <p className="mt-1 text-xs text-muted-foreground">{finding.detail}</p> : null}
+                                  </div>
+                                ))}
+                                {selectedExecutionDetail &&
+                                selectedExecutionDetail.outputItems.length === 0 &&
+                                selectedExecutionDetail.findings.length === 0 &&
+                                !selectedExecutionDetail.command &&
+                                !selectedExecutionDetail.promptContent &&
+                                selectedExecutionDetail.responseContent === undefined &&
+                                selectedExecutionDetail.responsePreviewNote === undefined ? (
+                                  <span className="text-sm text-muted-foreground">No inline evidence for this state event.</span>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">Select a state event.</span>
+                          )}
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {workflowDetail?.runContext?.inputError ?? workflowDetail?.workflow.inputError ? (
+                      <div className="text-xs text-destructive">
+                        input read error: {workflowDetail?.runContext?.inputError ?? workflowDetail?.workflow.inputError}
+                      </div>
+                    ) : null}
+
+                    {/* Evidence \u2014 inline priority sections, data-present only */}
                     {workflowDetail?.evidenceError ? (
                       <Alert>
                         <AlertCircleIcon />
@@ -1007,148 +1074,90 @@ function App() {
                         <AlertDescription>{workflowDetail.evidenceError}</AlertDescription>
                       </Alert>
                     ) : workflowDetail?.evidence ? (
-                      <Tabs defaultValue="logs">
-                        <TabsList className="flex h-auto flex-wrap justify-start">
-                          <TabsTrigger value="logs">Logs</TabsTrigger>
-                          <TabsTrigger value="findings">Findings</TabsTrigger>
-                          <TabsTrigger value="inbox">Inbox</TabsTrigger>
-                          <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
-                          <TabsTrigger value="sessions">Sessions</TabsTrigger>
-                          <TabsTrigger value="timing">Timing</TabsTrigger>
-                          <TabsTrigger value="definition">Definition</TabsTrigger>
-                        </TabsList>
-                        <TabsContent value="inbox">
-                          {workflowDetail.evidence.inbox.length === 0 ? (
-                            emptyPanel(InboxIcon, "No inbox items", "There are no open or historical decision items.")
-                          ) : (
-                            simpleTable(
-                              ["Status", "Title", "Created"],
-                              workflowDetail.evidence.inbox.map((item) => [
-                                inboxStatusBadgeCell(item.status),
-                                textCell(item.title, item.detail),
-                                formatDate(item.created_at),
-                              ]),
-                            )
-                          )}
-                        </TabsContent>
-                        <TabsContent value="findings">
-                          {workflowDetail.evidence.findings.length === 0 ? (
-                            emptyPanel(AlertCircleIcon, "No findings", "The evidence view has no recorded findings.")
-                          ) : (
-                            simpleTable(
-                              ["Severity", "Title", "Target"],
-                              workflowDetail.evidence.findings.map((finding) => [
-                                findingSeverityBadgeCell(finding.severity),
-                                textCell(finding.title, finding.detail),
-                                finding.target !== undefined ? finding.target : "not reported",
-                              ]),
-                            )
-                          )}
-                        </TabsContent>
-                        <TabsContent value="logs">
-                          {workflowDetail.evidence.logs.length === 0 ? (
-                            emptyPanel(TerminalIcon, "No logs", "No live output attempts are attached.")
-                          ) : (
-                            simpleTable(
-                              ["State", "Status", "Command"],
-                              workflowDetail.evidence.logs.map((log) => [
-                                log.state_name !== undefined ? log.state_name : log.kind,
-                                statusBadgeCell(log.status),
-                                textCell(log.reason, log.read_command),
-                              ]),
-                            )
-                          )}
-                        </TabsContent>
-                        <TabsContent value="artifacts">
-                          {workflowDetail.evidence.artifacts.length === 0 ? (
-                            emptyPanel(FileTextIcon, "No artifacts", "No artifacts are attached to this workflow.")
-                          ) : (
-                            simpleTable(
-                              ["Kind", "Path", "Read"],
-                              workflowDetail.evidence.artifacts.map((artifact) => [
-                                artifact.kind,
-                                artifact.path,
-                                artifact.read_command,
-                              ]),
-                            )
-                          )}
-                        </TabsContent>
-                        <TabsContent value="sessions">
-                          {workflowDetail.evidence.sessions.length === 0 ? (
-                            emptyPanel(UserRoundIcon, "No sessions", "No agent sessions are attached.")
-                          ) : (
-                            simpleTable(
-                              ["Agent", "Role", "Status"],
-                              workflowDetail.evidence.sessions.map((session) => [
-                                session.agent,
-                                session.role,
-                                statusBadgeCell(session.status),
-                              ]),
-                            )
-                          )}
-                        </TabsContent>
-                        <TabsContent value="timing">
-                          {simpleTable(
-                            ["Kind", "Count", "Duration"],
-                            workflowDetail.evidence.timing.by_kind.map((timing) => [
-                              timing.kind,
-                              String(timing.count),
-                              formatDuration(timing.duration_ms),
-                            ]),
-                          )}
-                          <Separator className="my-4" />
-                          {workflowDetail.evidence.timing.slowest_attempts.length === 0
-                            ? emptyPanel(TimerIcon, "No completed attempts", "Timing is available after attempts finish.")
-                            : simpleTable(
-                                ["Attempt", "Status", "Duration"],
-                                workflowDetail.evidence.timing.slowest_attempts.map((attempt) => [
-                                  attempt.state_name !== undefined ? attempt.state_name : attempt.kind,
-                                  statusBadgeCell(attempt.status),
-                                  formatDuration(attempt.duration_ms),
-                                ]),
-                              )}
-                        </TabsContent>
-                        <TabsContent value="definition">
-                          {workflowDetail.workflowGraphError ? (
-                            <Alert>
-                              <AlertCircleIcon />
-                              <AlertTitle>Definition graph unavailable</AlertTitle>
-                              <AlertDescription>{workflowDetail.workflowGraphError}</AlertDescription>
-                            </Alert>
-                          ) : workflowDetail.workflowGraph ? (
-                            <MermaidDiagram source={workflowDetail.workflowGraph.mermaid} />
-                          ) : (
-                            emptyPanel(ListRestartIcon, "No definition graph", "This installed workflow has no generated Mermaid graph.")
-                          )}
-                        </TabsContent>
-                      </Tabs>
+                      <div className="space-y-3">
+                        {workflowDetail.evidence.findings.length > 0 ? (
+                          <section>
+                            <h3 className="mb-1.5 text-xs font-medium text-muted-foreground">Findings ({workflowDetail.evidence.findings.length})</h3>
+                            <div className="space-y-1.5">
+                              {workflowDetail.evidence.findings.map((finding) => (
+                                <div key={finding.id} className="rounded-md border px-3 py-2">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"} className="shrink-0">Severity: {finding.severity}</Badge>
+                                    <span className="min-w-0 truncate text-sm font-medium">{finding.title}</span>
+                                  </div>
+                                  {finding.detail ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{finding.detail}</p> : null}
+                                  {finding.target !== undefined ? <span className="mt-0.5 block truncate text-xs text-muted-foreground">\u2192 {finding.target}</span> : null}
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        ) : null}
+
+                        {(() => {
+                          const stateArtifactIds = new Set(workflowDetail.evidence.states.flatMap(s => s.artifact_ids))
+                          const profileId = workflowDetail.runContext?.profileSnapshotArtifactId
+                          const runArtifacts = workflowDetail.evidence.artifacts.filter(a => !stateArtifactIds.has(a.id) && a.id !== profileId)
+                          if (runArtifacts.length === 0) return null
+                          return (
+                            <section>
+                              <h3 className="mb-1.5 text-xs font-medium text-muted-foreground">Run evidence</h3>
+                              <div className="space-y-1.5">
+                                {runArtifacts.map((artifact) => {
+                                  const ac = workflowDetail.artifactContents?.[artifact.id]
+                                  const content = artifactDisplayContent(ac)
+                                  return (
+                                    <div key={artifact.id} className="rounded-md border">
+                                      <div className="px-3 py-2">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                          <Badge variant="outline" className="shrink-0">{artifactDisplayTitle(artifact.kind)}</Badge>
+                                          {artifactDisplayPath(artifact) ? (
+                                            <span className="min-w-0 truncate text-sm text-muted-foreground">{artifactDisplayPath(artifact)}</span>
+                                          ) : null}
+                                        </div>
+                                        {artifactDisplayDescription(artifact.kind) ? (
+                                          <p className="mt-1 text-xs text-muted-foreground">{artifactDisplayDescription(artifact.kind)}</p>
+                                        ) : null}
+                                      </div>
+                                      {content ? (
+                                        <pre className="max-h-48 max-w-full overflow-auto whitespace-pre-wrap break-words border-t bg-muted/30 px-3 py-2 text-xs">{content}</pre>
+                                      ) : null}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </section>
+                          )
+                        })()}
+
+                      </div>
                     ) : (
                       emptyPanel(ListRestartIcon, "No evidence snapshot", "The workflow has not exposed a Tychonic result yet.")
                     )}
-                  </CardContent>
-                </Card>
-              </>
-            )}
-              </div>
-            </>
-          )}
-        </section>
-      </main>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
+
+      <Dialog open={definitionOpen} onOpenChange={setDefinitionOpen}>
+        <DialogContent aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>Definition</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="max-h-[72dvh]">
+            <div className="min-w-0 pr-2">
+              {workflowDetail?.workflowGraph ? <MermaidDiagram source={workflowDetail.workflowGraph.mermaid} /> : null}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   )
 }
 
-function statusBadgeCell(value: string) {
-  return <Badge variant={statusTone[value] ?? "outline"}>{value}</Badge>
-}
-
-function findingSeverityBadgeCell(value: string) {
-  return <Badge variant={findingSeverityTone[value.toLowerCase()] ?? "outline"}>{value}</Badge>
-}
-
-function inboxStatusBadgeCell(value: string) {
-  return <Badge variant={inboxStatusTone[value.toLowerCase()] ?? "outline"}>{value}</Badge>
-}
 
 function formatWorkflowDuration(workflow: WorkflowSummary) {
   if (!workflow.closeTime) return "open"
@@ -1156,6 +1165,12 @@ function formatWorkflowDuration(workflow: WorkflowSummary) {
   const closeMs = Date.parse(workflow.closeTime)
   if (!Number.isFinite(startMs) || !Number.isFinite(closeMs) || closeMs < startMs) return "not reported"
   return formatDuration(closeMs - startMs)
+}
+
+function formatOpenWorkflowDuration(workflow: WorkflowSummary) {
+  const startMs = Date.parse(workflow.startTime)
+  if (!Number.isFinite(startMs)) return "open"
+  return `open ${formatDuration(Math.max(0, Date.now() - startMs))}`
 }
 
 function workflowRunSummary(evidence: WorkflowEvidence) {
@@ -1209,235 +1224,43 @@ function isProblemStatus(status: string) {
   return status === "failed" || status === "blocked" || status === "timed_out"
 }
 
-type StateGraphNode = Node<{ label: ReactNode }>
-type StateTone = "running" | "succeeded" | "failed" | "neutral"
-type OutcomeEdgeData = {
-  outcome?: "start" | "pass" | "fail" | "sequence"
-  offset?: number
-  tone?: StateTone
+function stateDurationMs(state: WorkflowStateRecord): number | undefined {
+  if (!state.started_at || !state.finished_at) return undefined
+  const startedAt = Date.parse(state.started_at)
+  const finishedAt = Date.parse(state.finished_at)
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || finishedAt < startedAt) return undefined
+  return finishedAt - startedAt
 }
 
-const graphEdgeTypes = {
-  outcome: OutcomeEdge,
+function isOutputArtifactKind(kind: string) {
+  return kind.endsWith("_output")
 }
 
-function workflowGraphViewportHeight(nodeCount: number) {
-  return Math.min(860, Math.max(520, nodeCount * 118))
+function artifactDisplayContent(
+  artifact: { content: string } | { truncated: true; size: number } | undefined,
+): string | undefined {
+  if (!artifact) return undefined
+  if ("content" in artifact) return artifact.content
+  return `Artifact is too large for inline preview (${formatBytes(artifact.size)}).`
 }
 
-function OutcomeEdge({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  markerEnd,
-  label,
-  data,
-}: EdgeProps<Edge<OutcomeEdgeData>>) {
-  const offset = typeof data?.offset === "number" ? data.offset : 0
-  const edgeClassName = cn(
-    "tychonic-state-edge",
-    data?.outcome === "fail" ? "tychonic-state-edge-failed" : undefined,
-    data?.tone ? `tychonic-state-edge-${data.tone}` : undefined,
-  )
-  const edgeSourceX = sourceX + offset
-  const edgeTargetX = targetX + offset
-  const midY = sourceY + (targetY - sourceY) / 2
-  const path = `M ${edgeSourceX} ${sourceY} C ${edgeSourceX} ${midY} ${edgeTargetX} ${midY} ${edgeTargetX} ${targetY}`
-  const labelX = edgeSourceX + (edgeTargetX - edgeSourceX) / 2
-  const labelY = midY
-
-  return (
-    <>
-      <BaseEdge id={id} path={path} markerEnd={markerEnd} className={edgeClassName} />
-      {label ? (
-        <EdgeLabelRenderer>
-          <div
-            className="nodrag nopan rounded-sm border bg-background px-1.5 py-0.5 text-xs font-medium text-muted-foreground shadow-sm"
-            style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-          >
-            {label}
-          </div>
-        </EdgeLabelRenderer>
-      ) : null}
-    </>
-  )
+function artifactDisplayTitle(kind: string) {
+  if (kind === "worktree_patch") return "Final diff"
+  return kind
 }
 
-function definitionStateGraph(definition: WorkflowDefinitionGraph | undefined, states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
-  if (!definition) return { nodes: [], edges: [] }
-
-  const stateNames = new Set(definition.states.map((state) => state.name))
-  const latestStates = latestStateRecordsByName(states)
-  const graphX = 220
-  const rowHeight = 150
-  const stateNodes = definition.states.map((state, index) => {
-    const latestState = latestStates.get(state.name)
-    return {
-      id: state.name,
-      type: "default",
-      position: { x: graphX, y: (index + 1) * rowHeight },
-      sourcePosition: Position.Bottom,
-      targetPosition: Position.Top,
-      className: cn("tychonic-state-node", `tychonic-state-node-${stateToneClass(latestState?.status ?? "not_run")}`),
-      data: {
-        label: (
-          <div className="flex min-w-0 flex-col gap-1 text-left">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-xs text-muted-foreground">{index + 1}</span>
-              <span className="truncate text-sm font-medium">{state.name}</span>
-            </div>
-            <span className="text-xs text-muted-foreground">
-              {state.type}
-              {latestState ? ` / ${latestState.status}` : ""}
-            </span>
-          </div>
-        ),
-      },
-    } satisfies StateGraphNode
-  })
-  const nodes: StateGraphNode[] = [
-    {
-      id: "__start",
-      type: "input",
-      position: { x: graphX, y: 0 },
-      sourcePosition: Position.Bottom,
-      className: "tychonic-state-node tychonic-state-node-neutral",
-      data: { label: <span className="text-sm font-medium">start</span> },
-    },
-    ...stateNodes,
-    {
-      id: "__finish",
-      type: "output",
-      position: { x: graphX, y: (definition.states.length + 1) * rowHeight },
-      targetPosition: Position.Top,
-      className: "tychonic-state-node tychonic-state-node-neutral",
-      data: { label: <span className="text-sm font-medium">finish</span> },
-    },
-  ]
-  const edges: Edge[] = [
-    {
-      id: "__start:pass:start",
-      source: "__start",
-      target: definition.start,
-      type: "outcome",
-      markerEnd: { type: MarkerType.ArrowClosed },
-      className: "tychonic-state-edge",
-      data: { outcome: "start", offset: 0 },
-    },
-    ...definition.edges.flatMap((edge) => {
-      const target = edge.finish ? "__finish" : edge.to
-      if (!target || (!edge.finish && !stateNames.has(target))) return []
-      return [
-        {
-          id: edge.id,
-          source: edge.from,
-          target,
-          type: "outcome",
-          label: edge.label,
-          markerEnd: { type: MarkerType.ArrowClosed },
-          className: cn("tychonic-state-edge", edge.label === "fail" ? "tychonic-state-edge-failed" : undefined),
-          data: { outcome: edge.label, offset: edge.label === "fail" ? 92 : -92 },
-        } satisfies Edge,
-      ]
-    }),
-  ]
-  return { nodes, edges }
+function artifactDisplayDescription(kind: string) {
+  if (kind === "worktree_patch") {
+    return "Patch captured from the isolated worktree after the workflow stopped."
+  }
+  return undefined
 }
 
-function executionStateGraph(states: WorkflowStateRecord[]): { nodes: StateGraphNode[]; edges: Edge[] } {
-  const graphX = 220
-  const rowHeight = 130
-  const nodes = states.map((state, index) => {
-    return {
-      id: state.id,
-      type: "default",
-      position: { x: graphX, y: index * rowHeight },
-      sourcePosition: Position.Bottom,
-      targetPosition: Position.Top,
-      className: cn("tychonic-state-node", `tychonic-state-node-${stateToneClass(state.status)}`),
-      data: {
-        label: (
-          <div className="flex min-w-0 flex-col gap-1 text-left">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-xs text-muted-foreground">{index + 1}</span>
-              <span className="truncate text-sm font-medium">{state.name}</span>
-            </div>
-            <span className="text-xs text-muted-foreground">{state.status}</span>
-          </div>
-        ),
-      },
-    } satisfies StateGraphNode
-  })
-  const edges = states.slice(1).map((state, index) => {
-    const previous = states[index]
-    return {
-      id: `${previous.id}:${state.id}:${index}`,
-      source: previous.id,
-      target: state.id,
-      type: "outcome",
-      markerEnd: { type: MarkerType.ArrowClosed },
-      className: cn("tychonic-state-edge", `tychonic-state-edge-${stateToneClass(state.status)}`),
-      animated: state.status === "running",
-      data: { outcome: "sequence", offset: 0, tone: stateToneClass(state.status) },
-    } satisfies Edge
-  })
-  return { nodes, edges }
+function artifactDisplayPath(artifact: WorkflowEvidence["artifacts"][number]) {
+  if (artifact.kind === "worktree_patch") return undefined
+  return artifact.path
 }
 
-function latestStateRecordsByName(states: WorkflowStateRecord[]): Map<string, WorkflowStateRecord> {
-  return new Map(states.map((state) => [state.name, state]))
-}
-
-function latestStateRecordByNameOrId(states: WorkflowStateRecord[], nameOrId: string | undefined): WorkflowStateRecord | undefined {
-  if (!nameOrId) return undefined
-  const byName = latestStateRecordsByName(states).get(nameOrId)
-  return byName ?? states.find((state) => state.id === nameOrId)
-}
-
-function stateToneClass(status: string): StateTone {
-  if (status === "succeeded" || status === "COMPLETED") return "succeeded"
-  if (status === "failed" || status === "blocked" || status === "timed_out" || status === "FAILED") return "failed"
-  if (status === "running" || status === "RUNNING") return "running"
-  return "neutral"
-}
-
-function textCell(title: string, detail: string) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <span className="truncate">{title}</span>
-      <span className="line-clamp-2 text-xs text-muted-foreground">{detail}</span>
-    </div>
-  )
-}
-
-function simpleTable(headers: string[], rows: Array<Array<ReactNode>>) {
-  return (
-    <ScrollArea className="h-[360px]">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {headers.map((header) => (
-              <TableHead key={header}>{header}</TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row, rowIndex) => (
-            <TableRow key={rowIndex}>
-              {row.map((cell, cellIndex) => (
-                <TableCell key={`${rowIndex}:${cellIndex}`} className={cn(cellIndex === 0 ? "w-[140px]" : "max-w-[520px]")}>
-                  {cell}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </ScrollArea>
-  )
-}
 
 function MermaidDiagram({ source }: { source: string }) {
   const diagramId = `tychonic-mermaid-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`
@@ -1485,11 +1308,11 @@ function MermaidDiagram({ source }: { source: string }) {
   }
 
   return (
-    <div className="overflow-auto rounded-md border bg-muted/20 p-3">
+    <div className="overflow-hidden rounded-md border bg-muted/20 p-3">
       <div
         ref={containerRef}
         aria-label="Workflow definition Mermaid diagram"
-        className="min-h-[320px] min-w-[640px]"
+        className="min-h-[240px] min-w-0 [&_svg]:h-auto [&_svg]:max-w-full lg:min-h-[320px]"
         role="img"
       />
     </div>
@@ -1522,10 +1345,55 @@ function formatDate(value: string) {
   }).format(date)
 }
 
+function formatDatePrecise(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date)
+}
+
+function formatRelativeTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const diff = Date.now() - date.getTime()
+  if (diff < 60_000) return "just now"
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`
+  return formatDate(value)
+}
+
+function projectName(cwd: string | undefined): string | undefined {
+  if (!cwd) return undefined
+  const segments = cwd.replace(/\/+$/, "").split("/")
+  return segments[segments.length - 1] || undefined
+}
+
+function formatTimePrecise(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date)
+}
+
 function formatDuration(ms: number) {
   if (ms < 1000) return `${ms} ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`
   return `${Math.round(ms / 60_000)} min`
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 
 export default App

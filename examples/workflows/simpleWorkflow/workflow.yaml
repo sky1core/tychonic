@@ -33,7 +33,7 @@ states:
     on_pass:
       goto: review
     on_fail:
-      finish: verify failed
+      goto: work
   review:
     type: review
     on_fail_return_to: work

@@ -1,8 +1,8 @@
 # simpleWorkflow
 
-`simpleWorkflow` runs a work → verify → review development loop. When review
-fails, the generated YAML wrapper sends the structured review feedback back to
-`work` until review passes or `max_steps` is exhausted.
+`simpleWorkflow` runs a work → verify → review development loop. When `verify`
+or `review` fails, the generated YAML wrapper returns to `work` until the loop
+passes or `max_steps` is exhausted.
 
 ## Purpose
 
@@ -11,10 +11,10 @@ one deterministic verification gate, and one structured review.
 
 ## States
 
-| State | TYPE | Failed review returns to |
+| State | TYPE | Failure path |
 |---|---|---|
-| `work` | `work` | - |
-| `verify` | `verify` | - |
+| `work` | `work` | finish as `work failed` |
+| `verify` | `verify` | `work` |
 | `review` | `review` | `work` |
 
 Inspect this workflow's installed YAML-derived profile:
@@ -79,9 +79,10 @@ tychonic run simpleWorkflow --input-file ./simple-input.json --wait
 
 ## Loop Policy
 
-The loop is declared in `workflow.yaml`: `review.on_fail.goto` returns to
-`work`, and `max_steps` is the stop condition. `states.work.resume` is an
-agent-session resume budget for the worker state.
+The loop is declared in `workflow.yaml`: `verify.on_fail.goto` and
+`review.on_fail.goto` both return to `work`, and `max_steps` is the stop
+condition. `states.work.resume` is an agent-session resume budget for the
+worker state.
 
 ## Recovery
 
@@ -97,13 +98,13 @@ tychonic status --workflow-id <id>
 tychonic rerun <id> --state <work|verify|review> --reason "<what changed>"
 ```
 
-Ordinary state results are not rerun recovery. A failed verification command,
-a parsed failing review verdict, or malformed reviewer output remains the
-workflow's normal state-machine result.
+Ordinary state results are not rerun recovery. A failed verification command or
+a parsed failing review verdict returns to `work` through the declared loop. A
+malformed reviewer output remains the workflow's normal state-machine result.
 
 The run can also end in terminal `waiting_user` when `max_steps` is exhausted
-with unresolved findings. Recover by inspecting evidence and starting a fresh
-run with adjusted input or config:
+with unresolved verification failures or review findings. Recover by inspecting
+evidence and starting a fresh run with adjusted input or config:
 
 ```sh
 tychonic inbox --workflow-id <id>

@@ -149,7 +149,7 @@ Generated wrappers may call these activities:
 - `startRunActivity`
 - `collectGitFactsActivity`
 - `createWorktreeActivity`
-- `cleanupWorktreeActivity`
+- `extractWorktreePatchActivity`
 - `runVerifyActivity`
 - `runWorkerActivity`
 - `runReviewActivity`

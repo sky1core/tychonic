@@ -198,6 +198,58 @@ export const declarativeWorkflowContractChecks: readonly ContractCheck[] = [
         if (!source.includes("runVerifyActivity: heartbeatAct.runVerifyActivity")) {
           throw new Error("generated workflow does not route command activity through heartbeat proxy");
         }
+        if (!source.includes("extractWorktreePatchActivity: heartbeatAct.extractWorktreePatchActivity")) {
+          throw new Error("generated workflow does not wire extractWorktreePatchActivity for finish-time patch capture");
+        }
+        if (source.includes("cleanupWorktreeActivity")) {
+          throw new Error("generated workflow still references the deprecated cleanupWorktreeActivity");
+        }
+      });
+    }
+  },
+  {
+    area: "declarativeWorkflow",
+    name: "generated workflows absorb transient activity failures",
+    run() {
+      expectAccept("declarative generated activity retry policy", () => {
+        const spec = parseDeclarativeWorkflowSpecYaml({
+          bundleName: "retryPolicyWorkflow",
+          source: [
+            "version: tychonic.workflow.v1",
+            "name: retryPolicyWorkflow",
+            "worktree: false",
+            "max_steps: 3",
+            "start: verify",
+            "states:",
+            "  verify:",
+            "    type: verify",
+            "    command: echo ok",
+            "    on_pass:",
+            "      finish: true",
+            "    on_fail:",
+            "      finish: verify failed",
+            ""
+          ].join("\n")
+        });
+        const source = generateDeclarativeWorkflowModule({
+          bundleName: "retryPolicyWorkflow",
+          spec
+        });
+        if (!source.includes("initialInterval: \"5 seconds\"")) {
+          throw new Error("generated workflow activity retry initialInterval is too short to avoid hammering external systems");
+        }
+        if (!source.includes("maximumInterval: \"10 minutes\"")) {
+          throw new Error("generated workflow activity retry does not cap backoff for transient failure absorption");
+        }
+        if (!source.includes("backoffCoefficient: 2")) {
+          throw new Error("generated workflow activity retry backoffCoefficient drift from documented contract");
+        }
+        if (!source.includes("maximumAttempts: 100")) {
+          throw new Error("generated workflow activity retry budget is too narrow for transient failure absorption");
+        }
+        if (!source.includes("retry: transientRetry")) {
+          throw new Error("generated workflow proxies do not share the transient retry policy");
+        }
       });
     }
   },

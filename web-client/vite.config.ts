@@ -7,6 +7,7 @@ const statusUiApiTarget = process.env.TYCHONIC_WEB_API_TARGET ?? 'http://127.0.0
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: './',
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {

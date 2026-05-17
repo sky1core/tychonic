@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { createIsolatedWorktree, removeIsolatedWorktree } from "../src/bootstrap/worktree.js";
+import { createIsolatedWorktree } from "../src/bootstrap/worktree.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -113,28 +113,60 @@ describe("createIsolatedWorktree", () => {
     );
   });
 
-  it("removes a Tychonic-owned git worktree and its source metadata", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-cleanup-"));
+  it("initializes submodules in the isolated worktree so submodule files are readable", async () => {
+    const submoduleSource = await mkdtemp(join(tmpdir(), "tychonic-submodule-source-"));
+    await execFileAsync("git", ["init"], { cwd: submoduleSource });
+    await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd: submoduleSource });
+    await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd: submoduleSource });
+    await writeFile(join(submoduleSource, "library.txt"), "library content\n", "utf8");
+    await execFileAsync("git", ["add", "library.txt"], { cwd: submoduleSource });
+    await execFileAsync("git", ["commit", "-m", "library seed"], { cwd: submoduleSource });
+
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-submodule-"));
     const worktreeParentDir = await makeWorktreeParentDir();
     await execFileAsync("git", ["init"], { cwd });
     await execFileAsync("git", ["config", "user.name", "Tychonic Test"], { cwd });
     await execFileAsync("git", ["config", "user.email", "tychonic@example.invalid"], { cwd });
-    await writeFile(join(cwd, "README.md"), "visible\n", "utf8");
-    await execFileAsync("git", ["add", "README.md"], { cwd });
-    await execFileAsync("git", ["commit", "-m", "initial"], { cwd });
 
-    const isolated = await createIsolatedWorktree({ cwd, runId: "run_cleanup", worktreeParentDir });
-    const isolatedRoot = dirname(isolated.path);
-    await removeIsolatedWorktree({ cwd, worktreePath: isolated.path, worktreeParentDir });
-
-    await expect(access(isolated.path)).rejects.toThrow();
-    await expect(access(isolatedRoot)).rejects.toThrow();
-    const sourceWorktrees = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
+    // Git's CVE-2022-39253 mitigation disables the `file://` submodule transport
+    // by default. The local fixture above uses a `file:` path, so allow that
+    // protocol via env vars so each git sub-process (submodule add, then the
+    // `git submodule update --init --recursive` run inside `createIsolatedWorktree`)
+    // inherits the override.
+    const fileAllowEnv = {
+      ...process.env,
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "protocol.file.allow",
+      GIT_CONFIG_VALUE_0: "always"
+    };
+    await execFileAsync("git", ["submodule", "add", submoduleSource, "vendor/lib"], {
       cwd,
-      encoding: "utf8"
+      env: fileAllowEnv
     });
-    expect(sourceWorktrees.stdout).not.toContain(isolated.path);
-    expect(sourceWorktrees.stdout).not.toContain("run_cleanup");
+    await execFileAsync("git", ["commit", "-m", "add submodule"], { cwd });
+
+    const prevCount = process.env.GIT_CONFIG_COUNT;
+    const prevKey = process.env.GIT_CONFIG_KEY_0;
+    const prevValue = process.env.GIT_CONFIG_VALUE_0;
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GIT_CONFIG_KEY_0 = "protocol.file.allow";
+    process.env.GIT_CONFIG_VALUE_0 = "always";
+    let isolated;
+    try {
+      isolated = await createIsolatedWorktree({ cwd, runId: "run_submodule", worktreeParentDir });
+    } finally {
+      if (prevCount === undefined) delete process.env.GIT_CONFIG_COUNT;
+      else process.env.GIT_CONFIG_COUNT = prevCount;
+      if (prevKey === undefined) delete process.env.GIT_CONFIG_KEY_0;
+      else process.env.GIT_CONFIG_KEY_0 = prevKey;
+      if (prevValue === undefined) delete process.env.GIT_CONFIG_VALUE_0;
+      else process.env.GIT_CONFIG_VALUE_0 = prevValue;
+    }
+
+    expect(isolated.mode).toBe("git_worktree");
+    await expect(readFile(join(isolated.path, "vendor", "lib", "library.txt"), "utf8")).resolves.toBe(
+      "library content\n"
+    );
   });
 
   it("does not follow TMPDIR back into the target project", async () => {

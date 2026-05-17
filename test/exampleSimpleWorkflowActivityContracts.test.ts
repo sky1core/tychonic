@@ -18,6 +18,7 @@ describe("simpleWorkflow YAML activity contract", () => {
     expect(source).toContain('const result = await ctx.work("work"');
     expect(source).toContain('const result = await ctx.verify("verify");');
     expect(source).toContain('const result = await ctx.review("review"');
+    expect(source).toContain('if (!result.passed) {\n          current = "work";\n          continue;\n        }');
     expect(source).toContain('const returnTo = assertReviewFailReturnTo(input.profile, "review", "work");');
     expect(source).toContain(
       'addDeclarativeReviewFeedback(feedbacksByState, returnTo, declarativeReviewFeedback("review", result));'

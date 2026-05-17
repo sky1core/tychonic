@@ -99,6 +99,28 @@ caller-owned run record to add them.
 Retries that change product state belong in workflow code with explicit state
 NAMEs, not in Temporal activity proxy retry.
 
+Temporal activity proxy retry serves a different layer: it absorbs transient
+infrastructure failure — worker crash, heartbeat timeout caused by a dead
+worker PID, transient network loss between worker and Temporal, transient
+external API failure — so a long-running workflow survives operator-visible
+disruptions (token limit cool-downs, network blips, laptop suspend) without
+human intervention. Activities that produce a structured contract result
+(succeeded, failed, timed_out, blocked) on their own return path are not
+retried by the proxy; only thrown exceptions re-enter the retry policy. Errors
+thrown as `ApplicationFailure.nonRetryable` skip retry entirely and reach
+workflow code immediately, matching their permanent-error semantics.
+
+Generated declarative workflow activities share one transient retry policy:
+`initialInterval: 5 seconds`, `maximumInterval: 10 minutes`,
+`backoffCoefficient: 2`, `maximumAttempts: 100`. The 5-second floor avoids
+hammering external systems on the first retry, the interval cap keeps later
+backoffs bounded, and the attempt budget together with the cap covers
+transient outages on the order of hours without collapsing into an infinite
+loop. When the budget is exhausted, the thrown
+error reaches workflow code, which preserves the failure evidence and keeps
+the recoverable rerun path (root `SPEC.md` "Recoverable state failure stays
+rerunnable").
+
 An explicit state rerun is a new workflow decision to invoke the same state NAME
 again. It appends a new state record and activity attempt record. It does not
 rewrite, delete, or reinterpret the prior failed/timed-out/blocked attempt.
@@ -118,7 +140,7 @@ Temporal activity start-to-close envelopes and worker drain defaults are
 intentionally more generous than these command defaults so long-running local
 checks can finish or hit their own configured timeout. Temporal heartbeat
 timeout is shorter on generated declarative workflow activities that actually
-send heartbeats (`work`, `verify`, `review`, and worktree cleanup): they use
+send heartbeats (`work`, `verify`, `review`, and worktree-patch extract): they use
 `30 seconds` so a worker/runtime crash releases the in-flight activity back to
 Temporal promptly after restart instead of pinning an open workflow behind a
 dead worker PID.
@@ -143,6 +165,25 @@ the activity entrypoint and remain active even when the child emits no output.
 
 Multi-line commands run in fail-fast shell mode. If any line exits non-zero, the
 activity fails immediately and later lines do not run.
+
+## Worktree Activity Pair
+
+Workflows that need an isolated worktree use exactly two activities:
+
+- **`createWorktreeActivity`** — creates the isolated worktree under the
+  Tychonic-owned parent directory and returns `worktreePath`,
+  `worktreeParentDir`, `baseHead`. Called once per workflow from
+  `ctx.createWorktree()`.
+- **`extractWorktreePatchActivity`** — captures a `worktree_patch` artifact
+  (cumulative diff `baseHead..HEAD` including staged and unstaged changes)
+  from the worktree without removing the worktree directory. Called once per
+  workflow from `ctx.finish` / `ctx.finishWaitingUser`. Idempotent: a repeat
+  call returns the existing patch artifact instead of writing a duplicate.
+
+No Tychonic activity removes a worktree directory. Worktrees are
+operator-owned data: the `worktreePath` value is preserved in the workflow
+result for `tychonic status --include-result` to surface, and the operator
+removes worktrees with standard tools when they are no longer needed.
 
 ## Verification Boundary
 

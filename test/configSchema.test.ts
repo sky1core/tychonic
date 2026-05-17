@@ -6,8 +6,7 @@ import {
   activityTypeContracts,
   activityTimeoutMs,
   defaultActivityTimeoutMs,
-  optionalStateConfig,
-  requiredActivity
+  optionalStateConfig
 } from "../src/catalog/types.js";
 
 describe("activity-centric config schema", () => {
@@ -39,7 +38,7 @@ describe("activity-centric config schema", () => {
       }
     });
 
-    expect(requiredActivity(config, "work", "work").agent).toBe("claude");
+    expect(optionalStateConfig(config, "work", "work")?.agent).toBe("claude");
     expect(optionalStateConfig(config, "missing", "verify")).toBeUndefined();
   });
 

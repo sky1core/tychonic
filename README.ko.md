@@ -15,6 +15,8 @@ Codex, Claude Code, Gemini CLI, Kiro CLI, shell check, review gate를 묶는
 - 작업을 `work`, `verify`, `review` state로 명확하게 실행합니다.
 - run 상태를 Temporal에 남겨 CLI 종료와 runtime 재시작 후에도 이어갈 수 있습니다.
 - agent 작업은 격리된 worktree에서 실행하고, operator가 결과 적용 여부를 결정합니다.
+  workflow 종료 후에도 worktree는 보존되며, git submodule이 있는 repo는 자동으로
+  초기화됩니다.
 - prompt, output, session, artifact, finding, inbox item을 evidence로 남깁니다.
 - state마다 agent, model, reasoning effort를 다르게 지정할 수 있습니다.
 - 품질, 비용, token 사용량에 맞춰 agent CLI와 model 계정을 나눠 쓸 수 있습니다.
@@ -178,6 +180,18 @@ tychonic web
 
 이 명령은 기본적으로 `127.0.0.1`에 bind하며 Temporal-backed workflow summary를
 보여주는 로컬 상태 화면만 제공합니다. team service나 public API가 아닙니다.
+브라우저 화면은 최근 workflow run 목록, 선택한 run의 state flow, 선택한 state의
+상세 pane을 보여줍니다. 상세 pane에는 그 state와 관련된 prompt, agent response,
+artifact, session, workflow definition metadata가 표시됩니다. 완료된 state는
+작게 접고, running/failed/agent state는 operator가 무엇을 시켰고 agent가 무엇을
+반환했는지 판단하는 데 필요한 evidence를 펼칩니다.
+
+페이지는 `/api/events`로 상태 변경 알림을 받고, 선택한 workflow가 바뀌면
+Temporal-backed 데이터를 다시 읽습니다. event 연결이 실패해도 `Refresh` 버튼으로
+수동 갱신할 수 있습니다. local UI를 loopback reverse proxy나 Tailscale serve
+경로로 볼 때는 `tychonic web`을 loopback에 bind한 채 proxied `Host` header를
+`TYCHONIC_WEB_ALLOWED_HOSTS=<host1>,<host2>`에 지정하십시오. proxy는
+`text/event-stream` 응답을 buffering 없이 통과시켜야 합니다.
 
 no-agent smoke가 통과한 뒤에는 `simpleWorkflow` 같은 agent workflow를 설치합니다.
 그 workflow의 `defaultProfile`은 외부 agent CLI를 사용하고 `npm run typecheck`,

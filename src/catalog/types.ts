@@ -1,3 +1,4 @@
+import { ApplicationFailure } from "@temporalio/common";
 import { z } from "zod";
 import { hasInlineSecrets } from "./inlineSecrets.js";
 import { BUILTIN_AGENT_NAMES, isBuiltInAgentName } from "../adapters/index.js";
@@ -163,7 +164,10 @@ export function defaultActivityTimeoutMs(type: ActivityType): number {
 export function parseActivityTimeoutMs(value: string | number): number {
   if (typeof value === "number") {
     if (!Number.isInteger(value) || value <= 0) {
-      throw new Error("activity timeout must be a positive integer");
+      throw ApplicationFailure.nonRetryable(
+        "activity timeout must be a positive integer",
+        "InvalidActivityTimeout"
+      );
     }
     return value;
   }
@@ -171,7 +175,10 @@ export function parseActivityTimeoutMs(value: string | number): number {
   const trimmed = value.trim();
   const match = trimmed.match(/^([1-9][0-9]*)\s*(ms|s|m|h)?$/);
   if (!match) {
-    throw new Error(`invalid activity timeout ${value}`);
+    throw ApplicationFailure.nonRetryable(
+      `invalid activity timeout ${value}`,
+      "InvalidActivityTimeout"
+    );
   }
   const amt = Number(match[1]);
   const unit = match[2] ?? "ms";
@@ -205,21 +212,6 @@ export function activityTimeoutOverrides(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-export function requiredActivity(
-  profile: TychonicConfig | undefined,
-  name: string,
-  expectedType: ActivityType
-): ActivityBlock {
-  const activity = validatedStateBlock(profile, name);
-  if (!activity) {
-    throw new Error(`missing required activity '${name}' of type '${expectedType}'`);
-  }
-  if (activity.type !== expectedType) {
-    throw new Error(`activity '${name}' must have type '${expectedType}', got '${activity.type}'`);
-  }
-  return activity;
-}
-
 export function optionalStateConfig(
   profile: TychonicConfig | undefined,
   name: string,
@@ -230,7 +222,10 @@ export function optionalStateConfig(
     return undefined;
   }
   if (activity.type !== expectedType) {
-    throw new Error(`activity '${name}' must have type '${expectedType}', got '${activity.type}'`);
+    throw ApplicationFailure.nonRetryable(
+      `activity '${name}' must have type '${expectedType}', got '${activity.type}'`,
+      "ActivityTypeMismatch"
+    );
   }
   return activity;
 }
@@ -242,7 +237,10 @@ function validatedStateBlock(profile: TychonicConfig | undefined, name: string):
   }
   const parsed = StateConfigBlockSchema.safeParse(block);
   if (!parsed.success) {
-    throw new Error(`profile.states.${name} failed schema validation: ${parsed.error.message}`);
+    throw ApplicationFailure.nonRetryable(
+      `profile.states.${name} failed schema validation: ${parsed.error.message}`,
+      "ProfileStateSchemaInvalid"
+    );
   }
   return parsed.data;
 }

@@ -28,12 +28,18 @@ files. macOS defaults are:
 - LaunchAgents: `~/Library/LaunchAgents/com.tychonic.*.plist`
 
 Workflow evidence files live outside the target project tree under
-`~/.tychonic/runs/`. Temporary worktrees live outside the project tree under
+`~/.tychonic/runs/`. Isolated worktrees live outside the project tree under
 `~/.tychonic/worktrees/`, separate from both OS temp directories and the runtime
 state directory, so repo-local inspection and review do not traverse accumulated
 Tychonic byproducts and active work does not depend on OS temp retention. A
 workflow run must not create a target-project `.tychonic/` directory for
 Tychonic artifacts, live output, patches, or scratch files.
+
+Worktrees are operator-owned data: workflow finish captures a `worktree_patch`
+artifact and leaves the worktree directory on disk. Tychonic does not remove
+worktree directories from any finish, cancel, or recovery path. The operator
+inspects the path through `tychonic status --include-result` and removes
+worktrees with standard tools when no longer needed.
 
 ## Isolated Dev Instances
 

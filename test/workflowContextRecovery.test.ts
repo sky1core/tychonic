@@ -187,16 +187,17 @@ describe("Tychonic workflow context recoverable state rerun", () => {
     ).toThrow(/cwd must be a non-empty string/);
   });
 
-  it("does not publish terminal status before worktree cleanup finishes", async () => {
-    let releaseCleanup!: () => void;
-    let cleanupStarted = false;
-    const cleanupWorktreeActivity = vi.fn(async (): Promise<ActivityResult & { cleaned: true }> => {
-      cleanupStarted = true;
+  it("does not publish terminal status before worktree patch extract finishes", async () => {
+    let releaseExtract!: () => void;
+    let extractStarted = false;
+    const extractWorktreePatchActivity = vi.fn(async (): Promise<ActivityResult & { extracted: true }> => {
+      extractStarted = true;
       await new Promise<void>((resolve) => {
-        releaseCleanup = resolve;
+        releaseExtract = resolve;
       });
-      return { cleaned: true, delta: {}, cleanupOutcome: { artifacts: [] } };
+      return { extracted: true, delta: {}, cleanupOutcome: { artifacts: [] } };
     });
+    const worktreePath = "/tmp/tychonic-worktree-run_recovery-test/worktree";
     const ctx = createTychonicWorkflowContext({
       input: {
         cwd: "/repo",
@@ -206,15 +207,15 @@ describe("Tychonic workflow context recoverable state rerun", () => {
           policies: {}
         }
       },
-      template: "cleanup_publish_test",
+      template: "extract_publish_test",
       activities: {
         startRunActivity: async () => baseRun(),
         createWorktreeActivity: async () => ({
-          worktreePath: "/tmp/tychonic-worktree-run_recovery-test/worktree",
+          worktreePath,
           worktreeParentDir: "/tmp/tychonic-worktree-run_recovery-test",
           baseHead: "0123456789abcdef0123456789abcdef01234567"
         }),
-        cleanupWorktreeActivity,
+        extractWorktreePatchActivity,
         finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
       }
     });
@@ -224,14 +225,14 @@ describe("Tychonic workflow context recoverable state rerun", () => {
     const pending = ctx.finish();
     await flushMicrotasks();
 
-    expect(cleanupStarted).toBe(true);
+    expect(extractStarted).toBe(true);
     expect((runQuery(tychonicWorkflowStateQueryName) as any).status).toBe("running");
 
-    releaseCleanup();
-    await expect(pending).resolves.toMatchObject({ status: "succeeded" });
+    releaseExtract();
+    await expect(pending).resolves.toMatchObject({ status: "succeeded", worktreePath });
     const published = runQuery(tychonicWorkflowStateQueryName) as any;
     expect(published.status).toBe("succeeded");
-    expect(published.worktreePath).toBeUndefined();
+    expect(published.worktreePath).toBe(worktreePath);
   });
 
   it("does not offer rerun recovery for an ordinary failed verify result", async () => {

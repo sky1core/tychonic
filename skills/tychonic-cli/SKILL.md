@@ -145,6 +145,21 @@ tychonic sessions --workflow-id <id>
 Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
 it returns the evidence needed to decide the next operator action.
 
+For browser inspection, start the local status UI:
+
+```sh
+tychonic web
+```
+
+Use the browser view to inspect recent workflow runs, state flow, selected-state
+prompt/agent response evidence, artifacts, sessions, and definition metadata.
+It remains a Temporal-backed local operator view, not a separate source of
+truth. If the UI shows a refresh error, check the `/api/events` EventSource
+path, reverse-proxy buffering for `text/event-stream`, and
+`TYCHONIC_WEB_ALLOWED_HOSTS` when a non-loopback `Host` header reaches the
+loopback-bound server. The `Refresh` button is the manual fallback when event
+refresh is unavailable.
+
 `tychonic run` prints a JSON object. Do not require the operator to inspect
 Temporal UI/API for routine monitoring.
 
@@ -405,13 +420,26 @@ symlinks, or rewrite resolver paths.
 
 ## Waiting User And Signals
 
-`waiting_user` means the workflow decided it cannot proceed automatically.
-Recovery is workflow-defined. Many workflows require a fresh run with adjusted
-input or config; interactive workflows may remain parked and accept signals.
-The wait `message` is the authority: if it names a waiting `state`, use the
-workflow's interaction command for that state; if it says the workflow needs
-attention, inspect evidence before deciding whether to start a fresh run or use
-that workflow's documented recovery path.
+Before reaching `waiting_user`, generated declarative workflows already absorb
+transient infrastructure failure at the Temporal activity proxy layer
+(token-limit cool-downs, network blips, laptop suspend, worker restart). The
+proxy retries every thrown activity for roughly fifteen hours of wall-clock
+budget before surfacing the error to workflow code. Activity outcomes returned
+as `failed`/`timed_out`/`blocked` on the normal return path are not retried by
+the proxy — workflow code handles them through its own review/fix loop or by
+parking on the recovery gate. Errors thrown as
+`ApplicationFailure.nonRetryable` (missing config, unsupported adapter,
+missing command) skip the retry budget and reach workflow code immediately.
+
+`waiting_user` therefore means one of: the transient retry budget was
+exhausted, a permanent (nonRetryable) error reached the recovery gate, or the
+workflow expects an explicit decision at an interactive gate. The wait
+`message` is the authority: if it names a waiting `state`, inspect evidence
+(`status --include-result`, `inbox`, `artifacts`, `logs`, `sessions`), fix the
+underlying cause where applicable, then resume with the workflow's interaction
+command for that state. A fresh run is only the right move when the workflow
+has already finished (`completed`/`failed`/`canceled`/`terminated`) — closed
+workflows cannot accept signals, and resume is impossible.
 
 Use documented workflow signals only:
 
@@ -458,10 +486,18 @@ npm run verify:agents-live
 
 Tychonic-owned byproducts must not be written into the target repository.
 Run evidence lives under `~/.tychonic/runs/operational/<run-id>/` or
-`~/.tychonic/runs/instances/<name>/<run-id>/`; mutable workflow worktrees are
+`~/.tychonic/runs/instances/<name>/<run-id>/`; isolated workflow worktrees are
 created under `~/.tychonic/worktrees/`, not under `/tmp`, not under the active
 runtime state directory, and not under the project `.tychonic/` directory.
-Tychonic owns terminal patch capture and cleanup for those temporary worktrees.
+Repositories with git submodules are initialized automatically
+(`git submodule update --init --recursive`) when the worktree is created;
+no manual submodule setup is needed.
+On finish Tychonic captures a `worktree_patch` artifact and leaves the worktree
+directory in place; the worktree path is preserved in the workflow result and
+visible through `tychonic status --workflow-id <id> --include-result`. The
+operator removes worktrees with standard tools (`git worktree remove`, `trash`,
+`rm`) when they are no longer needed; Tychonic does not provide a cleanup
+activity, signal, or CLI command for that.
 
 Agents must not create files or directories at the project root unless they are
 source files that are part of the actual task deliverable. Scratch files,

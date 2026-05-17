@@ -101,7 +101,7 @@ contract; NAME is the workflow-defined instance:
 | `startRunActivity` | n/a | `template`, `cwd` |
 | `collectGitFactsActivity` | n/a | `run`, `cwd` |
 | `createWorktreeActivity` | n/a | `run`, `cwd` |
-| `cleanupWorktreeActivity` | n/a | `run`, `cwd`, `worktreePath`, `baseHead` |
+| `extractWorktreePatchActivity` | n/a | `run`, `cwd`, `worktreePath`, `worktreeParentDir`, `baseHead` |
 | `runVerifyActivity` | `verify` | `stateName`, `run`, `profile`, `cwd`, `worktreePath` |
 | `runWorkerActivity` | `work` | `stateName`, `run`, `profile`, `cwd`, `worktreePath`, `prompt?`, `sessionId?` |
 | `runReviewActivity` | `review` | `stateName`, `run`, `profile`, `cwd`, `worktreePath`, `prompt` |

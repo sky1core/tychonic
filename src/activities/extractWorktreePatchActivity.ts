@@ -1,6 +1,6 @@
+import { ApplicationFailure } from "@temporalio/common";
 import { access, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { removeIsolatedWorktree } from "../bootstrap/worktree.js";
 import { worktreePatch } from "../bootstrap/worktree.js";
 import { withPeriodicProgress } from "../bootstrap/commandRunner.js";
 import type { ArtifactRecord, WorkflowRunRecord } from "../domain/types.js";
@@ -8,7 +8,7 @@ import { runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 import type { ActivityResult } from "../temporal/types.js";
 import { heartbeatActivity } from "./heartbeat.js";
 
-export interface CleanupWorktreeActivityInput {
+export interface ExtractWorktreePatchActivityInput {
   run: WorkflowRunRecord;
   cwd: string;
   worktreePath: string;
@@ -16,36 +16,35 @@ export interface CleanupWorktreeActivityInput {
   baseHead: string;
 }
 
-export interface CleanupWorktreeActivityResult extends ActivityResult {
-  cleaned: true;
+export interface ExtractWorktreePatchActivityResult extends ActivityResult {
+  extracted: true;
   patchArtifact?: ArtifactRecord;
 }
 
 /**
- * Removes a Tychonic-created isolated worktree. Workflows call this only after
- * they no longer need to continue work in the mutable checkout.
+ * Captures a `worktree_patch` artifact from a Tychonic-created isolated
+ * worktree without removing the worktree directory. Workflows call this on
+ * finish to preserve a diff snapshot of the agent's work while leaving the
+ * worktree on disk for the operator to inspect, hand-apply, or remove with
+ * standard tools.
+ *
+ * The worktree directory itself is never removed by this activity or by any
+ * other Tychonic finish path; cleanup is the operator's responsibility.
  */
-export async function cleanupWorktreeActivity(
-  input: CleanupWorktreeActivityInput
-): Promise<CleanupWorktreeActivityResult> {
-  const progress = (): void => heartbeatActivity({ runId: input.run.id, activity: "cleanupWorktree" });
+export async function extractWorktreePatchActivity(
+  input: ExtractWorktreePatchActivityInput
+): Promise<ExtractWorktreePatchActivityResult> {
+  const progress = (): void => heartbeatActivity({ runId: input.run.id, activity: "extractWorktreePatch" });
   const createdAt = new Date().toISOString();
   const worktreeParentDir = requireString(input.worktreeParentDir, "worktreeParentDir");
-  const existingPatchArtifact = async (): Promise<ArtifactRecord | undefined> =>
-    await existingPatchArtifactRecord({ run: input.run, cwd: input.cwd, createdAt });
+  const existing = await existingPatchArtifactRecord({ run: input.run, cwd: input.cwd, createdAt });
+  if (existing) {
+    return extractResult(existing);
+  }
   if (!(await pathExists(input.worktreePath))) {
-    const patchArtifact = await existingPatchArtifact();
-    await withPeriodicProgress(
-      progress,
-      async () => await removeIsolatedWorktree({ ...input, worktreeParentDir })
-    );
-    return cleanupResult(patchArtifact);
+    return extractResult(undefined);
   }
   const patchArtifact = await withPeriodicProgress(progress, async () => {
-    const existing = await existingPatchArtifact();
-    if (existing) {
-      return existing;
-    }
     const patch = await worktreePatch({
       worktreePath: input.worktreePath,
       baseHead: input.baseHead,
@@ -60,16 +59,12 @@ export async function cleanupWorktreeActivity(
         })
       : undefined;
   });
-  await withPeriodicProgress(
-    progress,
-    async () => await removeIsolatedWorktree({ ...input, worktreeParentDir })
-  );
-  return cleanupResult(patchArtifact);
+  return extractResult(patchArtifact);
 }
 
-function cleanupResult(patchArtifact: ArtifactRecord | undefined): CleanupWorktreeActivityResult {
+function extractResult(patchArtifact: ArtifactRecord | undefined): ExtractWorktreePatchActivityResult {
   return {
-    cleaned: true,
+    extracted: true,
     delta: {},
     cleanupOutcome: { artifacts: patchArtifact ? [patchArtifact] : [] },
     ...(patchArtifact ? { patchArtifact } : {})
@@ -154,7 +149,10 @@ function nextArtifactId(run: WorkflowRunRecord): string {
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`cleanupWorktreeActivity.${field} is required`);
+    throw ApplicationFailure.nonRetryable(
+      `extractWorktreePatchActivity.${field} is required`,
+      "ExtractWorktreePatchInputInvalid"
+    );
   }
   return value;
 }

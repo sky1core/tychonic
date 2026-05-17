@@ -136,9 +136,10 @@ export type ActivityInput<T extends ActivityType> = {
  *                           to `run.artifacts`. The artifact exists regardless
  *                           of command success — `state.status` reflects the
  *                           command result.
- * @field cleanupOutcome     Present only for cleanup activities that persist
- *                           final worktree handoff artifacts before removing
- *                           the mutable checkout.
+ * @field cleanupOutcome     Present only for finish-time worktree-patch
+ *                           extract. Carries the `worktree_patch` artifact
+ *                           captured from the isolated worktree without
+ *                           removing the worktree directory.
  * @field recoverableFailure Present only when workflow code converts a thrown
  *                           activity exception into a state record so the same
  *                           open workflow execution can offer explicit rerun

@@ -71,14 +71,23 @@ Allowed local files:
 - artifacts
 - live output
 - patches
-- temporary worktrees
+- isolated worktrees (preserved on finish; operator-removable)
 - Temporal managed-local runtime files
 
 These files are evidence or runtime support files. They are not state authority.
-Tychonic-owned artifacts, live output, patches, and temporary worktrees must
+Tychonic-owned artifacts, live output, patches, and isolated worktrees must
 live under Tychonic-owned user-home or runtime directories, not inside the
 target repository. A target repository must not receive a repo-local `.tychonic`
 directory as a Tychonic byproduct of running workflows.
+
+Isolated worktrees are created under
+`~/.tychonic/worktrees/<operational|instances/<name>>/tychonic-worktree-<runId>-<suffix>/worktree`.
+They are not removed by any workflow finish path. On workflow finish, the
+generated wrapper captures a `worktree_patch` artifact snapshot of the agent's
+changes and leaves the worktree directory in place so the operator can inspect,
+hand-apply, or remove it with standard tools (`git worktree remove`, `trash`,
+`rm`). The worktree path is preserved in the workflow result and is visible
+through `tychonic status --workflow-id <id> --include-result`.
 
 ## Module SPECs
 

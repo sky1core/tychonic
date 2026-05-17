@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +8,7 @@ import {
   workflowEvidenceView,
   type TychonicWorkflowResult
 } from "../cli/temporalResultViews.js";
+import { runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 import {
   parseDeclarativeWorkflowSpecYaml,
   type DeclarativeTransition,
@@ -120,6 +122,10 @@ export async function handleStatusUiRequest(input: {
     }
 
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (url.pathname === "/api/events") {
+      await handleStatusEventsApi(request, response, url, temporalConfig, deps);
+      return;
+    }
     if (url.pathname === "/api/workflows") {
       await handleWorkflowListApi(response, url, temporalConfig, deps);
       return;
@@ -159,6 +165,179 @@ async function handleWorkflowListApi(
   writeJson(response, 200, { ok: true, ...result });
 }
 
+async function handleStatusEventsApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  temporalConfig: TemporalConfig,
+  deps: StatusUiServerDeps
+): Promise<void> {
+  if (request.method === "HEAD") {
+    response.writeHead(200, statusEventHeaders());
+    response.end();
+    return;
+  }
+
+  const limitRaw = url.searchParams.get("limit");
+  const limit = limitRaw === null ? 30 : Number(limitRaw);
+  if (!Number.isInteger(limit) || limit < 1) {
+    writeJson(response, 400, { ok: false, error: "limit must be a positive integer" });
+    return;
+  }
+
+  const workflowId = url.searchParams.get("workflowId") ?? undefined;
+  const runId = url.searchParams.get("runId") ?? undefined;
+  response.writeHead(200, statusEventHeaders());
+  response.write(": connected\n\n");
+
+  let closed = false;
+  let inFlight = false;
+  let sequence = 0;
+  let lastSignature = "";
+  let interval: ReturnType<typeof setInterval> | undefined;
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    if (interval) clearInterval(interval);
+    if (!response.destroyed && !response.writableEnded) response.end();
+  };
+
+  const sendRefreshIfChanged = async () => {
+    if (closed || inFlight) return;
+    inFlight = true;
+    try {
+      const signature = await statusEventSignature({
+        limit,
+        ...(workflowId ? { workflowId } : {}),
+        ...(runId ? { runId } : {}),
+        temporalConfig,
+        deps
+      });
+      if (closed || signature === lastSignature) return;
+      lastSignature = signature;
+      sequence += 1;
+      if (!writeStatusEvent(response, "refresh", {
+        sequence,
+        workflowId,
+        ...(runId ? { runId } : {}),
+        createdAt: new Date().toISOString()
+      })) close();
+    } catch (error) {
+      if (!closed) {
+        if (!writeStatusEvent(response, "status_error", {
+          message: error instanceof Error ? error.message : String(error)
+        })) close();
+      }
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  interval = setInterval(() => {
+    void sendRefreshIfChanged();
+  }, 1_000);
+
+  request.on("close", close);
+  request.on("aborted", close);
+  await sendRefreshIfChanged();
+}
+
+function statusEventHeaders(): Record<string, string> {
+  return {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
+  };
+}
+
+function writeStatusEvent(response: ServerResponse, event: string, payload: Record<string, unknown>): boolean {
+  if (response.destroyed || response.writableEnded) return false;
+  try {
+    response.write(`event: ${event}\n`);
+    response.write(`data: ${JSON.stringify(payload)}\n\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function statusEventSignature(input: {
+  limit: number;
+  workflowId?: string;
+  runId?: string;
+  temporalConfig: TemporalConfig;
+  deps: StatusUiServerDeps;
+}): Promise<string> {
+  const workflows = await input.deps.listWorkflows({
+    limit: input.limit,
+    ...input.temporalConfig
+  });
+  const workflowSummaries = workflows.workflows.map((workflow) => ({
+    workflowId: workflow.workflowId,
+    runId: workflow.runId,
+    status: workflow.status,
+    historyLength: workflow.historyLength,
+    closeTime: workflow.closeTime,
+    executionTime: workflow.executionTime
+  }));
+  const selected = input.workflowId
+    ? await input.deps.describeWorkflow({
+        workflowId: input.workflowId,
+        ...(input.runId ? { runId: input.runId } : {}),
+        includeResult: true,
+        ...input.temporalConfig
+      })
+    : undefined;
+  return JSON.stringify({
+    workflows: workflowSummaries,
+    selected: selected ? workflowStatusEventSignature(selected) : undefined
+  });
+}
+
+function workflowStatusEventSignature(workflow: TychonicTemporalWorkflowStatus): Record<string, unknown> {
+  return {
+    workflowId: workflow.workflowId,
+    runId: workflow.runId,
+    status: workflow.status,
+    historyLength: workflow.historyLength,
+    closeTime: workflow.closeTime,
+    resultError: workflow.resultError,
+    result: workflowResultEventSignature(workflow.result)
+  };
+}
+
+function workflowResultEventSignature(result: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(result)) return undefined;
+  const run = isRecord(result.run) ? result.run : undefined;
+  const states = Array.isArray(run?.states) ? run.states : [];
+  const attempts = Array.isArray(run?.activity_attempts) ? run.activity_attempts : [];
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const findings = Array.isArray(run?.findings) ? run.findings : [];
+  const inbox = Array.isArray(run?.inbox) ? run.inbox : [];
+  const latestState = states.length > 0 && isRecord(states[states.length - 1]) ? states[states.length - 1] : undefined;
+  return {
+    status: typeof result.status === "string" ? result.status : undefined,
+    runStatus: typeof run?.status === "string" ? run.status : undefined,
+    updatedAt: typeof run?.updated_at === "string" ? run.updated_at : undefined,
+    stateCount: states.length,
+    attemptCount: attempts.length,
+    artifactCount: artifacts.length,
+    findingCount: findings.length,
+    inboxCount: inbox.length,
+    latestState: latestState
+      ? {
+          id: latestState.id,
+          name: latestState.name,
+          status: latestState.status,
+          reason: latestState.reason,
+          finished_at: latestState.finished_at
+        }
+      : undefined
+  };
+}
+
 async function handleWorkflowDetailApi(
   response: ServerResponse,
   url: URL,
@@ -192,11 +371,14 @@ async function handleWorkflowDetailApi(
     try {
       assertTychonicWorkflowResult(workflow.result);
       output.runContext = workflowRunContextView(workflow.result, workflow.input, workflow.inputError);
-      output.evidence = {
+      const evidenceView = {
         ...workflowEvidenceView(workflow.result, workflow.workflowId, workflow.runId),
         states: workflow.result.run.states,
         state_attempt_summaries: workflowStateAttemptSummaries(workflow.result.run)
       };
+      output.evidence = evidenceView;
+      output.artifactContents = await loadArtifactContents(workflow.result);
+      output.stateConfigs = await loadStateConfigs(workflow.result);
     } catch (error) {
       output.evidenceError = error instanceof Error ? error.message : String(error);
     }
@@ -215,6 +397,8 @@ function workflowStateAttemptSummaries(run: TychonicWorkflowResult["run"]): Arra
   state_name?: string;
   kind: string;
   status: string;
+  command?: string;
+  agent_session_id?: string;
 }> {
   const stateNameById = new Map(run.states.map((state) => [state.id, state.name]));
   return run.activity_attempts.map((attempt) => {
@@ -224,7 +408,9 @@ function workflowStateAttemptSummaries(run: TychonicWorkflowResult["run"]): Arra
       state_id: attempt.state_id,
       ...(stateName ? { state_name: stateName } : {}),
       kind: attempt.kind,
-      status: attempt.status
+      status: attempt.status,
+      ...(attempt.command ? { command: attempt.command } : {}),
+      ...(attempt.agent_session_id ? { agent_session_id: attempt.agent_session_id } : {})
     };
   });
 }
@@ -454,7 +640,17 @@ function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
     return false;
   }
   const host = hostFromHeader(hostHeader);
-  return host !== undefined && isLoopbackHost(host.toLowerCase());
+  if (host === undefined) {
+    return false;
+  }
+  if (isLoopbackHost(host.toLowerCase())) {
+    return true;
+  }
+  const allowed = process.env.TYCHONIC_WEB_ALLOWED_HOSTS;
+  if (allowed) {
+    return allowed.split(",").some((h) => h.trim().toLowerCase() === host.toLowerCase());
+  }
+  return false;
 }
 
 function hostFromHeader(hostHeader: string): string | undefined {
@@ -486,6 +682,59 @@ function hostFromHeader(hostHeader: string): string | undefined {
 
 function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1";
+}
+
+const ARTIFACT_CONTENT_MAX_BYTES = 64 * 1024;
+
+async function loadArtifactContents(
+  result: TychonicWorkflowResult
+): Promise<Record<string, { content: string } | { truncated: true; size: number }>> {
+  const out: Record<string, { content: string } | { truncated: true; size: number }> = {};
+  try {
+    const store = runArtifactStoreForRun(result.run);
+    await Promise.all(
+      result.run.artifacts.map(async (artifact) => {
+        try {
+          const filePath = store.artifactPath(result.run, artifact.id);
+          const fileStat = await stat(filePath);
+          if (fileStat.size > ARTIFACT_CONTENT_MAX_BYTES) {
+            out[artifact.id] = { truncated: true, size: fileStat.size };
+          } else {
+            out[artifact.id] = { content: await readFile(filePath, "utf8") };
+          }
+        } catch { /* skip unreadable */ }
+      })
+    );
+  } catch { /* no artifact root */ }
+  return out;
+}
+
+async function loadStateConfigs(
+  result: TychonicWorkflowResult
+): Promise<Record<string, { type?: string; command?: string; agent?: string; model?: string; timeout?: string }>> {
+  const out: Record<string, { type?: string; command?: string; agent?: string; model?: string; timeout?: string }> = {};
+  try {
+    const profileArtifactId = result.run.profile_snapshot_artifact_id;
+    if (!profileArtifactId) return out;
+    const store = runArtifactStoreForRun(result.run);
+    const filePath = store.artifactPath(result.run, profileArtifactId);
+    const content = await readFile(filePath, "utf8");
+    const parsed = parseYaml(content);
+    if (parsed && typeof parsed === "object" && "states" in parsed && parsed.states && typeof parsed.states === "object") {
+      for (const [name, config] of Object.entries(parsed.states as Record<string, unknown>)) {
+        if (!config || typeof config !== "object") continue;
+        const cfg = config as Record<string, unknown>;
+        const entry: Record<string, string> = {};
+        if (typeof cfg.type === "string") entry.type = cfg.type;
+        if (typeof cfg.command === "string") entry.command = cfg.command;
+        if (typeof cfg.agent === "string") entry.agent = cfg.agent;
+        if (typeof cfg.model === "string") entry.model = cfg.model;
+        if (typeof cfg.timeout === "string") entry.timeout = cfg.timeout;
+        if (Object.keys(entry).length > 0) out[name] = entry;
+      }
+    }
+  } catch { /* profile not available */ }
+  return out;
 }
 
 function formatUrlHost(host: string): string {

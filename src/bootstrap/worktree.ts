@@ -1,3 +1,4 @@
+import { ApplicationFailure } from "@temporalio/common";
 import { execFile, spawn } from "node:child_process";
 import { cp, lstat, mkdir, mkdtemp, readlink, realpath, rm, symlink } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -27,6 +28,7 @@ export async function createIsolatedWorktree(input: {
       const baseHead = (await gitOutput(input.cwd, ["rev-parse", "--verify", "HEAD"])).trim();
       gitWorktreeAddStarted = true;
       await execFileAsync("git", ["worktree", "add", "--detach", target, "HEAD"], { cwd: input.cwd });
+      await initializeSubmodules(target);
       await copyWorkingTreeSnapshot(input.cwd, target);
       return {
         path: target,
@@ -55,24 +57,6 @@ export async function createIsolatedWorktree(input: {
   }
 }
 
-export async function removeIsolatedWorktree(input: {
-  cwd: string;
-  worktreePath: string;
-  worktreeParentDir: string;
-}): Promise<void> {
-  const root = await validateOwnedWorktreePath(input.worktreePath, input.worktreeParentDir);
-  let gitRemoveFailed = false;
-  try {
-    await execFileAsync("git", ["worktree", "remove", "--force", input.worktreePath], { cwd: input.cwd });
-  } catch {
-    gitRemoveFailed = true;
-  }
-  await rm(root, { recursive: true, force: true });
-  if (gitRemoveFailed) {
-    await execFileAsync("git", ["worktree", "prune"], { cwd: input.cwd }).catch(() => undefined);
-  }
-}
-
 export async function worktreePatch(input: {
   worktreePath: string;
   baseHead: string;
@@ -88,6 +72,24 @@ async function temporaryWorktreeTarget(runId: string, worktreeParentDir: string)
   await mkdir(worktreeParentDir, { recursive: true });
   const root = await mkdtemp(join(worktreeParentDir, `tychonic-worktree-${safeRunId}-`));
   return { root, target: join(root, "worktree") };
+}
+
+/**
+ * Initialize git submodules inside the isolated worktree. `git worktree add`
+ * does not init submodules, so a worktree of a submodule-using repo would
+ * otherwise have empty submodule directories and `work` commands could not
+ * read those files. Runs unconditionally after `git worktree add`; a repo
+ * with no `.gitmodules` makes this a no-op (`git submodule update --init`
+ * exits 0 with nothing to do).
+ */
+async function initializeSubmodules(target: string): Promise<void> {
+  try {
+    await execFileAsync("git", ["-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"], { cwd: target });
+  } catch (error) {
+    throw new Error(
+      `failed to initialize submodules in isolated worktree: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 async function initializeIsolatedBaseline(target: string): Promise<void> {
@@ -135,11 +137,17 @@ async function cleanupFailedWorktree(input: {
 
 async function validateOwnedWorktreePath(worktreePath: string, worktreeParentDir: string): Promise<string> {
   if (basename(worktreePath) !== "worktree") {
-    throw new Error(`refusing to remove non-Tychonic worktree path: ${worktreePath}`);
+    throw ApplicationFailure.nonRetryable(
+      `refusing to operate on non-Tychonic worktree path: ${worktreePath}`,
+      "WorktreePathRejected"
+    );
   }
   const root = dirname(worktreePath);
   if (!basename(root).startsWith("tychonic-worktree-")) {
-    throw new Error(`refusing to remove non-Tychonic worktree path: ${worktreePath}`);
+    throw ApplicationFailure.nonRetryable(
+      `refusing to operate on non-Tychonic worktree path: ${worktreePath}`,
+      "WorktreePathRejected"
+    );
   }
   const lexicalParent = resolve(worktreeParentDir);
   let realParent: string;
@@ -157,7 +165,10 @@ async function validateOwnedWorktreePath(worktreePath: string, worktreeParentDir
   const inRealParent = realRoot === realParent || realRoot.startsWith(`${realParent}${sep}`);
   const inLexicalParent = realRoot === lexicalParent || realRoot.startsWith(`${lexicalParent}${sep}`);
   if (!inRealParent && !inLexicalParent) {
-    throw new Error(`refusing to remove worktree outside ${worktreeParentDir}: ${worktreePath}`);
+    throw ApplicationFailure.nonRetryable(
+      `refusing to operate on worktree outside ${worktreeParentDir}: ${worktreePath}`,
+      "WorktreePathOutsideParent"
+    );
   }
   return root;
 }

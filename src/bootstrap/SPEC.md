@@ -45,8 +45,17 @@ not under the target project's `.tychonic/` directory, so ordinary repo
 inspection and review do not traverse accumulated Tychonic byproducts.
 
 When the target repository has `HEAD`, worktree helpers use Git's linked
-worktree mechanism under that Tychonic-owned worktree root. Tychonic owns the
-linked worktree lifecycle: failed creation removes any partial checkout and
-prunes stale Git metadata, and terminal workflows must capture an applicable
-patch artifact and remove the isolated worktree instead of leaving the caller
-to manage it.
+worktree mechanism under that Tychonic-owned worktree root. Failed creation
+removes any partial checkout and prunes stale Git metadata. Terminal workflows
+capture an applicable `worktree_patch` artifact through
+`extractWorktreePatchActivity` and leave the isolated worktree directory in
+place for the operator to inspect or remove with standard tools; Tychonic
+itself does not remove worktree directories on any finish, cancel, or recovery
+path.
+
+After a successful `git worktree add`, `createIsolatedWorktree` runs
+`git submodule update --init --recursive` inside the new worktree so any
+submodules the source repository tracks are populated. The call is
+unconditional: a repository with no `.gitmodules` exits with nothing to do, so
+the same code path works for repos with and without submodules and `work`
+commands can read submodule files immediately.

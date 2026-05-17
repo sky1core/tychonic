@@ -139,13 +139,13 @@ export interface TychonicWorkflowRuntimeActivities {
     run: WorkflowRunRecord;
     cwd: string;
   }): Promise<{ worktreePath: string; worktreeParentDir: string; baseHead: string }>;
-  cleanupWorktreeActivity?(input: {
+  extractWorktreePatchActivity?(input: {
     run: WorkflowRunRecord;
     cwd: string;
     worktreePath: string;
     worktreeParentDir: string;
     baseHead: string;
-  }): Promise<ActivityResult & { cleaned: true }>;
+  }): Promise<ActivityResult & { extracted: true }>;
   runWorkerActivity?(input: Omit<ActivityInput<"work">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
   runVerifyActivity?(input: Omit<ActivityInput<"verify">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
   runReviewActivity?(input: Omit<ActivityInput<"review">, "profile"> & { profile?: TychonicConfig }): Promise<ActivityResult>;
@@ -446,29 +446,26 @@ export function createTychonicWorkflowContext(options: {
       ...(summary !== undefined ? { summary } : {})
     });
     const finalizedRun = applyActivityResult(requireRun(), result);
-    const cleanupWorktreePath = currentWorktreePath;
-    if (cleanupWorktreePath) {
-      if (!activities.cleanupWorktreeActivity) {
-        throw new Error("cleanupWorktreeActivity is required after ctx.createWorktree()");
+    const extractWorktreePath = currentWorktreePath;
+    if (extractWorktreePath) {
+      if (!activities.extractWorktreePatchActivity) {
+        throw new Error("extractWorktreePatchActivity is required after ctx.createWorktree()");
       }
       if (!currentWorktreeBaseHead) {
-        throw new Error("internal error: cleanup worktree baseHead is missing");
+        throw new Error("internal error: extract worktree baseHead is missing");
       }
       if (!currentWorktreeParentDir) {
-        throw new Error("internal error: cleanup worktree parent dir is missing");
+        throw new Error("internal error: extract worktree parent dir is missing");
       }
-      const cleanupWorktreeParentDir = currentWorktreeParentDir;
-      const cleanupResult = await activities.cleanupWorktreeActivity({
+      const extractWorktreeParentDir = currentWorktreeParentDir;
+      const extractActivityResult = await activities.extractWorktreePatchActivity({
         run: finalizedRun,
         cwd: input.cwd,
-        worktreePath: cleanupWorktreePath,
-        worktreeParentDir: cleanupWorktreeParentDir,
+        worktreePath: extractWorktreePath,
+        worktreeParentDir: extractWorktreeParentDir,
         baseHead: currentWorktreeBaseHead
       });
-      currentWorktreePath = undefined;
-      currentWorktreeParentDir = undefined;
-      currentWorktreeBaseHead = undefined;
-      update(applyActivityResult(finalizedRun, cleanupResult));
+      update(applyActivityResult(finalizedRun, extractActivityResult));
     } else {
       update(finalizedRun);
     }

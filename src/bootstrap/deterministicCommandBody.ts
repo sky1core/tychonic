@@ -1,3 +1,4 @@
+import { ApplicationFailure } from "@temporalio/common";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { optionalStateConfig } from "../catalog/types.js";
@@ -48,8 +49,9 @@ export async function runDeterministicCommandBody<T extends DeterministicCommand
 
   const block = optionalStateConfig(profile, stateName, expectedType);
   if (!block) {
-    throw new Error(
-      `deterministic-command activity '${stateName}' expects profile.states.${stateName} with type '${expectedType}'`
+    throw ApplicationFailure.nonRetryable(
+      `deterministic-command activity '${stateName}' expects profile.states.${stateName} with type '${expectedType}'`,
+      "DeterministicCommandBlockMissing"
     );
   }
 

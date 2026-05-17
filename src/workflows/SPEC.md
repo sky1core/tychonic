@@ -135,6 +135,26 @@ Host-side invariants:
 - A terminal `waiting_user` result may require a fresh run with adjusted input
   or config. That recovery path must be documented by the bundle.
 
+## Worktree Lifecycle
+
+A workflow that calls `ctx.createWorktree()` creates an isolated checkout
+under `~/.tychonic/worktrees/<scope>/tychonic-worktree-<runId>-<suffix>/worktree`.
+The worktree directory is operator-owned data.
+
+Finish-path invariants:
+
+- `ctx.finish` and `ctx.finishWaitingUser` call `extractWorktreePatchActivity`
+  to capture a `worktree_patch` artifact (the cumulative diff from
+  `baseHead` to the current worktree state) and leave the worktree directory
+  on disk.
+- No finish path removes the worktree directory. Tychonic does not provide a
+  cleanup activity, signal, or CLI command that removes worktree directories.
+- The `worktreePath` value is preserved in the workflow result and remains
+  visible through `tychonic status --workflow-id <id> --include-result` after
+  the workflow completes.
+- The operator removes worktrees with standard tools (`git worktree remove`,
+  `trash`, `rm`) when they are no longer needed.
+
 ## State Rerun Recovery
 
 Recoverable state failure is part of the workflow state machine. If a

@@ -2,6 +2,7 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Duration } from "@temporalio/common";
 import { bundleWorkflowCode, NativeConnection, Worker, type BundleOptions } from "@temporalio/worker";
 import * as activities from "../activities/index.js";
 import { normalizeTemporalConfig, tychonicRuntimeDirs, type TemporalConfig } from "./manager.js";
@@ -20,11 +21,11 @@ type WebpackConfig = Parameters<NonNullable<BundleOptions["webpackConfigHook"]>>
 
 // Local operation favors letting in-flight activities reach their own configured
 // command timeout instead of cancelling them during worker shutdown.
-export const DEFAULT_WORKER_SHUTDOWN_GRACE_TIME = "24h";
+export const DEFAULT_WORKER_SHUTDOWN_GRACE_TIME = "24h" as Duration;
 export const WORKER_SHUTDOWN_GRACE_TIME_ENV = "TYCHONIC_WORKER_SHUTDOWN_GRACE_TIME";
-export const DEFAULT_WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL = "5s";
+export const DEFAULT_WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL = "5s" as Duration;
 export const WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL_ENV = "TYCHONIC_WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL";
-export const DEFAULT_WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL = "5s";
+export const DEFAULT_WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL = "5s" as Duration;
 export const WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL_ENV =
   "TYCHONIC_WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL";
 
@@ -46,13 +47,13 @@ export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}):
     taskQueue: config.taskQueue,
     workflowBundle,
     maxHeartbeatThrottleInterval:
-      process.env[WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL_ENV] ?? DEFAULT_WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL,
+      durationEnv(WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL_ENV, DEFAULT_WORKER_MAX_HEARTBEAT_THROTTLE_INTERVAL),
     defaultHeartbeatThrottleInterval:
-      process.env[WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL_ENV] ??
-      DEFAULT_WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL,
+      durationEnv(WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL_ENV, DEFAULT_WORKER_DEFAULT_HEARTBEAT_THROTTLE_INTERVAL),
     shutdownGraceTime:
-      options.shutdownGraceTime ?? process.env[WORKER_SHUTDOWN_GRACE_TIME_ENV] ?? DEFAULT_WORKER_SHUTDOWN_GRACE_TIME,
-    ...(options.shutdownForceTime ? { shutdownForceTime: options.shutdownForceTime } : {}),
+      (options.shutdownGraceTime as Duration | undefined) ??
+      durationEnv(WORKER_SHUTDOWN_GRACE_TIME_ENV, DEFAULT_WORKER_SHUTDOWN_GRACE_TIME),
+    ...(options.shutdownForceTime ? { shutdownForceTime: options.shutdownForceTime as Duration } : {}),
     activities
   });
 
@@ -96,6 +97,10 @@ export async function runTemporalWorker(options: RunTemporalWorkerOptions = {}):
     worker.shutdown();
     throw error;
   }
+}
+
+function durationEnv(name: string, fallback: Duration): Duration {
+  return (process.env[name] ?? fallback) as Duration;
 }
 
 /**
