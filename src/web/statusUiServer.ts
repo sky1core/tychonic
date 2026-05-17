@@ -632,7 +632,7 @@ function normalizeLoopbackBindHost(host: string): string | undefined {
   if (normalized === "[::1]") {
     return "::1";
   }
-  return isLoopbackHost(normalized) ? normalized : undefined;
+  return isLoopbackBindHost(normalized) ? normalized : undefined;
 }
 
 function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
@@ -643,7 +643,7 @@ function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
   if (host === undefined) {
     return false;
   }
-  if (isLoopbackHost(host.toLowerCase())) {
+  if (isLoopbackRequestHost(host.toLowerCase())) {
     return true;
   }
   const allowed = process.env.TYCHONIC_WEB_ALLOWED_HOSTS;
@@ -680,8 +680,12 @@ function hostFromHeader(hostHeader: string): string | undefined {
   return trimmed;
 }
 
-function isLoopbackHost(host: string): boolean {
+function isLoopbackBindHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1";
+}
+
+function isLoopbackRequestHost(host: string): boolean {
+  return isLoopbackBindHost(host) || host === "localhost";
 }
 
 const ARTIFACT_CONTENT_MAX_BYTES = 64 * 1024;

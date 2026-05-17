@@ -114,6 +114,8 @@ describe("status UI server", () => {
 
     const rebound = await statusUiRequest(staticDir, "/api/workflows", deps, "attacker.example");
     expect(rebound.status).toBe(403);
+    const localhost = await statusUiRequest(staticDir, "/api/workflows", deps, "localhost:19733");
+    expect(localhost.status).toBe(200);
 
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     const stateHome = await mkdtemp(join(tmpdir(), "tychonic-status-ui-state-"));
