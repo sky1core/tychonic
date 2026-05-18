@@ -219,6 +219,85 @@ describe("status UI server", () => {
     ).rejects.toThrow("loopback");
   });
 
+  it("exposes pending activity heartbeat state as the running selected state", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-pending-"));
+    tempDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>Tychonic</title>");
+    const artifactRoot = join(staticDir, "runs", "run_pending");
+    await mkdir(join(artifactRoot, "artifacts"), { recursive: true });
+    await mkdir(join(artifactRoot, "live"), { recursive: true });
+    await writeFile(join(artifactRoot, "artifacts", "architect_prompt-attempt_3.txt"), "architect prompt");
+    await writeFile(join(artifactRoot, "live", "attempt_3.log"), "architect live response");
+
+    const now = "2026-05-12T00:00:00.000Z";
+    const deps: StatusUiServerDeps = {
+      listWorkflows: async () => ({
+        address: "127.0.0.1:7233",
+        namespace: "default",
+        taskQueue: "tychonic",
+        workflows: []
+      }),
+      describeWorkflow: async () => ({
+        workflowId: "tychonic_architectBuilderQaWorkflow_pending",
+        runId: "temporal_run_pending",
+        type: "architectBuilderQaWorkflow",
+        taskQueue: "tychonic",
+        status: "RUNNING",
+        startTime: now,
+        pendingActivities: [
+          {
+            activityId: "3",
+            lastStartedTime: now,
+            heartbeatDetails: [
+              {
+                runId: "run_pending",
+                state: "architect",
+                attemptId: "attempt_3"
+              }
+            ]
+          }
+        ],
+        result: {
+          runId: "run_pending",
+          status: "running",
+          run: {
+            schema_version: "tychonic.run.v1",
+            id: "run_pending",
+            template: "architectBuilderQaWorkflow",
+            status: "running",
+            cwd: staticDir,
+            artifact_root: artifactRoot,
+            created_at: now,
+            updated_at: now,
+            states: [],
+            activity_attempts: [],
+            agent_sessions: [],
+            artifacts: [],
+            findings: [],
+            inbox: []
+          }
+        }
+      })
+    };
+
+    const detail = JSON.parse(
+      (await statusUiRequest(staticDir, "/api/workflows/tychonic_architectBuilderQaWorkflow_pending", deps)).body
+    );
+    expect(detail).toMatchObject({
+      ok: true,
+      pendingActiveState: {
+        name: "architect",
+        status: "running",
+        reason: "pending_activity",
+        activity_attempt_ids: ["attempt_3"]
+      },
+      activeStateEvidence: {
+        promptContent: "architect prompt",
+        liveOutput: "architect live response"
+      }
+    });
+  });
+
   it("streams workflow refresh events over server-sent events", async () => {
     const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-events-"));
     tempDirs.push(staticDir);
@@ -278,6 +357,74 @@ describe("status UI server", () => {
       const callsAfterCancel = { listCalls, describeCalls };
       await new Promise((resolve) => setTimeout(resolve, 1_100));
       expect({ listCalls, describeCalls }).toEqual(callsAfterCancel);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        handle.server.close((error) => (error ? rejectClose(error) : resolveClose()));
+      });
+    }
+  });
+
+  it("streams selected workflow refresh when evidence directories are created later", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-events-late-evidence-"));
+    tempDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>Tychonic</title>");
+    const artifactRoot = join(staticDir, "runs", "run_late_evidence");
+
+    const now = "2026-05-12T00:00:00.000Z";
+    const deps: StatusUiServerDeps = {
+      listWorkflows: async () => ({
+        address: "127.0.0.1:7233",
+        namespace: "default",
+        taskQueue: "tychonic",
+        workflows: []
+      }),
+      describeWorkflow: async () => ({
+        workflowId: "tychonic_simpleWorkflow_late_evidence",
+        runId: "temporal_run_late_evidence",
+        type: "simpleWorkflow",
+        taskQueue: "tychonic",
+        status: "RUNNING",
+        startTime: now,
+        pendingActivities: [],
+        result: {
+          runId: "run_late_evidence",
+          status: "running",
+          activeState: { name: "verify", status: "running" },
+          run: {
+            schema_version: "tychonic.run.v1",
+            id: "run_late_evidence",
+            template: "simpleWorkflow",
+            status: "running",
+            cwd: staticDir,
+            artifact_root: artifactRoot,
+            created_at: now,
+            updated_at: now,
+            states: [],
+            activity_attempts: [],
+            agent_sessions: [],
+            artifacts: [],
+            findings: [],
+            inbox: []
+          }
+        }
+      })
+    };
+
+    const handle = await startStatusUiServerWithDeps({ uiPort: 0, staticDir }, deps);
+    try {
+      const response = await fetch(
+        `${handle.url}/api/events?workflowId=tychonic_simpleWorkflow_late_evidence&runId=temporal_run_late_evidence`
+      );
+      expect(response.status).toBe(200);
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      await readEventStreamChunk(reader!);
+
+      await mkdir(join(artifactRoot, "artifacts"), { recursive: true });
+      await writeFile(join(artifactRoot, "artifacts", "verify_prompt-attempt_1.txt"), "verify prompt");
+      const refresh = await readEventStreamChunk(reader!);
+      await reader!.cancel();
+      expect(refresh).toContain("event: refresh");
     } finally {
       await new Promise<void>((resolveClose, rejectClose) => {
         handle.server.close((error) => (error ? rejectClose(error) : resolveClose()));

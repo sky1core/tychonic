@@ -3,6 +3,9 @@ import { Streamdown } from "streamdown"
 import {
   AlertCircleIcon,
   CheckCircle2Icon,
+  ClockIcon,
+  FolderIcon,
+  GitBranchIcon,
   InboxIcon,
   ListRestartIcon,
   RefreshCcwIcon,
@@ -180,11 +183,13 @@ type WorkflowDetail = {
     createdAt?: string
     updatedAt?: string
     artifactRoot?: string
+    worktreePath?: string
     profileSnapshotArtifactId?: string
     inputError?: string
   }
   evidence?: WorkflowEvidence
   evidenceError?: string
+  pendingActiveState?: WorkflowStateRecord
   artifactContents?: Record<string, { content: string }>
   activeStateEvidence?: { promptContent?: string; liveOutput?: string }
   stateConfigs?: Record<string, { type?: string; command?: string; agent?: string; model?: string; timeout?: string }>
@@ -252,6 +257,23 @@ const findingSeverityTone: Record<string, BadgeTone> = {
 
 const streamdownLinkSafety = { enabled: false } as const
 
+function SmallStreamdown({ children }: { children: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (!ref.current) return
+    for (const el of ref.current.querySelectorAll<HTMLElement>("code, pre")) {
+      el.style.fontSize = "inherit"
+    }
+  })
+  return (
+    <div ref={ref} style={{ fontSize: "13px" }}>
+      <Streamdown className="tychonic-markdown-sm" linkSafety={streamdownLinkSafety} mode="static">
+        {children}
+      </Streamdown>
+    </div>
+  )
+}
+
 function parseHashSelection(): { workflowId: string; runId: string } | undefined {
   const hash = window.location.hash.slice(1)
   if (!hash) return undefined
@@ -282,6 +304,10 @@ function App() {
         reloadCurrentDetail?: boolean,
         options?: { showLoading?: boolean },
       ) => Promise<void>)
+    | undefined
+  >(undefined)
+  const loadWorkflowDetailRef = useRef<
+    | ((workflowId: string, runId: string, options?: { showLoading?: boolean }) => Promise<void>)
     | undefined
   >(undefined)
   const detailRequestSeqRef = useRef(0)
@@ -332,7 +358,7 @@ function App() {
     }
     setError(undefined)
     try {
-      const response = await fetch("api/workflows?limit=30")
+      const response = await fetch("api/workflows?limit=30", { cache: "no-store" })
       const body = (await response.json()) as WorkflowList
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `workflow list request failed with ${response.status}`)
@@ -381,7 +407,9 @@ function App() {
       current?.request.workflowId === workflowId && current.request.runId === runId ? current : undefined,
     )
     try {
-      const response = await fetch(`api/workflows/${encodeURIComponent(workflowId)}?runId=${encodeURIComponent(runId)}`)
+      const response = await fetch(`api/workflows/${encodeURIComponent(workflowId)}?runId=${encodeURIComponent(runId)}`, {
+        cache: "no-store",
+      })
       const body = (await response.json()) as WorkflowDetail
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `workflow detail request failed with ${response.status}`)
@@ -415,6 +443,9 @@ function App() {
   useEffect(() => {
     loadWorkflowsRef.current = loadWorkflows
   })
+  useEffect(() => {
+    loadWorkflowDetailRef.current = loadWorkflowDetail
+  })
 
   useEffect(() => {
     let active = true
@@ -422,7 +453,7 @@ function App() {
       setListLoading(true)
       setError(undefined)
       try {
-        const response = await fetch("api/workflows?limit=30")
+        const response = await fetch("api/workflows?limit=30", { cache: "no-store" })
         const body = (await response.json()) as WorkflowList
         if (!response.ok || !body.ok) {
           throw new Error(body.error ?? `workflow list request failed with ${response.status}`)
@@ -463,7 +494,10 @@ function App() {
     }
     const events = new EventSource(`api/events?${params.toString()}`)
     const refresh = () => {
-      void loadWorkflowsRef.current?.(undefined, selectedRunReceivesEvents, { showLoading: false })
+      void loadWorkflowsRef.current?.(undefined, false, { showLoading: false })
+      if (selectedRunReceivesEvents && selectedWorkflowId && selectedRunId) {
+        void loadWorkflowDetailRef.current?.(selectedWorkflowId, selectedRunId, { showLoading: false })
+      }
     }
     const statusError = (event: Event) => {
       const payload = event instanceof MessageEvent ? parseJsonRecord(event.data) : undefined
@@ -483,7 +517,7 @@ function App() {
   }, [workflowDetail?.workflowGraph])
 
   const runSummary = useMemo(
-    () => workflowDetail?.evidence ? workflowRunSummary(workflowDetail.evidence) : undefined,
+    () => workflowDetail?.evidence ? workflowRunSummary(workflowDetail.evidence, workflowDetail.pendingActiveState) : undefined,
     [workflowDetail],
   )
   const currentWorkflowStatus = workflowDetail?.evidence?.status ?? workflowDetail?.workflow.status ?? selectedWorkflow?.status
@@ -500,14 +534,24 @@ function App() {
   const completedActivitySummary = workflowDetail?.evidence?.timing.run_ms != null
     ? `${formatDuration(workflowDetail.evidence.timing.activity_ms)} / ${workflowDetail.evidence.timing.activity_count} act`
     : undefined
-  const pendingActivitySummary = workflowDetail?.workflow.pendingActivityCount
-    ? `${workflowDetail.workflow.pendingActivityCount} pending`
-    : undefined
   const executionSteps = useMemo(() => {
     const evidence = workflowDetail?.evidence
     if (!evidence) return []
     const states = [...evidence.states]
-    if (evidence.latest_state && !states.some((state) => state.id === evidence.latest_state?.id)) {
+    const pendingActiveState = workflowDetail?.pendingActiveState
+    if (
+      pendingActiveState &&
+      !states.some((state) => state.id === pendingActiveState.id || (state.name === pendingActiveState.name && state.status === "running"))
+    ) {
+      states.push(pendingActiveState)
+    }
+    if (
+      evidence.latest_state &&
+      !states.some((state) =>
+        state.id === evidence.latest_state?.id ||
+        (state.name === evidence.latest_state?.name && state.status === "running" && evidence.latest_state.status === "running")
+      )
+    ) {
       states.push(evidence.latest_state)
     }
     const attemptByStateId = new Map(evidence.state_attempt_summaries.map((attempt) => [attempt.state_id, attempt]))
@@ -518,6 +562,7 @@ function App() {
     }))
   }, [workflowDetail])
   const [selectedExecutionStateId, setSelectedExecutionStateId] = useState<string>()
+  const [findingSeverityFilter, setFindingSeverityFilter] = useState<Set<string>>(new Set())
   const executionRunKey = `${selectedWorkflowId ?? ""}:${selectedRunId ?? ""}`
   const previousExecutionRunKeyRef = useRef(executionRunKey)
   const stateFlowListRef = useRef<HTMLDivElement>(null)
@@ -527,10 +572,13 @@ function App() {
     () => executionSteps.find(({ state }) => state.id === selectedExecutionStateId),
     [executionSteps, selectedExecutionStateId],
   )
+  const hasWorkflowDefinition = workflowDetail?.workflowGraph !== undefined
+  const showStateFlow = executionSteps.length > 0 || hasWorkflowDefinition
   useEffect(() => {
     if (previousExecutionRunKeyRef.current === executionRunKey) return
     previousExecutionRunKeyRef.current = executionRunKey
     setSelectedExecutionStateId(undefined)
+    setFindingSeverityFilter(new Set())
   }, [executionRunKey])
   useEffect(() => {
     if (executionSteps.length === 0) {
@@ -584,11 +632,17 @@ function App() {
       : undefined
     const isRunningState = state.status === "running"
     const activeEvidence = isRunningState ? detail.activeStateEvidence : undefined
-    const promptContent = session?.prompt_artifact_id
-      ? artifactDisplayContent(detail.artifactContents?.[session.prompt_artifact_id])
-      : activeEvidence?.promptContent ?? undefined
     const stateArtifacts = detail.evidence.artifacts.filter((artifact) => state.artifact_ids.includes(artifact.id))
-    const responseArtifact = session?.result_artifact_id ? detail.artifactContents?.[session.result_artifact_id] : undefined
+    const promptArtifactRecord = session?.prompt_artifact_id
+      ? detail.evidence.artifacts.find((artifact) => artifact.id === session.prompt_artifact_id)
+      : stateArtifacts.find((artifact) => artifact.kind === `${state.name}_prompt`)
+    const promptContent = promptArtifactRecord
+      ? artifactDisplayContent(detail.artifactContents?.[promptArtifactRecord.id])
+      : activeEvidence?.promptContent ?? undefined
+    const responseArtifactRecord = session?.result_artifact_id
+      ? detail.evidence.artifacts.find((artifact) => artifact.id === session.result_artifact_id)
+      : undefined
+    const responseArtifact = responseArtifactRecord ? detail.artifactContents?.[responseArtifactRecord.id] : undefined
     const parsedResponseArtifact = stateArtifacts.find((artifact) => artifact.kind === `${state.name}_parsed`)
     const parsedResponseContent = parsedResponseArtifact
       ? artifactDisplayContent(detail.artifactContents?.[parsedResponseArtifact.id])
@@ -607,14 +661,19 @@ function App() {
       Boolean(promptContent) && (session?.agent !== "custom" || hasResponseContent || state.status !== "succeeded")
     const outputArtifacts = stateArtifacts.filter(
       (artifact) =>
-        isOutputArtifactKind(artifact.kind) &&
-        artifact.id !== session?.prompt_artifact_id &&
-        artifact.id !== session?.result_artifact_id,
+        artifact.id !== promptArtifactRecord?.id &&
+        (isOutputArtifactKind(artifact.kind) || artifact.id === responseArtifactRecord?.id) &&
+        (artifact.id !== responseArtifactRecord?.id || responseContent === undefined),
     )
-    const outputItems = outputArtifacts.map((artifact) => ({
-      artifact,
-      content: artifactDisplayContent(detail.artifactContents?.[artifact.id]),
-    }))
+    const outputItems = [
+      ...(promptArtifactRecord && promptContent === undefined
+        ? [{ artifact: promptArtifactRecord, content: undefined }]
+        : []),
+      ...outputArtifacts.map((artifact) => ({
+        artifact,
+        content: artifactDisplayContent(detail.artifactContents?.[artifact.id]),
+      })),
+    ]
     const findings = detail.evidence.findings.filter((finding) => state.finding_ids.includes(finding.id))
     const stateConfig = detail.stateConfigs?.[state.name]
     return {
@@ -718,6 +777,7 @@ function App() {
   return (
     <TooltipProvider>
       <SidebarProvider
+        className="fixed inset-0 overflow-hidden"
         style={{
           "--sidebar-width": "280px",
         } as CSSProperties}
@@ -726,8 +786,8 @@ function App() {
           {sidebarContent}
         </Sidebar>
 
-        <SidebarInset className="min-w-0">
-          <header className="border-b bg-card">
+        <SidebarInset className="h-full min-w-0 overflow-hidden">
+          <header className="shrink-0 border-b bg-card">
             <div className="flex h-14 w-full items-center justify-between gap-2 px-3 lg:px-6">
               <div className="flex min-w-0 items-center gap-2">
                 <SidebarTrigger className="shrink-0" />
@@ -754,7 +814,7 @@ function App() {
             </div>
           </header>
 
-          <div className="flex-1 overflow-x-hidden overflow-y-auto p-3 lg:p-6">
+          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3 lg:p-6">
             <div className="flex flex-col gap-2 lg:gap-4">
               {error ? (
                 <Alert variant="destructive">
@@ -780,67 +840,132 @@ function App() {
                 </Card>
               ) : (
                 <>
-                  {/* Header */}
-                  <div className="flex min-h-11 items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <h2 className="truncate text-base font-semibold lg:text-lg">
-                        {workflowDetail?.evidence?.template ?? selectedWorkflow?.type ?? "Workflow"}
+                  {/* Title + Status | Goal */}
+                  <div className={cn("grid gap-3 md:max-h-[300px]", workflowDetail?.runContext?.goal ? "md:grid-cols-[2fr_3fr]" : "")}>
+                    <div className="flex min-w-0 flex-col self-stretch">
+                      <h2 className="truncate text-lg font-semibold leading-snug">
+                        {projectName(workflowDetail?.runContext?.cwd ?? selectedWorkflow?.cwd) ?? workflowDetail?.evidence?.template ?? selectedWorkflow?.type ?? "Workflow"}
                       </h2>
-                      <Badge variant={statusTone[workflowDetail?.evidence?.status ?? workflowDetail?.workflow.status ?? selectedWorkflow?.status ?? ""] ?? "outline"}>
-                        {workflowDetail?.evidence?.status ?? workflowDetail?.workflow.status ?? selectedWorkflow?.status ?? "unknown"}
-                      </Badge>
-                    </div>
-                    <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-                      {selectedWorkflowDuration}
-                    </span>
-                  </div>
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                    {workflowDetail?.runContext?.cwd ? (
-                      <span className="max-w-[180px] truncate font-mono lg:max-w-none">{workflowDetail.runContext.cwd}</span>
-                    ) : null}
-                    {selectedWorkflow?.startTime ? <span>{formatDatePrecise(selectedWorkflow.startTime)}</span> : null}
-                    {completedActivitySummary ? <span>{completedActivitySummary}</span> : null}
-                    {pendingActivitySummary ? <span>{pendingActivitySummary}</span> : null}
-                  </div>
-                  {runSummary?.activeState?.status === "running" ? (
-                    <Alert aria-live="polite" className="border-blue-500/30 bg-blue-500/10">
-                      <span className="relative mt-0.5 flex h-4 w-4 items-center justify-center">
-                        <span className="absolute h-3.5 w-3.5 animate-ping rounded-full bg-blue-500 opacity-40" />
-                        <span className="relative h-2.5 w-2.5 rounded-full bg-blue-500" />
-                      </span>
-                      <AlertTitle>Running now</AlertTitle>
-                      <AlertDescription className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="font-medium text-foreground">{runSummary.activeState.name}</span>
-                        {runSummary.activeState.started_at ? (
-                          <span className="text-xs tabular-nums text-muted-foreground">
-                            started {formatTimePrecise(runSummary.activeState.started_at)}
-                          </span>
+                      {(workflowDetail?.evidence?.template ?? selectedWorkflow?.type) ? (
+                        <p className="mt-0.5 text-xs text-muted-foreground">{workflowDetail?.evidence?.template ?? selectedWorkflow?.type}</p>
+                      ) : null}
+                      {workflowDetail?.runContext?.cwd ? (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <FolderIcon className="h-3 w-3 shrink-0 opacity-50" />
+                          <span className="truncate font-mono">{workflowDetail.runContext.cwd}</span>
+                        </div>
+                      ) : null}
+                      {workflowDetail?.runContext?.worktreePath ? (
+                        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <GitBranchIcon className="h-3 w-3 shrink-0 opacity-50" />
+                          <span className="truncate font-mono">{workflowDetail.runContext.worktreePath.split("/").pop()}</span>
+                        </div>
+                      ) : null}
+                      {selectedWorkflow?.startTime ? (
+                        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <ClockIcon className="h-3 w-3 shrink-0 opacity-50" />
+                          <span>{formatDatePrecise(selectedWorkflow.startTime)}</span>
+                        </div>
+                      ) : null}
+                      <div className="mt-2 flex-1 overflow-auto rounded-md border px-3 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2 text-sm">
+                          <Badge variant={statusTone[currentWorkflowStatus ?? ""] ?? "outline"}>
+                            {currentWorkflowStatus ?? "unknown"}
+                          </Badge>
+                          <span className="font-bold tabular-nums tracking-tight">{selectedWorkflowDuration}</span>
+                          {completedActivitySummary ? <span className="text-xs text-muted-foreground">{completedActivitySummary}</span> : null}
+                        </div>
+                        {runSummary?.activeState?.status === "running" ? (
+                          <div className="mt-2.5 border-t pt-2.5">
+                            <div className="flex items-center gap-2.5">
+                              <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+                                <span className="absolute h-4 w-4 animate-ping rounded-full bg-blue-500 opacity-30" />
+                                <span className="relative h-3 w-3 rounded-full bg-blue-500" />
+                              </span>
+                              <span className="text-sm font-semibold">{runSummary.activeState.name}</span>
+                              {runSummary.activeState.started_at ? (
+                                <span className="text-xs tabular-nums text-muted-foreground">
+                                  since {formatTimePrecise(runSummary.activeState.started_at)}
+                                </span>
+                              ) : null}
+                            </div>
+                            {((workflowDetail?.evidence?.states?.length ?? 0) > 1 || runSummary.returnEvents.length > 0) ? (
+                              <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                                {workflowDetail?.evidence?.states && workflowDetail.evidence.states.length > 1 ? (
+                                  <span>step {workflowDetail.evidence.states.length}</span>
+                                ) : null}
+                                {runSummary.returnEvents.length > 0 ? (
+                                  <span>{runSummary.returnEvents.length} review return{runSummary.returnEvents.length > 1 ? "s" : ""}</span>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="mt-2.5 border-t pt-2.5">
+                            {runSummary?.activeState ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm text-muted-foreground">Stopped at</span>
+                                <span className="rounded-md bg-white/60 px-2 py-0.5 text-sm font-semibold">{runSummary.activeState.name}</span>
+                                <Badge variant={statusTone[runSummary.activeState.status] ?? "outline"} className="text-[11px]">
+                                  {runSummary.activeState.status}
+                                </Badge>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2.5">
+                                {(currentWorkflowStatus === "failed" || currentWorkflowStatus === "FAILED") ? (
+                                  <AlertCircleIcon className="h-5 w-5 shrink-0 text-red-500" />
+                                ) : (currentWorkflowStatus === "succeeded" || currentWorkflowStatus === "COMPLETED") ? (
+                                  <CheckCircle2Icon className="h-5 w-5 shrink-0 text-emerald-500" />
+                                ) : (currentWorkflowStatus === "waiting_user") ? (
+                                  <InboxIcon className="h-5 w-5 shrink-0 text-amber-500" />
+                                ) : null}
+                                <span className="text-sm font-semibold">
+                                  Workflow {currentWorkflowStatus?.toLowerCase().replace(/_/g, " ") ?? "unknown"}
+                                </span>
+                              </div>
+                            )}
+                            {workflowDetail?.evidence?.summary ? (
+                              <p className="mt-2 text-[13px] leading-snug text-muted-foreground">{workflowDetail.evidence.summary}</p>
+                            ) : null}
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                              {workflowDetail?.evidence?.states && workflowDetail.evidence.states.length > 0 ? (
+                                <span>{workflowDetail.evidence.states.length} state{workflowDetail.evidence.states.length > 1 ? "s" : ""} executed</span>
+                              ) : null}
+                              {runSummary?.returnEvents && runSummary.returnEvents.length > 0 ? (
+                                <span>{runSummary.returnEvents.length} review return{runSummary.returnEvents.length > 1 ? "s" : ""}</span>
+                              ) : null}
+                              {runSummary?.nextAction ? (
+                                <span className={cn(workflowDetail?.evidence?.states?.length ? "ml-auto" : "", "font-medium")}>{runSummary.nextAction}</span>
+                              ) : null}
+                            </div>
+                          </div>
+                        )}
+                        {(runSummary?.openInboxCount ?? 0) > 0 ? (
+                          <div className="mt-2.5 border-t pt-2.5">
+                            <div className="flex items-center gap-2 text-sm font-medium text-destructive">
+                              <AlertCircleIcon className="h-4 w-4 shrink-0" />
+                              <span>{runSummary!.openInboxCount} operator decision(s) pending</span>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {workflowDetail?.evidence?.inbox.find(
+                                (i) => i.status === "open" || i.status === "waiting" || i.status === "waiting_user",
+                              )?.title ?? "Check inbox for details."}
+                            </p>
+                          </div>
                         ) : null}
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-                  {workflowDetail?.runContext?.goal ? (
-                    <section className="rounded-md border bg-muted/20 px-3 py-2">
-                      <h3 className="mb-1 text-xs font-medium text-muted-foreground">Goal</h3>
-                      <div className="max-h-32 overflow-auto text-sm">
-                        <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
-                          {workflowDetail.runContext.goal}
-                        </Streamdown>
                       </div>
-                    </section>
-                  ) : null}
-
-                  {(runSummary?.openInboxCount ?? 0) > 0 ? (
-                    <Alert variant="destructive">
-                      <AlertCircleIcon />
-                      <AlertTitle>{runSummary!.openInboxCount} operator decision(s) pending</AlertTitle>
-                      <AlertDescription>
-                        {workflowDetail?.evidence?.inbox.find(
-                          (i) => i.status === "open" || i.status === "waiting" || i.status === "waiting_user",
-                        )?.title ?? "Check inbox for details."}
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
+                    </div>
+                    {workflowDetail?.runContext?.goal ? (
+                      <section className="flex max-h-44 flex-col overflow-hidden rounded-lg border px-5 py-4 md:h-full md:max-h-none">
+                        <h3 className="mb-2.5 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">Goal</h3>
+                        <div className="min-h-0 flex-1 overflow-auto text-[14px] leading-relaxed [&_pre]:whitespace-pre-wrap [&_pre]:break-words">
+                          <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
+                            {workflowDetail.runContext.goal}
+                          </Streamdown>
+                        </div>
+                      </section>
+                    ) : null}
+                  </div>
 
                   {detailLoading ? (
                     <div className="flex flex-col gap-3">
@@ -849,21 +974,21 @@ function App() {
                     </div>
                   ) : (
                     <>
-                    {executionSteps.length > 0 ? (
-                      <section className="grid min-w-0 gap-3 lg:grid-cols-[minmax(260px,360px)_minmax(0,1fr)] lg:items-start">
-                        <div className="order-2 min-w-0 rounded-md border lg:order-1">
-                          <div className="flex h-11 items-center justify-between gap-2 border-b px-3">
+                    {showStateFlow ? (
+                      <section className="grid min-w-0 gap-3 md:grid-cols-[2fr_3fr]">
+                        <div className="flex min-w-0 flex-col overflow-hidden rounded-md border md:max-h-[calc(100dvh-220px)]">
+                          <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
                             <h3 className="text-sm font-medium">State flow</h3>
                             <div className="flex items-center gap-2">
                               {workflowDetail?.workflowGraph ? (
-                                <Button variant="outline" onClick={() => setDefinitionOpen(true)}>
+                                <Button variant="outline" size="xs" onClick={() => setDefinitionOpen(true)}>
                                   Definition
                                 </Button>
                               ) : null}
                               <span className="text-xs tabular-nums text-muted-foreground">{executionSteps.length} events</span>
                             </div>
                           </div>
-                          <div ref={stateFlowListRef} className="relative">
+                          <div ref={stateFlowListRef} className="relative overflow-visible md:min-h-0 md:flex-1 md:overflow-auto">
                             {stateFlowLine ? (
                               <span
                                 aria-hidden="true"
@@ -871,7 +996,11 @@ function App() {
                                 style={{ top: stateFlowLine.top, height: stateFlowLine.height }}
                               />
                             ) : null}
-                            {executionSteps.map(({ state, index }) => {
+                            {executionSteps.length === 0 ? (
+                              <div className="px-3 py-4 text-sm text-muted-foreground">
+                                No state event has been recorded yet.
+                              </div>
+                            ) : executionSteps.map(({ state, index }) => {
                               const durationMs = stateDurationMs(state)
                               const failed = state.status === "failed" || state.status === "timed_out"
                               const running = state.status === "running"
@@ -943,12 +1072,12 @@ function App() {
                           </div>
                         </div>
 
-                        <div className="order-1 min-w-0 rounded-md border bg-card lg:sticky lg:top-3 lg:order-2">
+                        <div className="flex min-w-0 flex-col overflow-hidden rounded-md border bg-card md:max-h-[calc(100dvh-220px)]">
                           {selectedExecutionStep ? (
-                            <div>
+                            <div className="flex flex-col overflow-hidden md:min-h-0 md:flex-1">
                               <div
                                 className={cn(
-                                  "flex h-11 items-center border-b px-3",
+                                  "flex h-11 shrink-0 items-center border-b px-3",
                                   selectedExecutionStep.state.status === "running" && "bg-blue-500/10",
                                 )}
                               >
@@ -973,7 +1102,7 @@ function App() {
                                 </div>
                               </div>
 
-                              <div className="space-y-4 p-3">
+                              <div className="space-y-4 overflow-visible p-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:overflow-x-hidden">
                                 {selectedExecutionDetail?.session ||
                                 selectedExecutionDetail?.stateConfig?.agent ||
                                 selectedExecutionDetail?.stateConfig?.model ? (
@@ -997,28 +1126,29 @@ function App() {
                                   </div>
                                 ) : null}
                                 {selectedExecutionDetail?.promptContent ? (
-                                  <Message from="user">
-                                    <MessageMetadata className="justify-end">
-                                      <MessageMetadataItem>Prompt</MessageMetadataItem>
-                                    </MessageMetadata>
-                                    <MessageContent className="max-h-72 overflow-auto">
+                                  <div>
+                                    <div className="mb-1 text-xs text-muted-foreground">Prompt</div>
+                                    <div className="min-w-0 overflow-hidden rounded-md bg-primary/10 px-3 py-2 text-sm break-words">
                                       <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
                                         {selectedExecutionDetail.promptContent}
                                       </Streamdown>
-                                    </MessageContent>
-                                  </Message>
+                                    </div>
+                                  </div>
                                 ) : null}
                                 {responseTextForDisplay(selectedExecutionDetail?.responseContent) !== undefined ? (
-                                  <Message from="assistant" className="max-w-full">
-                                    <MessageMetadata>
-                                      <MessageMetadataItem>Response</MessageMetadataItem>
-                                    </MessageMetadata>
-                                    <MessageContent className="max-h-[520px] w-full overflow-auto rounded-md px-1 py-1">
-                                      <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode={selectedExecutionDetail?.isStreamingResponse ? "streaming" : "static"}>
+                                  <div>
+                                    <div className="mb-1 text-xs text-muted-foreground">Response</div>
+                                    <div className="min-w-0 overflow-hidden text-sm break-words">
+                                      <Streamdown
+                                        key={selectedExecutionDetail?.responseContent}
+                                        className="tychonic-markdown"
+                                        linkSafety={streamdownLinkSafety}
+                                        mode={selectedExecutionDetail?.isStreamingResponse ? "streaming" : "static"}
+                                      >
                                         {responseTextForDisplay(selectedExecutionDetail?.responseContent)}
                                       </Streamdown>
-                                    </MessageContent>
-                                  </Message>
+                                    </div>
+                                  </div>
                                 ) : null}
                                 {selectedExecutionDetail?.outputItems.map(({ artifact, content }) => (
                                   <div key={artifact.id} className="rounded-md border bg-muted/20">
@@ -1026,16 +1156,13 @@ function App() {
                                       <Badge variant="outline">{artifact.kind}</Badge>
                                       <span className="min-w-0 truncate text-xs text-muted-foreground">{artifact.path}</span>
                                     </div>
-                                    <pre className="max-h-56 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap">{content !== undefined ? content || "(empty output)" : "(artifact content unavailable)"}</pre>
-                                  </div>
-                                ))}
-                                {selectedExecutionDetail?.findings.map((finding) => (
-                                  <div key={finding.id} className="rounded-md border px-2 py-1.5 text-sm">
-                                    <div className="flex items-center gap-2">
-                                      <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"}>Severity: {finding.severity}</Badge>
-                                      <span className="font-medium">{finding.title}</span>
-                                    </div>
-                                    {finding.detail ? <p className="mt-1 text-xs text-muted-foreground">{finding.detail}</p> : null}
+                                    {content !== undefined ? (
+                                      content && isDiffContent(content)
+                                        ? <DiffView content={content} className="max-h-56 py-1" />
+                                        : <pre className="max-h-56 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap">{content || "(empty output)"}</pre>
+                                    ) : (
+                                      <pre className="max-h-56 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap text-muted-foreground">(artifact content unavailable)</pre>
+                                    )}
                                   </div>
                                 ))}
                                 {selectedExecutionDetail &&
@@ -1047,9 +1174,31 @@ function App() {
                                   <span className="text-sm text-muted-foreground">No inline evidence for this state event.</span>
                                 ) : null}
                               </div>
+                              {selectedExecutionDetail && selectedExecutionDetail.findings.length > 0 ? (
+                                <div className="flex shrink-0 flex-col border-t" style={{ maxHeight: "40%" }}>
+                                  <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">State Findings ({selectedExecutionDetail.findings.length})</div>
+                                  <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-2">
+                                    {selectedExecutionDetail.findings.map((finding) => (
+                                      <div key={finding.id} className="rounded-md border px-2 py-1 text-xs">
+                                        <div className="flex items-center gap-1.5">
+                                          <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"} className="shrink-0 text-[10px]">{finding.severity}</Badge>
+                                          <span className="min-w-0 truncate font-medium">{finding.title}</span>
+                                        </div>
+                                        {finding.detail ? (
+                                          <div className="mt-0.5 min-w-0 overflow-hidden text-muted-foreground break-words">
+                                            <SmallStreamdown>{finding.detail}</SmallStreamdown>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
+                          ) : executionSteps.length === 0 ? (
+                            <span className="p-3 text-sm text-muted-foreground">Waiting for the first state event.</span>
                           ) : (
-                            <span className="text-sm text-muted-foreground">Select a state event.</span>
+                            <span className="p-3 text-sm text-muted-foreground">Select a state event.</span>
                           )}
                         </div>
                       </section>
@@ -1061,7 +1210,7 @@ function App() {
                       </div>
                     ) : null}
 
-                    {/* Evidence \u2014 inline priority sections, data-present only */}
+                    {/* Evidence — inline priority sections, data-present only */}
                     {workflowDetail?.evidenceError ? (
                       <Alert>
                         <AlertCircleIcon />
@@ -1070,23 +1219,68 @@ function App() {
                       </Alert>
                     ) : workflowDetail?.evidence ? (
                       <div className="space-y-3">
-                        {workflowDetail.evidence.findings.length > 0 ? (
-                          <section>
-                            <h3 className="mb-1.5 text-xs font-medium text-muted-foreground">Findings ({workflowDetail.evidence.findings.length})</h3>
-                            <div className="space-y-1.5">
-                              {workflowDetail.evidence.findings.map((finding) => (
-                                <div key={finding.id} className="rounded-md border px-3 py-2">
-                                  <div className="flex items-center gap-2">
-                                    <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"} className="shrink-0">Severity: {finding.severity}</Badge>
-                                    <span className="min-w-0 truncate text-sm font-medium">{finding.title}</span>
+                        {workflowDetail.evidence.findings.length > 0 ? (() => {
+                          const allFindings = workflowDetail.evidence.findings
+                          const severityCounts = new Map<string, number>()
+                          for (const f of allFindings) {
+                            const sev = f.severity.toLowerCase()
+                            severityCounts.set(sev, (severityCounts.get(sev) ?? 0) + 1)
+                          }
+                          const severityOrder = ["blocker", "critical", "high", "medium", "low", "info"]
+                          const presentSeverities = severityOrder.filter(s => severityCounts.has(s))
+                          const filtered = findingSeverityFilter.size > 0
+                            ? allFindings.filter(f => findingSeverityFilter.has(f.severity.toLowerCase()))
+                            : allFindings
+                          return (
+                            <section>
+                              <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                                <h3 className="text-xs font-medium text-muted-foreground">All Findings ({filtered.length}{findingSeverityFilter.size > 0 ? `/${allFindings.length}` : ""})</h3>
+                                {presentSeverities.length > 1 ? (
+                                  <div className="flex flex-wrap gap-1">
+                                    {presentSeverities.map(sev => {
+                                      const active = findingSeverityFilter.has(sev)
+                                      return (
+                                        <button
+                                          key={sev}
+                                          type="button"
+                                          onClick={() => {
+                                            setFindingSeverityFilter(prev => {
+                                              const next = new Set(prev)
+                                              if (next.has(sev)) next.delete(sev)
+                                              else next.add(sev)
+                                              return next
+                                            })
+                                          }}
+                                          className={cn("transition-opacity", !active && findingSeverityFilter.size > 0 && "opacity-40")}
+                                        >
+                                          <Badge variant={findingSeverityTone[sev] ?? "outline"} className="cursor-pointer text-[10px]">
+                                            {sev} ({severityCounts.get(sev)})
+                                          </Badge>
+                                        </button>
+                                      )
+                                    })}
                                   </div>
-                                  {finding.detail ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{finding.detail}</p> : null}
-                                  {finding.target !== undefined ? <span className="mt-0.5 block truncate text-xs text-muted-foreground">\u2192 {finding.target}</span> : null}
-                                </div>
-                              ))}
-                            </div>
-                          </section>
-                        ) : null}
+                                ) : null}
+                              </div>
+                              <div className="space-y-1.5">
+                                {filtered.map((finding) => (
+                                  <div key={finding.id} className="rounded-md border px-3 py-2">
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"} className="shrink-0">Severity: {finding.severity}</Badge>
+                                      <span className="min-w-0 truncate text-sm font-medium">{finding.title}</span>
+                                    </div>
+                                    {finding.detail ? (
+                                      <div className="mt-0.5 min-w-0 overflow-hidden text-muted-foreground break-words">
+                                        <SmallStreamdown>{finding.detail}</SmallStreamdown>
+                                      </div>
+                                    ) : null}
+                                    {finding.target !== undefined ? <span className="mt-0.5 block truncate text-xs text-muted-foreground">{"→"} {finding.target}</span> : null}
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+                          )
+                        })() : null}
 
                         {(() => {
                           const stateArtifactIds = new Set(workflowDetail.evidence.states.flatMap(s => s.artifact_ids))
@@ -1114,7 +1308,9 @@ function App() {
                                         ) : null}
                                       </div>
                                       {content ? (
-                                        <pre className="max-h-48 max-w-full overflow-auto whitespace-pre-wrap break-words border-t bg-muted/30 px-3 py-2 text-xs">{content}</pre>
+                                        isDiffContent(content)
+                                          ? <DiffView content={content} className="max-h-48 max-w-full border-t py-1" />
+                                          : <pre className="max-h-48 max-w-full overflow-auto whitespace-pre-wrap break-words border-t bg-muted/30 px-3 py-2 text-xs">{content}</pre>
                                       ) : null}
                                     </div>
                                   )
@@ -1168,8 +1364,9 @@ function formatOpenWorkflowDuration(workflow: WorkflowSummary) {
   return `open ${formatDuration(Math.max(0, Date.now() - startMs))}`
 }
 
-function workflowRunSummary(evidence: WorkflowEvidence) {
+function workflowRunSummary(evidence: WorkflowEvidence, pendingActiveState?: WorkflowStateRecord) {
   const activeState =
+    pendingActiveState ??
     evidence.latest_state ??
     evidence.states.findLast((state) => state.status === "running" || state.status === "blocked" || state.status === "timed_out") ??
     evidence.states.at(-1)
@@ -1255,6 +1452,42 @@ function artifactDisplayPath(artifact: WorkflowEvidence["artifacts"][number]) {
   return artifact.path
 }
 
+
+function DiffView({ content, className }: { content: string; className?: string }) {
+  const lines = content.split("\n")
+  return (
+    <pre className={cn("overflow-auto text-xs", className)}>
+      {lines.map((line, i) => {
+        let bg = ""
+        let fg = ""
+        if (line.startsWith("+++") || line.startsWith("---")) {
+          fg = "text-muted-foreground font-semibold"
+        } else if (line.startsWith("+")) {
+          bg = "bg-emerald-500/15"
+          fg = "text-emerald-700 dark:text-emerald-400"
+        } else if (line.startsWith("-")) {
+          bg = "bg-red-500/15"
+          fg = "text-red-700 dark:text-red-400"
+        } else if (line.startsWith("@@")) {
+          bg = "bg-blue-500/10"
+          fg = "text-blue-600 dark:text-blue-400"
+        } else if (line.startsWith("diff ")) {
+          fg = "font-semibold text-foreground"
+        }
+        return (
+          <span key={i} className={cn("block whitespace-pre-wrap break-words px-3", bg, fg)}>
+            {line || "\n"}
+          </span>
+        )
+      })}
+    </pre>
+  )
+}
+
+function isDiffContent(content: string): boolean {
+  const first200 = content.slice(0, 200)
+  return first200.startsWith("diff ") || first200.startsWith("--- a/") || /^@@\s/.test(first200)
+}
 
 function MermaidDiagram({ source }: { source: string }) {
   const diagramId = `tychonic-mermaid-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`

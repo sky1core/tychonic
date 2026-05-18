@@ -1,7 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
+import { watch, type FSWatcher } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { extname, join, normalize, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertTychonicWorkflowResult,
@@ -24,6 +25,7 @@ import {
 } from "../temporal/client.js";
 import type { TemporalConfig } from "../temporal/manager.js";
 import { BUNDLE_FILE_NAMES, runtimeWorkflowModulesDir } from "../temporal/workflowModules.js";
+import { tychonicRunsParentDir } from "../runtime/runDirs.js";
 
 export interface StatusUiServerOptions extends TemporalConfig {
   uiHost?: string;
@@ -43,6 +45,20 @@ export interface StatusUiServerDeps {
 }
 
 export const DEFAULT_STATUS_UI_PORT = 19733;
+
+type PendingActiveStateView = {
+  state: {
+    id: string;
+    name: string;
+    status: "running";
+    reason: "pending_activity";
+    activity_attempt_ids: string[];
+    artifact_ids: string[];
+    finding_ids: string[];
+    started_at?: string;
+  };
+  attemptId: string;
+};
 
 export function defaultStatusUiStaticDir(): string {
   return fileURLToPath(new URL("../../dist/web-client", import.meta.url));
@@ -191,56 +207,216 @@ async function handleStatusEventsApi(
   response.write(": connected\n\n");
 
   let closed = false;
-  let inFlight = false;
   let sequence = 0;
-  let lastSignature = "";
-  let interval: ReturnType<typeof setInterval> | undefined;
+  let queuedRefresh: ReturnType<typeof setTimeout> | undefined;
+  const closeWatchers: Array<() => void> = [];
 
   const close = () => {
     if (closed) return;
     closed = true;
-    if (interval) clearInterval(interval);
+    if (queuedRefresh) clearTimeout(queuedRefresh);
+    for (const closeWatcher of closeWatchers.splice(0)) closeWatcher();
     if (!response.destroyed && !response.writableEnded) response.end();
   };
 
-  const sendRefreshIfChanged = async () => {
-    if (closed || inFlight) return;
-    inFlight = true;
+  const sendRefresh = () => {
+    if (closed) return;
+    sequence += 1;
+    if (!writeStatusEvent(response, "refresh", {
+      sequence,
+      workflowId,
+      ...(runId ? { runId } : {}),
+      createdAt: new Date().toISOString()
+    })) close();
+  };
+
+  const queueRefresh = () => {
+    if (closed || queuedRefresh) return;
+    queuedRefresh = setTimeout(() => {
+      queuedRefresh = undefined;
+      sendRefresh();
+    }, 50);
+  };
+
+  request.on("close", close);
+  request.on("aborted", close);
+  sendRefresh();
+  if (workflowId && runId) {
     try {
-      const signature = await statusEventSignature({
-        limit,
-        ...(workflowId ? { workflowId } : {}),
-        ...(runId ? { runId } : {}),
-        temporalConfig,
-        deps
-      });
-      if (closed || signature === lastSignature) return;
-      lastSignature = signature;
-      sequence += 1;
-      if (!writeStatusEvent(response, "refresh", {
-        sequence,
+      const closeWatcher = await watchSelectedRunEvidence({
         workflowId,
-        ...(runId ? { runId } : {}),
-        createdAt: new Date().toISOString()
-      })) close();
+        runId,
+        temporalConfig,
+        deps,
+        onChange: queueRefresh
+      });
+      if (closed) closeWatcher();
+      else closeWatchers.push(closeWatcher);
     } catch (error) {
       if (!closed) {
         if (!writeStatusEvent(response, "status_error", {
           message: error instanceof Error ? error.message : String(error)
         })) close();
       }
-    } finally {
-      inFlight = false;
+    }
+  }
+}
+
+async function watchSelectedRunEvidence(input: {
+  workflowId: string;
+  runId: string;
+  temporalConfig: TemporalConfig;
+  deps: StatusUiServerDeps;
+  onChange: () => void;
+}): Promise<() => void> {
+  const watchers: FSWatcher[] = [];
+  const watchedDirs = new Set<string>();
+  let closed = false;
+  let liveOutputWatcher: FSWatcher | undefined;
+  let attachInFlight = false;
+
+  const closeLiveOutputWatcher = () => {
+    if (!liveOutputWatcher) return;
+    liveOutputWatcher.close();
+    liveOutputWatcher = undefined;
+  };
+
+  const watchDir = (dir: string, onChange: (filename: string | Buffer | null) => void): boolean => {
+    const resolvedDir = resolve(dir);
+    if (closed || watchedDirs.has(resolvedDir)) return true;
+    try {
+      const watcher = watch(resolvedDir, { persistent: false }, (_event, filename) => {
+        if (!closed) onChange(filename);
+      });
+      watchers.push(watcher);
+      watchedDirs.add(resolvedDir);
+      return true;
+    } catch {
+      return false;
     }
   };
 
-  interval = setInterval(() => {
-    void sendRefreshIfChanged();
-  }, 1_000);
+  const watchExistingAncestor = async (
+    targetDir: string,
+    onChange: (filename: string | Buffer | null) => void
+  ): Promise<void> => {
+    let current = resolve(targetDir);
+    while (!closed) {
+      try {
+        if ((await stat(current)).isDirectory()) {
+          watchDir(current, onChange);
+          return;
+        }
+      } catch { /* try parent */ }
+      const parent = dirname(current);
+      if (parent === current) return;
+      current = parent;
+    }
+  };
 
-  request.on("close", close);
-  request.on("aborted", close);
-  await sendRefreshIfChanged();
+  const refreshAndAttach = () => {
+    if (closed || attachInFlight) return;
+    attachInFlight = true;
+    void attachSelectedRunWatchers().finally(() => {
+      attachInFlight = false;
+    });
+    input.onChange();
+  };
+
+  const watchLiveOutputFile = async (
+    artifactsDir: string,
+    liveDir: string,
+    promptPrefix: string,
+    heartbeatAttemptId: string | undefined
+  ) => {
+    if (closed || !promptPrefix) return;
+    const files = await readdir(artifactsDir).catch((): string[] => []);
+    if (closed) return;
+    const heartbeatPromptFile = heartbeatAttemptId ? `${promptPrefix}${heartbeatAttemptId}.txt` : undefined;
+    const promptFile = heartbeatPromptFile && files.includes(heartbeatPromptFile)
+      ? heartbeatPromptFile
+      : files
+        .filter((f) => f.startsWith(promptPrefix) && f.endsWith(".txt"))
+        .sort()
+        .at(-1);
+    if (!promptFile) return;
+    const attemptId = promptFile.slice(promptPrefix.length, -".txt".length);
+    const liveOutputPath = join(liveDir, `${attemptId}.log`);
+    closeLiveOutputWatcher();
+    if (closed) return;
+    try {
+      const watcher = watch(liveOutputPath, { persistent: false }, input.onChange);
+      if (closed) {
+        watcher.close();
+        return;
+      }
+      liveOutputWatcher = watcher;
+      input.onChange();
+    } catch {
+      /* live log may not exist yet; liveDir watcher will observe creation */
+    }
+  };
+
+  async function attachSelectedRunWatchers(): Promise<void> {
+    if (closed) return;
+    let workflow: TychonicTemporalWorkflowStatus;
+    try {
+      workflow = await input.deps.describeWorkflow({
+        workflowId: input.workflowId,
+        runId: input.runId,
+        includeResult: true,
+        ...input.temporalConfig
+      });
+    } catch {
+      return;
+    }
+    if (closed || workflow.status !== "RUNNING") return;
+    if (!workflow.result) {
+      await watchExistingAncestor(tychonicRunsParentDir(), refreshAndAttach);
+      return;
+    }
+    try {
+      assertTychonicWorkflowResult(workflow.result);
+    } catch {
+      return;
+    }
+    const pendingActiveState = pendingActiveStateView(workflow, workflow.result);
+    const activeStateName = pendingActiveState?.state.name ??
+      (workflow.result.activeState?.status === "running" ? workflow.result.activeState.name : undefined);
+    const store = runArtifactStoreForRun(workflow.result.run);
+    const runDir = store.runDir(workflow.result.run.id);
+    const artifactsDir = store.artifactsDir(workflow.result.run.id);
+    const liveDir = store.liveDir(workflow.result.run.id);
+    const promptPrefix = activeStateName ? `${activeStateName}_prompt-` : undefined;
+
+    await watchExistingAncestor(dirname(runDir), () => {
+      refreshAndAttach();
+    });
+    await watchExistingAncestor(runDir, (filename) => {
+      const changedName = filename === null ? undefined : String(filename);
+      if (changedName === undefined || changedName === "artifacts" || changedName === "live") refreshAndAttach();
+    });
+    await watchExistingAncestor(artifactsDir, (filename) => {
+      if (!promptPrefix || filename === null || String(filename).startsWith(promptPrefix)) {
+        if (promptPrefix) void watchLiveOutputFile(artifactsDir, liveDir, promptPrefix, pendingActiveState?.attemptId);
+        input.onChange();
+      }
+    });
+    await watchExistingAncestor(liveDir, (filename) => {
+      if (filename === null || String(filename).endsWith(".log")) {
+        if (promptPrefix) void watchLiveOutputFile(artifactsDir, liveDir, promptPrefix, pendingActiveState?.attemptId);
+        input.onChange();
+      }
+    });
+    if (promptPrefix) await watchLiveOutputFile(artifactsDir, liveDir, promptPrefix, pendingActiveState?.attemptId);
+  }
+
+  await attachSelectedRunWatchers();
+  return () => {
+    closed = true;
+    closeLiveOutputWatcher();
+    for (const watcher of watchers) watcher.close();
+  };
 }
 
 function statusEventHeaders(): Record<string, string> {
@@ -363,6 +539,41 @@ function workflowResultEventSignature(result: unknown): Record<string, unknown> 
   };
 }
 
+function pendingActiveStateView(
+  workflow: TychonicTemporalWorkflowStatus,
+  result: TychonicWorkflowResult
+): PendingActiveStateView | undefined {
+  const candidates: Array<{ view: PendingActiveStateView; sortTime: number }> = [];
+  for (const activity of workflow.pendingActivities) {
+    for (const detail of activity.heartbeatDetails ?? []) {
+      if (!isRecord(detail)) continue;
+      if (detail.runId !== result.run.id) continue;
+      if (typeof detail.state !== "string" || detail.state.length === 0) continue;
+      const attemptId = typeof detail.attemptId === "string" && detail.attemptId.length > 0
+        ? detail.attemptId
+        : `activity_${activity.activityId}`;
+      const view: PendingActiveStateView = {
+        state: {
+          id: `pending:${detail.state}:${attemptId}`,
+          name: detail.state,
+          status: "running",
+          reason: "pending_activity",
+          activity_attempt_ids: [attemptId],
+          artifact_ids: [],
+          finding_ids: [],
+          ...(activity.lastStartedTime ?? activity.lastHeartbeatTime
+            ? { started_at: activity.lastStartedTime ?? activity.lastHeartbeatTime }
+            : {})
+        },
+        attemptId
+      };
+      const sortTime = Date.parse(activity.lastHeartbeatTime ?? activity.lastStartedTime ?? "");
+      candidates.push({ view, sortTime: Number.isFinite(sortTime) ? sortTime : 0 });
+    }
+  }
+  return candidates.sort((a, b) => b.sortTime - a.sortTime)[0]?.view;
+}
+
 async function handleWorkflowDetailApi(
   response: ServerResponse,
   url: URL,
@@ -395,6 +606,7 @@ async function handleWorkflowDetailApi(
   if (workflow.result !== undefined) {
     try {
       assertTychonicWorkflowResult(workflow.result);
+      const pendingActiveState = pendingActiveStateView(workflow, workflow.result);
       output.runContext = workflowRunContextView(workflow.result, workflow.input, workflow.inputError);
       const evidenceView = {
         ...workflowEvidenceView(workflow.result, workflow.workflowId, workflow.runId),
@@ -402,9 +614,12 @@ async function handleWorkflowDetailApi(
         state_attempt_summaries: workflowStateAttemptSummaries(workflow.result.run)
       };
       output.evidence = evidenceView;
+      if (pendingActiveState) {
+        output.pendingActiveState = pendingActiveState.state;
+      }
       output.artifactContents = await loadArtifactContents(workflow.result);
       output.stateConfigs = await loadStateConfigs(workflow.result);
-      const activeEvidence = await loadActiveStateEvidence(workflow.result);
+      const activeEvidence = await loadActiveStateEvidence(workflow.result, pendingActiveState);
       if (activeEvidence) {
         output.activeStateEvidence = activeEvidence;
       }
@@ -556,7 +771,7 @@ async function serveStaticAsset(
       });
       return;
     }
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
     if (request.method !== "HEAD") response.end(fallback);
     else response.end();
     return;
@@ -575,7 +790,8 @@ async function serveStaticAsset(
     return;
   }
 
-  response.writeHead(200, { "content-type": contentType(filePath) });
+  const cacheHeader = isAssetPath(pathname) ? "public, max-age=31536000, immutable" : "no-cache";
+  response.writeHead(200, { "content-type": contentType(filePath), "cache-control": cacheHeader });
   if (request.method === "HEAD") {
     response.end();
     return;
@@ -636,6 +852,7 @@ function workflowRunContextView(
     ...(result?.run.created_at ? { createdAt: result.run.created_at } : {}),
     ...(result?.run.updated_at ? { updatedAt: result.run.updated_at } : {}),
     ...(result?.run.artifact_root ? { artifactRoot: result.run.artifact_root } : {}),
+    ...(result?.worktreePath ? { worktreePath: result.worktreePath } : {}),
     ...(result?.run.profile_snapshot_artifact_id ? { profileSnapshotArtifactId: result.run.profile_snapshot_artifact_id } : {}),
     ...(inputError ? { inputError } : {})
   };
@@ -736,10 +953,12 @@ async function loadArtifactContents(
 }
 
 async function loadActiveStateEvidence(
-  result: TychonicWorkflowResult
+  result: TychonicWorkflowResult,
+  pendingActiveState?: PendingActiveStateView
 ): Promise<{ promptContent?: string; liveOutput?: string } | undefined> {
-  const activeState = result.activeState;
-  if (!activeState || activeState.status !== "running") return undefined;
+  const activeStateName = pendingActiveState?.state.name ??
+    (result.activeState?.status === "running" ? result.activeState.name : undefined);
+  if (!activeStateName) return undefined;
   try {
     const store = runArtifactStoreForRun(result.run);
     const artifactsDir = store.artifactsDir(result.run.id);
@@ -747,13 +966,16 @@ async function loadActiveStateEvidence(
     let promptContent: string | undefined;
     let liveOutput: string | undefined;
     let attemptId: string | undefined;
-    const promptPrefix = `${activeState.name}_prompt-`;
+    const promptPrefix = `${activeStateName}_prompt-`;
     try {
       const files = await readdir(artifactsDir);
-      const promptFile = files
-        .filter((f) => f.startsWith(promptPrefix) && f.endsWith(".txt"))
-        .sort()
-        .at(-1);
+      const heartbeatPromptFile = pendingActiveState ? `${promptPrefix}${pendingActiveState.attemptId}.txt` : undefined;
+      const promptFile = heartbeatPromptFile && files.includes(heartbeatPromptFile)
+        ? heartbeatPromptFile
+        : files
+          .filter((f) => f.startsWith(promptPrefix) && f.endsWith(".txt"))
+          .sort()
+          .at(-1);
       if (promptFile) {
         promptContent = await readFile(join(artifactsDir, promptFile), "utf8");
         attemptId = promptFile.slice(promptPrefix.length, -".txt".length);
@@ -805,7 +1027,7 @@ function formatUrlHost(host: string): string {
 }
 
 function writeJson(response: ServerResponse, statusCode: number, body: unknown): void {
-  response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+  response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" });
   response.end(JSON.stringify(body, null, 2));
 }
 

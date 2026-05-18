@@ -211,14 +211,69 @@
   }
 
   .tychonic-markdown code {
-    @apply rounded bg-muted px-1 py-0.5 font-mono text-xs;
+    font-size: 0.75rem !important;
+    @apply rounded bg-muted px-1 py-0.5 font-mono;
   }
 
   .tychonic-markdown pre {
-    @apply my-2 overflow-auto rounded bg-muted p-2 text-xs;
+    font-size: 0.75rem !important;
+    @apply my-2 overflow-auto rounded bg-muted p-2;
   }
 
   .tychonic-markdown pre code {
     @apply bg-transparent p-0;
   }
+
+  .tychonic-markdown-sm {
+    @apply text-[13px] leading-snug whitespace-normal;
+  }
+
+
+  .tychonic-markdown-sm > :first-child {
+    @apply mt-0;
+  }
+
+  .tychonic-markdown-sm > :last-child {
+    @apply mb-0;
+  }
+
+  .tychonic-markdown-sm p {
+    @apply my-1;
+  }
+
+  .tychonic-markdown-sm ul {
+    @apply my-1 list-disc pl-4;
+  }
+
+  .tychonic-markdown-sm ol {
+    @apply my-1 list-decimal pl-4;
+  }
+
+  .tychonic-markdown-sm li {
+    @apply my-0.5;
+  }
+
+  .tychonic-markdown-sm code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono;
+  }
+
+  .tychonic-markdown-sm pre {
+    @apply my-1 overflow-auto rounded bg-muted p-1.5;
+  }
+
+  .tychonic-markdown-sm pre code {
+    @apply bg-transparent p-0;
+  }
+}
+
+@layer utilities {
+  .tychonic-markdown-sm code,
+  .tychonic-markdown-sm pre {
+    font-size: 10px;
+  }
+  .tychonic-markdown code,
+  .tychonic-markdown pre {
+    font-size: 0.75rem;
+  }
+
 }
