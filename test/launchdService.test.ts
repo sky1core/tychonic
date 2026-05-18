@@ -14,8 +14,10 @@ describe("launchd service installer", () => {
 
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     const originalLogHome = process.env.TYCHONIC_LOG_HOME;
+    const originalAllowedHosts = process.env.TYCHONIC_WEB_ALLOWED_HOSTS;
     process.env.TYCHONIC_STATE_HOME = stateHome;
     process.env.TYCHONIC_LOG_HOME = logHome;
+    process.env.TYCHONIC_WEB_ALLOWED_HOSTS = "status.example.test";
     try {
       const installed = await installLaunchdServices({
         projectDir: join(root, "project"),
@@ -38,6 +40,7 @@ describe("launchd service installer", () => {
       expect(temporalPlist).toContain("<string>9233</string>");
       expect(temporalPlist).toContain("<string>--headless</string>");
       expect(temporalPlist).not.toContain("<string>--ui-port</string>");
+      expect(temporalPlist).not.toContain("TYCHONIC_WEB_ALLOWED_HOSTS");
       const workerPlist = await readFile(installed.plists.worker, "utf8");
       expect(workerPlist).toContain("<string>worker</string>");
       expect(workerPlist).toContain("<string>--temporal-mode</string>");
@@ -49,6 +52,7 @@ describe("launchd service installer", () => {
       expect(workerPlist).not.toContain("<string>--ui-port</string>");
       expect(workerPlist).toContain("<string>--shutdown-grace-time</string>");
       expect(workerPlist).toContain("<string>35m</string>");
+      expect(workerPlist).not.toContain("TYCHONIC_WEB_ALLOWED_HOSTS");
       const webPlist = await readFile(installed.plists.web, "utf8");
       expect(webPlist).toContain("<string>web</string>");
       expect(webPlist).toContain("<string>--port</string>");
@@ -59,6 +63,8 @@ describe("launchd service installer", () => {
       expect(webPlist).toContain("<string>9233</string>");
       expect(webPlist).toContain(join(logHome, "web.out.log"));
       expect(webPlist).toContain(join(logHome, "web.err.log"));
+      expect(webPlist).toContain("<key>TYCHONIC_WEB_ALLOWED_HOSTS</key>");
+      expect(webPlist).toContain("<string>status.example.test</string>");
       // The host installer does not seed workflow bundles. The runtime
       // workflow modules dir must contain zero bundles until the
       // operator runs `tychonic workflows install` explicitly.
@@ -73,6 +79,7 @@ describe("launchd service installer", () => {
     } finally {
       restoreEnv("TYCHONIC_STATE_HOME", originalStateHome);
       restoreEnv("TYCHONIC_LOG_HOME", originalLogHome);
+      restoreEnv("TYCHONIC_WEB_ALLOWED_HOSTS", originalAllowedHosts);
     }
   });
 

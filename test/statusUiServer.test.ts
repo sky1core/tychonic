@@ -418,7 +418,7 @@ describe("status UI server", () => {
       expect(response.status).toBe(200);
       const reader = response.body?.getReader();
       expect(reader).toBeDefined();
-      await readEventStreamChunk(reader!);
+      await readEventStreamRefreshes(reader!, 2);
 
       await mkdir(join(artifactRoot, "artifacts"), { recursive: true });
       await writeFile(join(artifactRoot, "artifacts", "verify_prompt-attempt_1.txt"), "verify prompt");
@@ -511,10 +511,17 @@ async function statusUiRequest(
 }
 
 async function readEventStreamChunk(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  return readEventStreamRefreshes(reader, 1);
+}
+
+async function readEventStreamRefreshes(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  expectedRefreshCount: number
+): Promise<string> {
   const decoder = new TextDecoder();
   let text = "";
   const deadline = Date.now() + 2_000;
-  while (!text.includes("event: refresh")) {
+  while (refreshEventCount(text) < expectedRefreshCount) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new Error(`timed out waiting for refresh event; received: ${text}`);
     const result = await Promise.race([
@@ -525,4 +532,8 @@ async function readEventStreamChunk(reader: ReadableStreamDefaultReader<Uint8Arr
     text += decoder.decode(result.value, { stream: true });
   }
   return text;
+}
+
+function refreshEventCount(text: string): number {
+  return text.match(/^event: refresh$/gm)?.length ?? 0;
 }

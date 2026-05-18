@@ -588,6 +588,22 @@ export function promptWithAddition(
   return `${basePrompt}\n\n[operator additional instructions for ${stateName}]\n${addition}\n[/operator additional instructions]`;
 }
 
+export function renderDeclarativePrompt(
+  template: string,
+  input: Pick<TychonicWorkflowRuntimeInput, "goal">
+): string {
+  const values = {
+    goal: typeof input.goal === "string" && input.goal.trim().length > 0
+      ? input.goal
+      : "(no explicit goal supplied)"
+  };
+  return template.replace(/\{\{([\s\S]*?)\}\}/g, (_match, rawName) => {
+    const name = String(rawName).trim();
+    if (Object.prototype.hasOwnProperty.call(values, name)) return values[name as keyof typeof values];
+    throw new Error(`unsupported declarative prompt variable ${name}`);
+  });
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }

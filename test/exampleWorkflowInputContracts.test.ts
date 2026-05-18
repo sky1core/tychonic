@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { validateTaskWorkflowInput } from "../src/inputValidation.js";
+import { renderDeclarativePrompt } from "../src/workflow.js";
 import {
   EXAMPLE_WORKFLOW_NAMES,
-  loadExampleWorkflowSpec,
-  loadGeneratedExampleWorkflowSource
+  loadExampleWorkflowSpec
 } from "./exampleYamlHelpers.js";
 
 describe("example workflow input contracts", () => {
@@ -39,14 +39,6 @@ describe("example workflow input contracts", () => {
     ).toThrow(/unsupported promptAdditions state: kiroPreReview/);
   });
 
-  it("generated example workflows all use createTychonicWorkflowContext", async () => {
-    for (const name of EXAMPLE_WORKFLOW_NAMES) {
-      const source = await loadGeneratedExampleWorkflowSource(name);
-      expect(source, name).toContain("createTychonicWorkflowContext");
-      expect(source, name).toContain("input,");
-    }
-  });
-
   it("YAML examples that accept a goal explicitly render it through prompt variables", async () => {
     for (const name of EXAMPLE_WORKFLOW_NAMES) {
       const spec = await loadExampleWorkflowSpec(name);
@@ -54,9 +46,15 @@ describe("example workflow input contracts", () => {
       if (!hasPrompt) continue;
       const promptedStates = Object.values(spec.states).filter((state) => state.prompt !== undefined);
       expect(promptedStates.some((state) => state.prompt?.includes("{{goal}}")), name).toBe(true);
-      const source = await loadGeneratedExampleWorkflowSource(name);
-      expect(source, name).toContain("renderDeclarativePrompt(");
     }
+  });
+
+  it("renders declarative goal prompt variables and fallback text", () => {
+    expect(renderDeclarativePrompt("Goal:\n{{goal}}", { goal: "ship the change" })).toBe("Goal:\nship the change");
+    expect(renderDeclarativePrompt("Goal:\n{{ goal }}", {})).toBe("Goal:\n(no explicit goal supplied)");
+    expect(() => renderDeclarativePrompt("Goal:\n{{unknown}}", {})).toThrow(
+      /unsupported declarative prompt variable unknown/
+    );
   });
 
   it("prompt additions are limited to YAML-declared work and review states", async () => {

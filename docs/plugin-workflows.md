@@ -38,7 +38,7 @@ Minimal declarative bundle:
 version: tychonic.workflow.v1
 name: myWorkflow
 worktree: true
-max_steps: 8
+max_steps: 20
 start: work
 states:
   work:

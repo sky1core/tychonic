@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  loadExampleWorkflowSpec,
-  loadGeneratedExampleWorkflowSource
-} from "./exampleYamlHelpers.js";
+import { loadExampleWorkflowSpec } from "./exampleYamlHelpers.js";
 
 describe("simpleWorkflow YAML activity contract", () => {
   it("declares work, verify, and review states in workflow.yaml", async () => {
@@ -13,17 +10,12 @@ describe("simpleWorkflow YAML activity contract", () => {
     expect(spec.profile.states?.review?.on_fail_return_to).toBe("work");
   });
 
-  it("generates work -> verify -> review -> work failure routing with feedback", async () => {
-    const source = await loadGeneratedExampleWorkflowSource("simpleWorkflow");
-    expect(source).toContain('const result = await ctx.work("work"');
-    expect(source).toContain('const result = await ctx.verify("verify");');
-    expect(source).toContain('const result = await ctx.review("review"');
-    expect(source).toContain('if (!result.passed) {\n          current = "work";\n          continue;\n        }');
-    expect(source).toContain('const returnTo = assertReviewFailReturnTo(input.profile, "review", "work");');
-    expect(source).toContain(
-      'addDeclarativeReviewFeedback(feedbacksByState, returnTo, declarativeReviewFeedback("review", result));'
-    );
-    expect(source).toContain('current = returnTo;');
+  it("declares work -> verify -> review -> work failure routing in workflow.yaml", async () => {
+    const spec = await loadExampleWorkflowSpec("simpleWorkflow");
+    expect(spec.start).toBe("work");
+    expect(spec.states.work?.on_pass).toEqual({ goto: "verify" });
+    expect(spec.states.verify?.on_pass).toEqual({ goto: "review" });
+    expect(spec.states.review?.on_fail).toEqual({ goto: "work" });
   });
 
   it("keeps the generic npm verification command", async () => {

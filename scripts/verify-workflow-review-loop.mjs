@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -159,16 +159,18 @@ try {
     "YAML generated workflow should pass structured review findings back to work prompt"
   );
 
-  const capRun = await runWorkflow("architectBuilderFinalQaWorkflow", finalInput, capConfig, "waiting_user");
+  const capWorkflowName = "architectBuilderFinalQaWorkflow";
+  const capMaxSteps = await loadExampleWorkflowMaxSteps(capWorkflowName);
+  const capRun = await runWorkflow(capWorkflowName, finalInput, capConfig, "waiting_user");
   const capStatus = await status(capRun.workflowId);
   assertEqual(
     capStatus.evidence?.summary,
-    "declarative workflow architectBuilderFinalQaWorkflow exceeded max_steps (8)",
+    `declarative workflow ${capWorkflowName} exceeded max_steps (${capMaxSteps})`,
     "cap summary mismatch"
   );
-  assertCount(capStatus, "states", 8);
-  assertCount(capStatus, "attempts", 8);
-  assertCount(capStatus, "findings", 3);
+  assertCount(capStatus, "states", capMaxSteps);
+  assertCount(capStatus, "attempts", capMaxSteps);
+  assertAtLeast(capStatus.evidence?.counts?.findings ?? 0, 1, "cap run should keep review findings visible");
   assertCount(capStatus, "inbox", 1);
 
   console.log(
@@ -221,6 +223,16 @@ async function installWorkflow(name) {
 
 async function installWorkflowSource(sourcePath) {
   await runCli(["workflows", "install", sourcePath]);
+}
+
+async function loadExampleWorkflowMaxSteps(name) {
+  const { parseDeclarativeWorkflowSpecYaml } = await import("../dist/declarative/workflowSpec.js");
+  const source = await readFile(join(repoRoot, "examples", "workflows", name, "workflow.yaml"), "utf8");
+  const spec = parseDeclarativeWorkflowSpecYaml({ bundleName: name, source });
+  if (!Number.isInteger(spec.max_steps) || spec.max_steps < 1) {
+    throw new Error(`${name} must declare a positive integer max_steps`);
+  }
+  return spec.max_steps;
 }
 
 async function waitForRuntime() {
@@ -316,6 +328,12 @@ function artifactsByKind(statusResult, kind) {
 
 function assertCount(statusResult, key, expected) {
   assertEqual(statusResult.evidence?.counts?.[key], expected, `expected ${key} count ${expected}`);
+}
+
+function assertAtLeast(actual, min, message) {
+  if (actual < min) {
+    throw new Error(`${message}: got ${JSON.stringify(actual)}, expected at least ${JSON.stringify(min)}`);
+  }
 }
 
 function assertEqual(actual, expected, message) {

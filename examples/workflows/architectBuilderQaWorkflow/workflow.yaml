@@ -1,7 +1,7 @@
 version: tychonic.workflow.v1
 name: architectBuilderQaWorkflow
 worktree: true
-max_steps: 8
+max_steps: 20
 start: architect
 states:
   architect:

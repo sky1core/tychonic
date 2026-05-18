@@ -1,7 +1,7 @@
 version: tychonic.workflow.v1
 name: checkpointWorkflow
 worktree: false
-max_steps: 8
+max_steps: 20
 start: lint
 states:
   lint:

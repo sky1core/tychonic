@@ -259,6 +259,7 @@ async function handleStatusEventsApi(
         })) close();
       }
     }
+    sendRefresh();
   }
 }
 

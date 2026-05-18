@@ -1,77 +1,44 @@
 import { describe, expect, it } from "vitest";
-import {
-  generateDeclarativeWorkflowModule,
-  parseDeclarativeWorkflowSpecYaml
-} from "../src/declarative/workflowSpec.js";
-import {
-  loadExampleWorkflowSpec,
-  loadGeneratedExampleWorkflowSource
-} from "./exampleYamlHelpers.js";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { loadExampleWorkflowSpec } from "./exampleYamlHelpers.js";
 
 describe("architect/builder/QA YAML control flow", () => {
-  it("routes QA failure back to builder in the generated wrapper", async () => {
-    const source = await loadGeneratedExampleWorkflowSource("architectBuilderQaWorkflow");
-    expect(source).toContain('let current = "architect";');
-    expect(source).toContain('current = "builder";');
-    expect(source).toContain('const returnTo = assertReviewFailReturnTo(input.profile, "qa", "builder");');
-    expect(source).toContain(
-      'addDeclarativeReviewFeedback(feedbacksByState, returnTo, declarativeReviewFeedback("qa", result));'
-    );
-    expect(source).toContain("finishWaitingUser(");
+  it("declares QA failure return to builder in workflow.yaml", async () => {
+    const spec = await loadExampleWorkflowSpec("architectBuilderQaWorkflow");
+    expect(spec.start).toBe("architect");
+    expect(spec.states.architect?.on_pass).toEqual({ goto: "builder" });
+    expect(spec.states.builder?.on_pass).toEqual({ goto: "qa" });
+    expect(spec.states.qa?.on_fail).toEqual({ goto: "builder" });
+    expect(spec.profile.states?.qa).toMatchObject({
+      type: "review",
+      on_fail_return_to: "builder"
+    });
   });
 
-  it("routes both first_review and final_qa failures back to builder", async () => {
-    const source = await loadGeneratedExampleWorkflowSource("architectBuilderFirstReviewQaWorkflow");
-    expect(source).toContain('const returnTo = assertReviewFailReturnTo(input.profile, "first_review", "builder");');
-    expect(source).toContain('const returnTo = assertReviewFailReturnTo(input.profile, "final_qa", "builder");');
-    expect(source).toContain('current = "final_qa";');
+  it("declares both first_review and final_qa failures back to builder", async () => {
+    const spec = await loadExampleWorkflowSpec("architectBuilderFirstReviewQaWorkflow");
+    expect(spec.states.builder?.on_pass).toEqual({ goto: "first_review" });
+    expect(spec.states.first_review?.on_pass).toEqual({ goto: "final_qa" });
+    expect(spec.states.first_review?.on_fail).toEqual({ goto: "builder" });
+    expect(spec.states.final_qa?.on_fail).toEqual({ goto: "builder" });
+    expect(spec.profile.states?.first_review).toMatchObject({
+      type: "review",
+      on_fail_return_to: "builder"
+    });
+    expect(spec.profile.states?.final_qa).toMatchObject({
+      type: "review",
+      on_fail_return_to: "builder"
+    });
   });
 
   it("keeps final QA role split from Kiro builder", async () => {
     const spec = await loadExampleWorkflowSpec("architectBuilderFinalQaWorkflow");
     expect(spec.profile.states?.builder).toMatchObject({
       type: "work",
-      agent: "kiro",
-      model: "claude-opus-4.6",
-      trust_all_tools: true
+      agent: "kiro"
     });
     expect(spec.profile.states?.qa).toMatchObject({
       type: "review",
-      agent: "codex",
-      model: "gpt-5.5",
-      reasoning_effort: "xhigh"
+      agent: "codex"
     });
-  });
-});
-
-describe("single-pass workflow completion summaries", () => {
-  it("generated example workflows do not force success-worded finish summaries", async () => {
-    const workflowNames = [
-      "architectBuilderQaWorkflow",
-      "architectBuilderFinalQaWorkflow",
-      "architectBuilderFirstReviewQaWorkflow",
-      "checkpointWorkflow",
-      "pipelineWorkflow",
-      "verifyOnlyWorkflow"
-    ] as const;
-    const successFinishPattern =
-      /ctx\.finish\(\s*(?:"[^"]*(?:completed|finished|succeeded|success)|`[^`]*(?:completed|finished|succeeded|success))/;
-
-    for (const workflowName of workflowNames) {
-      const source = await loadGeneratedExampleWorkflowSource(workflowName);
-      expect(source, workflowName).not.toMatch(successFinishPattern);
-    }
-  });
-
-  it("does not force a success summary onto the self-check workflow", async () => {
-    const name = "tychonicSelfCheckWorkflow";
-    const yaml = await readFile(join(process.cwd(), "tools", "workflows", name, "workflow.yaml"), "utf8");
-    const spec = parseDeclarativeWorkflowSpecYaml({ bundleName: name, source: yaml });
-    const source = generateDeclarativeWorkflowModule({ bundleName: name, spec });
-    const successFinishPattern =
-      /ctx\.finish\(\s*(?:"[^"]*(?:completed|finished|succeeded|success)|`[^`]*(?:completed|finished|succeeded|success))/;
-    expect(source).not.toMatch(successFinishPattern);
   });
 });

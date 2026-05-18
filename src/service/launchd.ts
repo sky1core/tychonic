@@ -263,6 +263,7 @@ function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServi
   });
   const temporalArgs = temporalStartArgs(temporalConfig);
   const environmentVariables = serviceEnvironmentVariables();
+  const webEnvironmentVariables = webServiceEnvironmentVariables(environmentVariables);
   return {
     temporal: {
       label: serviceLabel("temporal"),
@@ -304,7 +305,7 @@ function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServi
       workingDirectory: input.projectDir,
       stdoutPath: join(input.logDir, "web.out.log"),
       stderrPath: join(input.logDir, "web.err.log"),
-      environmentVariables
+      environmentVariables: webEnvironmentVariables
     }
   };
 }
@@ -371,6 +372,13 @@ function serviceEnvironmentVariables(): Record<string, string> {
     ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
     ...(process.env[TYCHONIC_AGENT_PATH_ENV] ? { [TYCHONIC_AGENT_PATH_ENV]: process.env[TYCHONIC_AGENT_PATH_ENV] } : {}),
     PATH: serviceSearchPath(process.env.HOME)
+  };
+}
+
+function webServiceEnvironmentVariables(base: Record<string, string>): Record<string, string> {
+  return {
+    ...base,
+    ...(process.env.TYCHONIC_WEB_ALLOWED_HOSTS ? { TYCHONIC_WEB_ALLOWED_HOSTS: process.env.TYCHONIC_WEB_ALLOWED_HOSTS } : {})
   };
 }
 

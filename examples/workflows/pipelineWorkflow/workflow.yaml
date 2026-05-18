@@ -1,7 +1,7 @@
 version: tychonic.workflow.v1
 name: pipelineWorkflow
 worktree: true
-max_steps: 14
+max_steps: 20
 start: work
 states:
   work:
