@@ -8,7 +8,8 @@ and related service code.
 Runtime modes:
 
 - `managed-local`: Tychonic starts or reuses local Temporal and runs the worker
-  either in the foreground or through macOS LaunchAgents.
+  and local status UI either in the foreground runtime process or through macOS
+  LaunchAgents.
 - `external`: the user provides Temporal address, namespace, and task queue for
   an explicitly configured single-user runtime. This does not make remote/team
   deployment part of the public alpha scope.
@@ -99,15 +100,16 @@ is no block-level replacement and no implicit merging across fields. When
 active, the explicit env value wins and Tychonic emits a warning on stderr
 identifying which instance-derived path was overridden.
 
-Operational launchd services (`com.tychonic.temporal`, `com.tychonic.worker`)
-are not touched by any command run under an instance. The `service` command
-group (`service install`, `service status`, `service uninstall`,
-`service restart-worker`, `service terminate-worker`) rejects invocation while
+Operational launchd services (`com.tychonic.temporal`,
+`com.tychonic.worker`, `com.tychonic.web`) are not touched by any command run
+under an instance. The `service` command group (`service install`,
+`service status`, `service uninstall`, `service restart-worker`,
+`service terminate-worker`, `service terminate-web`) rejects invocation while
 an instance is active. `workflows install <bundle>` and `workflows remove` under
 an instance copy or delete bundle files in the instance's module registry only —
-they never replace a LaunchAgent worker, and the command output carries a note
-instructing the operator to restart `tychonic runtime up --instance <name>` to
-pick up the change.
+they never replace a LaunchAgent worker or web process, and the command output
+carries a note instructing the operator to restart
+`tychonic runtime up --instance <name>` to pick up the change.
 
 **Bundle registry starts empty.** A fresh instance has no workflow bundles.
 `service install` is rejected under an instance, and the operational path itself
@@ -125,17 +127,19 @@ after reporting a PID.
 Lifecycle commands:
 
 - `tychonic runtime up` — starts or reuses the single local runtime daemon for
-  the active instance and returns to the shell. It writes the daemon parent PID
-  to `<state>/runtime.pid` and appends stdout/stderr into `<log>/runtime.log`.
-  If the PID file points to a live runtime, the command is idempotent and
-  reports `already_running`; it must not fail just because the caller's PID
-  differs from the daemon PID. If another `runtime up` is already starting that
-  same instance, the command refuses instead of starting a second worker.
+  the active instance and returns to the shell. It starts Temporal, the worker,
+  and the local status UI as one operator-facing runtime. It writes the daemon
+  parent PID to `<state>/runtime.pid` and appends stdout/stderr into
+  `<log>/runtime.log`. If the PID file points to a live runtime, the command is
+  idempotent and reports `already_running`; it must not fail just because the
+  caller's PID differs from the daemon PID. If another `runtime up` is already
+  starting that same instance, the command refuses instead of starting a second
+  worker.
 - `tychonic runtime up --foreground` — development/debug mode. Starts Temporal
-  if needed and runs the worker in the current terminal. It records the runtime
-  parent PID in `<state>/runtime.pid`, refuses to start when that instance
-  already has a live runtime, and removes that PID file on normal process exit
-  when it still owns the file.
+  and the status UI if needed and runs the worker in the current terminal. It
+  records the runtime parent PID in `<state>/runtime.pid`, refuses to start when
+  that instance already has a live runtime, and removes that PID file on normal
+  process exit when it still owns the file.
 - `tychonic runtime up --instance <name>` — same daemon contract, scoped to the
   instance-derived state/log/Temporal paths. A fresh instance still requires
   installed bundles before start.

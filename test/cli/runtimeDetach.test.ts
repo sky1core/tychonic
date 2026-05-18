@@ -136,7 +136,15 @@ describe("tychonic runtime up daemon start", () => {
       instance: null,
       cliPath
     });
-    await writeFile(join(stateDir, "runtime.ready.json"), `${JSON.stringify({ state: "ready", pid: child.pid })}\n`, "utf8");
+    await writeFile(
+      join(stateDir, "runtime.ready.json"),
+      `${JSON.stringify({
+        state: "ready",
+        pid: child.pid,
+        web: { status: "running", url: "http://127.0.0.1:19733" }
+      })}\n`,
+      "utf8"
+    );
 
     try {
       const result = await runCli(["runtime", "up"], { env });
@@ -147,6 +155,7 @@ describe("tychonic runtime up daemon start", () => {
         state: "already_running",
         mode: "daemon",
         pid: child.pid,
+        web: { status: "running", url: "http://127.0.0.1:19733" },
         stopCommand: "tychonic runtime stop"
       });
     } finally {

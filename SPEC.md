@@ -36,7 +36,8 @@ Supported:
 - TypeScript product path
 - Temporal managed-local mode and explicit external Temporal connection
 - CLI as the primary machine interface
-- local-only workflow status UI served by `tychonic web`
+- local-only workflow status UI started by `tychonic runtime up` and available
+  as standalone `tychonic web`
 - workflow config catalog plus runtime workflow module registry
 - deterministic command activities for project checks through the `verify`
   activity TYPE

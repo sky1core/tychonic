@@ -116,7 +116,11 @@ and type system.
 
 ## Web Status UI
 
-- `tychonic web` is local-only and binds to loopback by default.
+- `tychonic runtime up` starts the local status UI with the runtime by default.
+- Hidden standalone `tychonic web` remains available for status-UI-only
+  operation and binds to loopback by default.
+- Operational service install manages `com.tychonic.web` together with
+  `com.tychonic.temporal` and `com.tychonic.worker`.
 - The UI may show workflow/state summaries and focused selected-state evidence
   such as prompt, terminal agent response, structured review result, and small
   artifact excerpts.

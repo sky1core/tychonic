@@ -48,11 +48,17 @@ Focused commands such as `tychonic artifacts --artifact <id>` and
 `tychonic logs --attempt <id>` print raw content only when the caller asks for
 that specific evidence item.
 
-`tychonic web` starts the local workflow status UI. It is a convenience view
-over the same Temporal-backed workflow list and evidence summary data used by
-`tychonic status`. The command binds to `127.0.0.1` by default and must not
-create a public API, remote service, or secondary state store. Raw artifact and
-log content remains behind focused CLI read commands.
+`tychonic runtime up` starts the local workflow status UI together with the
+runtime and reports the URL in `web.url`. The standalone `tychonic web` command
+is hidden from the normal help surface and exists only for status-UI-only
+operation. Operational macOS service mode manages the web LaunchAgent together
+with Temporal and the worker. The UI is a
+convenience view over the same Temporal-backed workflow list and evidence
+summary data used by `tychonic status`. The server binds to `127.0.0.1` by
+default and must not create a public API, remote service, or secondary state
+store. The selected state may show focused prompt/agent-response evidence;
+large raw artifacts, full logs, and full run-record dumps remain behind focused
+CLI read commands.
 
 ## Interaction Signal Contract
 

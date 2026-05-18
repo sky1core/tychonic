@@ -43,8 +43,9 @@ the source of truth; install validates it and generates the Temporal
 - Installed and authenticated agent CLIs for the agents your workflow uses
 
 Tychonic does not ship a public web UI/API surface. The CLI is the primary
-machine interface. A local-only workflow status UI is available with
-`tychonic web` for single-operator inspection on the same machine.
+machine interface. `tychonic runtime up` starts the local runtime and local-only
+workflow status UI together; macOS service install manages the same operational
+set through LaunchAgents.
 
 ## Install
 
@@ -83,8 +84,8 @@ tychonic workflows list
 ```
 
 Start or reuse the local runtime daemon. This starts Temporal if needed, starts
-the worker, writes a runtime PID/log under the Tychonic runtime directories, and
-returns to the shell.
+the worker and status UI, writes a runtime PID/log under the Tychonic runtime
+directories, and returns to the shell.
 
 ```sh
 tychonic runtime up
@@ -92,7 +93,8 @@ tychonic runtime up
 
 `runtime up` is idempotent: each runtime instance has one managed daemon. If it
 is already running, the command reports the existing PID instead of failing
-because the caller's PID is different. Stop it with:
+because the caller's PID is different. The JSON response includes the status UI
+URL under `web.url`. Stop the runtime and its status UI with:
 
 ```sh
 tychonic runtime stop
@@ -100,6 +102,10 @@ tychonic runtime stop
 
 For development/debugging, use `tychonic runtime up --foreground` to keep the
 worker attached to the current terminal and stop it with `Ctrl-C`.
+
+For the persistent macOS service path, install the LaunchAgent set instead:
+`tychonic service install` manages Temporal, the worker, and the web status UI
+together; `tychonic service status` reports the same set.
 
 Start a run from another terminal:
 
@@ -176,14 +182,10 @@ tychonic sessions --workflow-id <id>
 Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
 it returns the evidence needed to decide the next operator action.
 
-To inspect the same workflow status in a browser, start the local UI:
-
-```sh
-tychonic web
-```
-
-The command binds to `127.0.0.1` by default and serves a local status view over
-Temporal-backed workflow summaries. It is not a team service or public API.
+`runtime up` starts the local status UI and prints its URL in `web.url`
+(`http://127.0.0.1:19733` by default). The UI binds to `127.0.0.1` by default
+and serves a local status view over Temporal-backed workflow summaries. It is
+not a team service or public API.
 The browser view lists recent workflow runs, shows the selected run's state
 flow, and opens a focused state detail pane with the prompt, agent response,
 artifacts, sessions, and workflow definition metadata relevant to that state.
@@ -194,7 +196,7 @@ The page listens to `/api/events` for status-change notifications and refreshes
 its Temporal-backed data when the selected workflow changes. If that event
 connection fails, the `Refresh` button still performs a manual read. When the
 local UI is viewed through a loopback reverse proxy or Tailscale serve path,
-keep `tychonic web` bound to loopback and set
+keep the status UI bound to loopback and set
 `TYCHONIC_WEB_ALLOWED_HOSTS=<host1>,<host2>` for the proxied `Host` headers.
 The proxy must allow `text/event-stream` responses without buffering.
 

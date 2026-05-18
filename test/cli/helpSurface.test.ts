@@ -14,6 +14,22 @@ async function cliHelp(args: string[]): Promise<string> {
   return stdout;
 }
 
+async function cliResult(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI_PATH, ...args], {
+      env: process.env
+    });
+    return { stdout, stderr, exitCode: 0 };
+  } catch (error) {
+    const e = error as { stdout?: string; stderr?: string; code?: number | string };
+    return {
+      stdout: e.stdout ?? "",
+      stderr: e.stderr ?? "",
+      exitCode: typeof e.code === "number" ? e.code : 1
+    };
+  }
+}
+
 describe("CLI help public surface", () => {
   it("keeps the top-level help focused on ordinary commands", async () => {
     const stdout = await cliHelp(["--help"]);
@@ -25,6 +41,7 @@ describe("CLI help public surface", () => {
     expect(stdout).not.toContain("service");
     expect(stdout).not.toContain("temporal");
     expect(stdout).not.toContain("Temporal");
+    expect(stdout).not.toContain("web [options]");
     expect(stdout).toContain("sessions [options]");
     expect(stdout).toContain("Basic flow:");
   });
@@ -72,9 +89,28 @@ describe("CLI help public surface", () => {
     expect(runtimeHelp).not.toContain("reset [options]");
     expect(runtimeHelp).toContain("stop");
     expect(runtimeHelp).toContain("Gracefully stop");
+    expect(runtimeHelp).toContain("status UI");
     expect(temporalHelp).toContain("status [options]");
     expect(temporalHelp).toContain("doctor [options]");
     expect(temporalHelp).not.toContain("start [options]");
     expect(temporalHelp).not.toContain("worker [options]");
+  });
+
+  it("shows web as part of the operational service lifecycle", async () => {
+    const serviceHelp = await cliHelp(["service", "--help"]);
+    const installHelp = await cliHelp(["service", "install", "--help"]);
+
+    expect(serviceHelp).toContain("terminate-web");
+    expect(installHelp).toContain("--web-port <port>");
+    expect(installHelp).toContain("Temporal, worker, and web status UI");
+  });
+
+  it("keeps hidden standalone web compatible with service Temporal options", async () => {
+    const result = await cliResult(["web", "--temporal-mode", "managed-local", "--port", "0"]);
+    const output = result.stderr + result.stdout;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(output).toContain("--port must be an integer between 1 and 65535");
+    expect(output).not.toContain("unknown option '--temporal-mode'");
   });
 });

@@ -4,9 +4,12 @@ This file applies to the local workflow status UI server under `src/web/`.
 
 ## Local Status UI
 
-`tychonic web` starts a local-only operator UI for inspecting workflow status.
-It is a single-user convenience surface over the same Temporal-backed status
-data used by the CLI.
+`tychonic runtime up` starts a local-only operator UI together with the runtime.
+The hidden standalone `tychonic web` command starts the same server for
+status-UI-only operation. In operational macOS service mode, the same web server
+runs as `com.tychonic.web` and is managed with the Temporal and worker
+LaunchAgents. It is a single-user convenience surface over the same
+Temporal-backed status data used by the CLI.
 
 The server must bind to `127.0.0.1` by default. It is not a public API, team
 service, webhook target, or remote deployment surface.

@@ -133,6 +133,14 @@ describe("service commands refuse --instance (operational-only)", () => {
       /tychonic service restart-worker is operational-only/
     );
   });
+
+  it("service terminate-web exits non-zero under --instance", async () => {
+    const result = await runCli(["--instance", "foo", "service", "terminate-web"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr + result.stdout).toMatch(
+      /tychonic service terminate-web is operational-only/
+    );
+  });
 });
 
 describe("workflows install / remove under --instance do not touch launchd", () => {

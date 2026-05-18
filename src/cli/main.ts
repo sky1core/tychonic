@@ -64,7 +64,7 @@ import type { WorkflowStateRecord } from "../domain/types.js";
 import { TemporalManager, tychonicRuntimeDirs, type TemporalConfig } from "../temporal/manager.js";
 import type { StateRecordPatch } from "../temporal/types.js";
 import { buildWorkflowBundle, runTemporalWorker } from "../temporal/worker.js";
-import { startStatusUiServer } from "../web/statusUiServer.js";
+import { DEFAULT_STATUS_UI_PORT, startStatusUiServer } from "../web/statusUiServer.js";
 import { join as pathJoin } from "node:path";
 import {
   installRuntimeWorkflowModule,
@@ -139,6 +139,12 @@ function hiddenTemporalNamespaceOption(): Option {
 
 function hiddenTemporalTaskQueueOption(): Option {
   return new Option("--temporal-task-queue <name>", "advanced runtime task queue").hideHelp();
+}
+
+function hiddenStatusUiPortOption(): Option {
+  return new Option("--web-port <port>", "advanced local status UI port")
+    .argParser((value) => Number(value))
+    .hideHelp();
 }
 
 function hiddenInlineInputOption(): Option {
@@ -380,6 +386,7 @@ runtimeCommand
   .option("--temporal-namespace <name>", "advanced: Temporal namespace")
   .option("--temporal-task-queue <name>", "advanced: Temporal task queue")
   .option("--shutdown-grace-time <duration>", "advanced: worker drain time on shutdown before cancelling in-flight activities")
+  .addOption(hiddenStatusUiPortOption())
   .option("--foreground", "run the runtime in this terminal for development/debugging", false)
   .option(
     "--detach",
@@ -388,7 +395,7 @@ runtimeCommand
   )
   .addOption(hiddenReadyFileOption())
   .addOption(hiddenDaemonChildOption())
-  .description("Start or reuse the local runtime daemon")
+  .description("Start or reuse the local runtime daemon and status UI")
   .addHelpText("after", INSTANCE_SELECTION_HELP)
   .action(
     async (options: {
@@ -398,6 +405,7 @@ runtimeCommand
       temporalNamespace?: string;
       temporalTaskQueue?: string;
       shutdownGraceTime?: string;
+      webPort?: number;
       foreground?: boolean;
       detach?: boolean;
       readyFile?: string;
@@ -405,6 +413,12 @@ runtimeCommand
     }) => {
       if (options.detach && options.foreground) {
         throw new Error("runtime up cannot combine --detach with --foreground");
+      }
+      if (
+        options.webPort !== undefined &&
+        (!Number.isInteger(options.webPort) || options.webPort < 0 || options.webPort > 65535)
+      ) {
+        throw new Error("--web-port must be an integer between 0 and 65535");
       }
       if (options.daemonChild && !options.foreground) {
         throw new Error("runtime up --daemon-child is internal and requires --foreground");
@@ -447,6 +461,7 @@ runtimeCommand
       const foregroundReadyFile = options.readyFile ?? pathJoin(tychonicRuntimeDirs().stateDir, "runtime.ready.json");
       await rm(foregroundReadyFile, { force: true });
       let temporalManagerForCleanup: TemporalManager | undefined;
+      let statusUiServerForCleanup: Server | undefined;
       let stopTemporalOnFailure = false;
       try {
         const workflowBundle = await buildWorkflowBundle();
@@ -462,6 +477,11 @@ runtimeCommand
         const temporal = await manager.start({ inheritProcessGroup: true });
         stopTemporalOnFailure = temporal.health === "starting";
         await waitForTemporalReady(manager);
+        const statusUi = await startStatusUiServer({
+          ...temporalConfig,
+          uiPort: options.webPort ?? DEFAULT_STATUS_UI_PORT
+        });
+        statusUiServerForCleanup = statusUi.server;
         // Install a SIGTERM/SIGINT cascade so the polite shutdown path
         // also reaches the temporal child. Process-group kill from
         // `runtime reset` already covers the SIGTERM-from-reset case;
@@ -509,6 +529,10 @@ runtimeCommand
               ok: true,
               mode: "foreground",
               temporal,
+              web: {
+                status: "running",
+                url: statusUi.url
+              },
               worker: { status: "running" },
               stopCommand: runtimeStopCommand(getActiveInstance()),
               workflows: { modules: await listRuntimeWorkflowModules() },
@@ -531,6 +555,10 @@ runtimeCommand
                 state: "ready",
                 mode: "foreground",
                 pid: process.pid,
+                web: {
+                  status: "running",
+                  url: statusUi.url
+                },
                 timestamp: new Date().toISOString()
               })}\n`,
               "utf8"
@@ -551,6 +579,9 @@ runtimeCommand
         }
         throw error;
       } finally {
+        if (statusUiServerForCleanup) {
+          await closeServer(statusUiServerForCleanup);
+        }
         if (foregroundRuntimePidFile) {
           await removeRuntimePidFilesIfOwned(foregroundRuntimePidFile, process.pid);
         }
@@ -790,7 +821,7 @@ program
   );
 
 program
-  .command("web")
+  .command("web", { hidden: true })
   .option("--host <host>", "local bind host", "127.0.0.1")
   .option("--port <port>", "local status UI port", (value) => Number(value), 19733)
   .option("--static-dir <dir>", "status UI static asset directory")
@@ -1142,8 +1173,9 @@ serviceCommand
   .option("--cli-path <path>", "advanced: Tychonic CLI entrypoint path")
   .option("--temporal-cli-path <path>", "advanced: Temporal CLI executable path")
   .option("--worker-shutdown-grace-time <duration>", "worker drain time on shutdown before cancelling in-flight activities")
+  .option("--web-port <port>", "local status UI port", (value) => Number(value))
   .option("--allow-source-cli", "advanced: allow running from a source checkout; development only", false)
-  .description("Install and load user LaunchAgents for Temporal and worker")
+  .description("Install and load user LaunchAgents for Temporal, worker, and web status UI")
   .action(
     async (options: {
       projectDir: string;
@@ -1152,6 +1184,7 @@ serviceCommand
       cliPath?: string;
       temporalCliPath?: string;
       workerShutdownGraceTime?: string;
+      webPort?: number;
       allowSourceCli: boolean;
     }) => {
       assertOperationalOnly("tychonic service install");
@@ -1162,6 +1195,7 @@ serviceCommand
         ...(options.cliPath ? { cliPath: options.cliPath } : {}),
         ...(options.temporalCliPath ? { temporalCliPath: options.temporalCliPath } : {}),
         ...(options.workerShutdownGraceTime ? { workerShutdownGraceTime: options.workerShutdownGraceTime } : {}),
+        ...(options.webPort !== undefined ? { webPort: options.webPort } : {}),
         allowSourceCli: options.allowSourceCli
       });
       console.log(JSON.stringify({ ok: true, service: result, _meta: cliInstanceMeta() }, null, 2));
@@ -1197,6 +1231,20 @@ serviceCommand
     console.log(
       JSON.stringify(
         { ok: true, restart: await restartLaunchdService("worker"), _meta: cliInstanceMeta() },
+        null,
+        2
+      )
+    );
+  });
+
+serviceCommand
+  .command("terminate-web")
+  .description("Send SIGTERM to the web LaunchAgent and let launchd restart it after exit")
+  .action(async () => {
+    assertOperationalOnly("tychonic service terminate-web");
+    console.log(
+      JSON.stringify(
+        { ok: true, restart: await restartLaunchdService("web"), _meta: cliInstanceMeta() },
         null,
         2
       )
@@ -1573,10 +1621,19 @@ async function waitForServerCloseSignal(server: Server): Promise<void> {
     const close = (): void => {
       process.off("SIGINT", close);
       process.off("SIGTERM", close);
-      server.close(() => resolveClose());
+      void closeServer(server).then(() => resolveClose());
     };
     process.once("SIGINT", close);
     process.once("SIGTERM", close);
+  });
+}
+
+async function closeServer(server: Server): Promise<void> {
+  if (!server.listening) {
+    return;
+  }
+  await new Promise<void>((resolveClose) => {
+    server.close(() => resolveClose());
   });
 }
 
@@ -1650,6 +1707,7 @@ async function handleRuntimeUpDaemon(options: {
   temporalNamespace?: string;
   temporalTaskQueue?: string;
   shutdownGraceTime?: string;
+  webPort?: number;
 }): Promise<void> {
   const instance = getActiveInstance();
   const dirs = tychonicRuntimeDirs();
@@ -1665,7 +1723,7 @@ async function handleRuntimeUpDaemon(options: {
     if (existingPid > 0) {
       if (isProcessAlive(existingPid)) {
         if (await isRuntimeParentProcess(existingPid, { instance: instance ?? null, pidFile })) {
-          await waitForRuntimeReady({
+          const ready = await waitForRuntimeReady({
             pid: existingPid,
             readyFile,
             logFile,
@@ -1680,6 +1738,7 @@ async function handleRuntimeUpDaemon(options: {
                 pid: existingPid,
                 pidFile,
                 logFile,
+                ...(ready.web ? { web: ready.web } : {}),
                 stopCommand: runtimeStopCommand(instance),
                 _meta: cliInstanceMeta()
               },
@@ -1730,6 +1789,7 @@ async function handleRuntimeUpDaemon(options: {
       extraArgs.push("--temporal-task-queue", options.temporalTaskQueue);
     if (options.shutdownGraceTime)
       extraArgs.push("--shutdown-grace-time", options.shutdownGraceTime);
+    if (options.webPort !== undefined) extraArgs.push("--web-port", String(options.webPort));
     extraArgs.push("--daemon-child", "--ready-file", readyFile);
 
     const result = await spawnDetachedRuntime({
@@ -1741,8 +1801,9 @@ async function handleRuntimeUpDaemon(options: {
       pidFile
     });
 
+    let ready: RuntimeReadyPayload;
     try {
-      await waitForRuntimeReady({
+      ready = await waitForRuntimeReady({
         pid: result.pid,
         readyFile,
         logFile,
@@ -1770,6 +1831,7 @@ async function handleRuntimeUpDaemon(options: {
           pid: result.pid,
           pidFile: result.pidFile,
           logFile: result.logFile,
+          ...(ready.web ? { web: ready.web } : {}),
           stopCommand: runtimeStopCommand(instance),
           ...(staleRemoved ? { staleRemoved: true } : {}),
           _meta: cliInstanceMeta()
@@ -1990,12 +2052,23 @@ function temporalConfigFromOptions(options: {
   };
 }
 
+interface RuntimeReadyWeb {
+  status: "running";
+  url: string;
+}
+
+interface RuntimeReadyPayload {
+  state: "ready";
+  pid: number;
+  web?: RuntimeReadyWeb;
+}
+
 async function waitForRuntimeReady(options: {
   pid: number;
   readyFile: string;
   logFile: string;
   timeoutMs: number;
-}): Promise<void> {
+}): Promise<RuntimeReadyPayload> {
   const deadline = Date.now() + options.timeoutMs;
   while (Date.now() <= deadline) {
     if (!isProcessAlive(options.pid)) {
@@ -2005,9 +2078,16 @@ async function waitForRuntimeReady(options: {
     }
     try {
       const raw = await readFile(options.readyFile, "utf8");
-      const payload = JSON.parse(raw) as { state?: unknown; pid?: unknown };
+      const payload = JSON.parse(raw) as { state?: unknown; pid?: unknown; web?: unknown };
       if (payload.state === "ready" && payload.pid === options.pid) {
-        return;
+        const ready: RuntimeReadyPayload = {
+          state: "ready",
+          pid: options.pid
+        };
+        if (isRuntimeReadyWeb(payload.web)) {
+          ready.web = payload.web;
+        }
+        return ready;
       }
     } catch {
       // The foreground child creates the ready file after Temporal is reachable
@@ -2018,6 +2098,14 @@ async function waitForRuntimeReady(options: {
   throw new Error(
     `runtime daemon process ${options.pid} did not become ready within ${options.timeoutMs}ms. ${await runtimeLogTail(options.logFile)}`
   );
+}
+
+function isRuntimeReadyWeb(value: unknown): value is RuntimeReadyWeb {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as { status?: unknown; url?: unknown };
+  return candidate.status === "running" && typeof candidate.url === "string";
 }
 
 async function runtimeLogTail(logFile: string): Promise<string> {

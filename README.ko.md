@@ -37,8 +37,9 @@ organization policy가 operator마다 다르므로 Tychonic은 그대로 재사�
 - workflow가 사용할 agent CLI 설치 및 인증
 
 Tychonic은 public web UI/API surface를 제공하지 않습니다. CLI가 기본 machine
-interface입니다. 같은 머신에서 단일 operator가 workflow 상태를 볼 수 있는
-local-only status UI는 `tychonic web`으로 실행할 수 있습니다.
+interface입니다. `tychonic runtime up`이 local runtime과 local-only workflow
+status UI를 함께 시작하고, macOS service install은 같은 운영 세트를 LaunchAgent로
+관리합니다.
 
 ## 설치
 
@@ -78,8 +79,8 @@ tychonic workflows list
 ```
 
 local runtime daemon을 시작하거나 이미 떠 있으면 재사용합니다. 이 명령은 필요하면
-Temporal과 worker를 시작하고, Tychonic runtime directory 아래에 PID/log를 남긴 뒤
-shell로 돌아옵니다.
+Temporal, worker, status UI를 시작하고, Tychonic runtime directory 아래에
+PID/log를 남긴 뒤 shell로 돌아옵니다.
 
 ```sh
 tychonic runtime up
@@ -87,7 +88,8 @@ tychonic runtime up
 
 `runtime up`은 idempotent합니다. 각 runtime instance에는 managed daemon이 하나만
 있습니다. daemon이 이미 떠 있으면 caller PID가 다르다는 이유로 실패하지 않고
-기존 PID를 보고합니다. 종료는 다음 명령으로 합니다.
+기존 PID를 보고합니다. JSON 응답의 `web.url`에 status UI 주소가 들어갑니다.
+runtime과 status UI 종료는 다음 명령으로 합니다.
 
 ```sh
 tychonic runtime stop
@@ -95,6 +97,10 @@ tychonic runtime stop
 
 개발/디버깅용으로 현재 terminal에 worker를 붙여 두려면
 `tychonic runtime up --foreground`를 사용하고 `Ctrl-C`로 종료합니다.
+
+지속 실행되는 macOS service 경로에서는 LaunchAgent 세트를 설치합니다.
+`tychonic service install`이 Temporal, worker, web status UI를 함께 관리하고,
+`tychonic service status`가 같은 세트를 보고합니다.
 
 다른 terminal에서 run을 시작합니다.
 
@@ -172,14 +178,10 @@ tychonic sessions --workflow-id <id>
 `--workflow-id`를 붙이면 다음 operator action을 판단하는 데 필요한 evidence를
 반환합니다.
 
-같은 workflow 상태를 브라우저에서 보려면 local UI를 시작합니다.
-
-```sh
-tychonic web
-```
-
-이 명령은 기본적으로 `127.0.0.1`에 bind하며 Temporal-backed workflow summary를
-보여주는 로컬 상태 화면만 제공합니다. team service나 public API가 아닙니다.
+`runtime up`은 local status UI를 시작하고 `web.url`에 주소를 출력합니다.
+기본 주소는 `http://127.0.0.1:19733`입니다. 이 UI는 기본적으로 `127.0.0.1`에
+bind하며 Temporal-backed workflow summary를 보여주는 로컬 상태 화면만 제공합니다.
+team service나 public API가 아닙니다.
 브라우저 화면은 최근 workflow run 목록, 선택한 run의 state flow, 선택한 state의
 상세 pane을 보여줍니다. 상세 pane에는 그 state와 관련된 prompt, agent response,
 artifact, session, workflow definition metadata가 표시됩니다. 완료된 state는
@@ -189,7 +191,7 @@ artifact, session, workflow definition metadata가 표시됩니다. 완료된 st
 페이지는 `/api/events`로 상태 변경 알림을 받고, 선택한 workflow가 바뀌면
 Temporal-backed 데이터를 다시 읽습니다. event 연결이 실패해도 `Refresh` 버튼으로
 수동 갱신할 수 있습니다. local UI를 loopback reverse proxy나 Tailscale serve
-경로로 볼 때는 `tychonic web`을 loopback에 bind한 채 proxied `Host` header를
+경로로 볼 때는 status UI를 loopback에 bind한 채 proxied `Host` header를
 `TYCHONIC_WEB_ALLOWED_HOSTS=<host1>,<host2>`에 지정하십시오. proxy는
 `text/event-stream` 응답을 buffering 없이 통과시켜야 합니다.
 

@@ -9,7 +9,8 @@ LaunchAgent service mode is part of the local runtime contract documented in
 `src/runtime/SPEC.md`.
 
 Service helpers may install, inspect, restart, or uninstall the documented
-Tychonic LaunchAgents through the CLI paths that own those operations. They must
+Tychonic LaunchAgents (`com.tychonic.temporal`, `com.tychonic.worker`, and
+`com.tychonic.web`) through the CLI paths that own those operations. They must
 not create alternate runtime state stores or infer workflow state from launchd
 process state.
 

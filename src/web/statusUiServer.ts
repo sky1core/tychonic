@@ -42,7 +42,7 @@ export interface StatusUiServerDeps {
   describeWorkflow: (options: DescribeTychonicTemporalWorkflowOptions) => Promise<TychonicTemporalWorkflowStatus>;
 }
 
-const DEFAULT_STATUS_UI_PORT = 19733;
+export const DEFAULT_STATUS_UI_PORT = 19733;
 
 export function defaultStatusUiStaticDir(): string {
   return fileURLToPath(new URL("../../dist/web-client", import.meta.url));

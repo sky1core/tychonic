@@ -52,7 +52,9 @@ tychonic runtime up
 
 `runtime up` returns to the shell. Each runtime instance has one managed daemon.
 If the daemon is already running, it reports `already_running` with the existing
-PID instead of failing because the caller PID differs. Stop it with:
+PID instead of failing because the caller PID differs. It starts the worker and
+status UI together; the JSON response includes the status UI URL under
+`web.url`. Stop both with:
 
 ```sh
 tychonic runtime stop
@@ -60,6 +62,9 @@ tychonic runtime stop
 
 Use `tychonic runtime up --foreground` only for development/debugging; stop that
 foreground process with `Ctrl-C`.
+
+For persistent macOS service mode, use `tychonic service install`; that
+LaunchAgent set includes Temporal, the worker, and the web status UI.
 
 Detached/isolated instance flags are development tools. Use them only when the
 task explicitly needs isolated runtime state. Prefer `tychonic --help` and
@@ -145,11 +150,11 @@ tychonic sessions --workflow-id <id>
 Without `--workflow-id`, `status` lists recent workflows. With `--workflow-id`,
 it returns the evidence needed to decide the next operator action.
 
-For browser inspection, start the local status UI:
-
-```sh
-tychonic web
-```
+`runtime up` starts the local status UI and prints its URL in `web.url`. For
+operational macOS service mode, `tychonic service install` manages the web
+LaunchAgent together with Temporal and the worker. Use `tychonic service status`
+to inspect all three, `tychonic service terminate-web` to restart only the web
+LaunchAgent, and `tychonic service uninstall` to remove the managed service set.
 
 Use the browser view to inspect recent workflow runs, state flow, selected-state
 prompt/agent response evidence, artifacts, sessions, and definition metadata.

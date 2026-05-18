@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { getActiveInstance } from "../runtime/instance.js";
 import { buildExecutablePathValue, findExecutable, TYCHONIC_AGENT_PATH_ENV } from "../bootstrap/executables.js";
 import { normalizeTemporalConfig, temporalStartArgs, tychonicRuntimeDirs } from "../temporal/manager.js";
+import { DEFAULT_STATUS_UI_PORT } from "../web/statusUiServer.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,7 +25,7 @@ function assertNoActiveInstance(fnLabel: string): void {
   }
 }
 
-export const serviceNames = ["temporal", "worker"] as const;
+export const serviceNames = ["temporal", "worker", "web"] as const;
 export type TychonicServiceName = (typeof serviceNames)[number];
 
 export interface LaunchdServiceInstallOptions {
@@ -34,6 +35,7 @@ export interface LaunchdServiceInstallOptions {
   cliPath?: string;
   temporalCliPath?: string;
   workerShutdownGraceTime?: string;
+  webPort?: number;
   allowSourceCli?: boolean;
   load?: boolean;
   launchAgentDir?: string;
@@ -112,7 +114,8 @@ export async function installLaunchdServices(
     cliPath,
     temporalCliPath,
     ...(options.workerShutdownGraceTime ? { workerShutdownGraceTime: options.workerShutdownGraceTime } : {}),
-    ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {})
+    ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {}),
+    ...(options.webPort !== undefined ? { webPort: options.webPort } : {})
   });
   const plists = {} as Record<TychonicServiceName, string>;
   for (const service of serviceNames) {
@@ -178,7 +181,10 @@ export async function restartLaunchdService(service: TychonicServiceName): Promi
     label,
     signal: "SIGTERM",
     restartedBy: "launchd-keepalive",
-    message: "Sent SIGTERM; the worker drains in-flight activity work before launchd starts a new process."
+    message:
+      service === "worker"
+        ? "Sent SIGTERM; the worker drains in-flight activity work before launchd starts a new process."
+        : "Sent SIGTERM; launchd starts a new process through KeepAlive."
   };
 }
 
@@ -248,6 +254,7 @@ interface ServiceDefinitionInput {
   temporalCliPath: string;
   workerShutdownGraceTime?: string;
   temporalPort?: number;
+  webPort?: number;
 }
 
 function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServiceName, ServiceDefinition> {
@@ -280,6 +287,23 @@ function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServi
       workingDirectory: input.stateDir,
       stdoutPath: join(input.logDir, "worker.out.log"),
       stderrPath: join(input.logDir, "worker.err.log"),
+      environmentVariables
+    },
+    web: {
+      label: serviceLabel("web"),
+      programArguments: [
+        input.nodePath,
+        input.cliPath,
+        "web",
+        "--port",
+        String(input.webPort ?? DEFAULT_STATUS_UI_PORT),
+        "--temporal-mode",
+        "managed-local",
+        ...(input.temporalPort !== undefined ? ["--temporal-port", String(input.temporalPort)] : [])
+      ],
+      workingDirectory: input.projectDir,
+      stdoutPath: join(input.logDir, "web.out.log"),
+      stderrPath: join(input.logDir, "web.err.log"),
       environmentVariables
     }
   };

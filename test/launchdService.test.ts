@@ -31,7 +31,7 @@ describe("launchd service installer", () => {
       expect(installed.stateDir).toBe(stateHome);
       expect(installed.logDir).toBe(logHome);
       expect(installed.loaded).toBe(false);
-      expect(Object.prototype.hasOwnProperty.call(installed.plists, "web")).toBe(false);
+      expect(Object.keys(installed.plists).sort()).toEqual(["temporal", "web", "worker"]);
       const temporalPlist = await readFile(installed.plists.temporal, "utf8");
       expect(temporalPlist).toContain(join(stateHome, "temporal", "temporal.db"));
       expect(temporalPlist).toContain("<string>--port</string>");
@@ -49,6 +49,16 @@ describe("launchd service installer", () => {
       expect(workerPlist).not.toContain("<string>--ui-port</string>");
       expect(workerPlist).toContain("<string>--shutdown-grace-time</string>");
       expect(workerPlist).toContain("<string>35m</string>");
+      const webPlist = await readFile(installed.plists.web, "utf8");
+      expect(webPlist).toContain("<string>web</string>");
+      expect(webPlist).toContain("<string>--port</string>");
+      expect(webPlist).toContain("<string>19733</string>");
+      expect(webPlist).toContain("<string>--temporal-mode</string>");
+      expect(webPlist).toContain("<string>managed-local</string>");
+      expect(webPlist).toContain("<string>--temporal-port</string>");
+      expect(webPlist).toContain("<string>9233</string>");
+      expect(webPlist).toContain(join(logHome, "web.out.log"));
+      expect(webPlist).toContain(join(logHome, "web.err.log"));
       // The host installer does not seed workflow bundles. The runtime
       // workflow modules dir must contain zero bundles until the
       // operator runs `tychonic workflows install` explicitly.
