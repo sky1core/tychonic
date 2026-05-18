@@ -688,24 +688,17 @@ function isLoopbackRequestHost(host: string): boolean {
   return isLoopbackBindHost(host) || host === "localhost";
 }
 
-const ARTIFACT_CONTENT_MAX_BYTES = 64 * 1024;
-
 async function loadArtifactContents(
   result: TychonicWorkflowResult
-): Promise<Record<string, { content: string } | { truncated: true; size: number }>> {
-  const out: Record<string, { content: string } | { truncated: true; size: number }> = {};
+): Promise<Record<string, { content: string }>> {
+  const out: Record<string, { content: string }> = {};
   try {
     const store = runArtifactStoreForRun(result.run);
     await Promise.all(
       result.run.artifacts.map(async (artifact) => {
         try {
           const filePath = store.artifactPath(result.run, artifact.id);
-          const fileStat = await stat(filePath);
-          if (fileStat.size > ARTIFACT_CONTENT_MAX_BYTES) {
-            out[artifact.id] = { truncated: true, size: fileStat.size };
-          } else {
-            out[artifact.id] = { content: await readFile(filePath, "utf8") };
-          }
+          out[artifact.id] = { content: await readFile(filePath, "utf8") };
         } catch { /* skip unreadable */ }
       })
     );

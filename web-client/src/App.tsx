@@ -185,7 +185,7 @@ type WorkflowDetail = {
   }
   evidence?: WorkflowEvidence
   evidenceError?: string
-  artifactContents?: Record<string, { content: string } | { truncated: true; size: number }>
+  artifactContents?: Record<string, { content: string }>
   stateConfigs?: Record<string, { type?: string; command?: string; agent?: string; model?: string; timeout?: string }>
   workflowGraph?: {
     mermaid: string
@@ -445,7 +445,6 @@ function App() {
   }, [selectedWorkflowId, selectedRunId])
 
   const workflows = useMemo(() => workflowList?.workflows ?? [], [workflowList])
-  const hasRunningWorkflow = workflows.some((workflow) => workflow.status === "RUNNING")
   const selectedRunReceivesEvents =
     selectedWorkflow?.status === "RUNNING" ||
     workflowDetail?.workflow.status === "RUNNING" ||
@@ -456,7 +455,6 @@ function App() {
       setError("This browser does not support workflow event refresh. Use Refresh to update status.")
       return
     }
-    if (!hasRunningWorkflow && !selectedRunReceivesEvents) return
     const params = new URLSearchParams({ limit: "30" })
     if (selectedRunReceivesEvents && selectedWorkflowId && selectedRunId) {
       params.set("workflowId", selectedWorkflowId)
@@ -477,7 +475,7 @@ function App() {
     events.addEventListener("error", connectionError)
     events.addEventListener("status_error", statusError)
     return () => events.close()
-  }, [hasRunningWorkflow, selectedWorkflowId, selectedRunId, selectedRunReceivesEvents])
+  }, [selectedWorkflowId, selectedRunId, selectedRunReceivesEvents])
 
   useEffect(() => {
     if (!workflowDetail?.workflowGraph) setDefinitionOpen(false)
@@ -588,24 +586,17 @@ function App() {
       : undefined
     const stateArtifacts = detail.evidence.artifacts.filter((artifact) => state.artifact_ids.includes(artifact.id))
     const responseArtifact = session?.result_artifact_id ? detail.artifactContents?.[session.result_artifact_id] : undefined
-    const responseArtifactMeta = session?.result_artifact_id
-      ? detail.evidence.artifacts.find((artifact) => artifact.id === session.result_artifact_id)
-      : undefined
     const parsedResponseArtifact = stateArtifacts.find((artifact) => artifact.kind === `${state.name}_parsed`)
     const parsedResponseContent = parsedResponseArtifact
       ? artifactDisplayContent(detail.artifactContents?.[parsedResponseArtifact.id])
       : undefined
     const responseContent =
-      responseArtifact && "content" in responseArtifact
+      responseArtifact
         ? extractAgentResult(responseArtifact.content)
         : parsedResponseContent
           ? extractAgentResult(parsedResponseContent)
           : undefined
-    const responsePreviewNote =
-      responseArtifact && !("content" in responseArtifact) && !parsedResponseContent
-        ? `Response is too large for inline preview (${formatBytes(responseArtifact.size)}). Artifact: ${responseArtifactMeta?.path ?? session?.result_artifact_id}.`
-        : undefined
-    const hasResponseContent = Boolean(responseContent?.trim() || responsePreviewNote)
+    const hasResponseContent = Boolean(responseContent?.trim())
     const shouldShowPromptAsAgentMessage =
       Boolean(promptContent) && (session?.agent !== "custom" || hasResponseContent || state.status !== "succeeded")
     const outputArtifacts = stateArtifacts.filter(
@@ -632,7 +623,6 @@ function App() {
       outputItems,
       promptContent: shouldShowPromptAsAgentMessage ? promptContent : undefined,
       responseContent,
-      responsePreviewNote,
       session,
       stateConfig,
     }
@@ -825,7 +815,11 @@ function App() {
                   {workflowDetail?.runContext?.goal ? (
                     <section className="rounded-md border bg-muted/20 px-3 py-2">
                       <h3 className="mb-1 text-xs font-medium text-muted-foreground">Goal</h3>
-                      <p className="whitespace-pre-wrap break-words text-sm">{workflowDetail.runContext.goal}</p>
+                      <div className="max-h-32 overflow-auto text-sm">
+                        <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
+                          {workflowDetail.runContext.goal}
+                        </Streamdown>
+                      </div>
                     </section>
                   ) : null}
 
@@ -1007,20 +1001,15 @@ function App() {
                                     </MessageContent>
                                   </Message>
                                 ) : null}
-                                {responseTextForDisplay(selectedExecutionDetail?.responseContent) !== undefined ||
-                                selectedExecutionDetail?.responsePreviewNote ? (
+                                {responseTextForDisplay(selectedExecutionDetail?.responseContent) !== undefined ? (
                                   <Message from="assistant" className="max-w-full">
                                     <MessageMetadata>
                                       <MessageMetadataItem>Response</MessageMetadataItem>
                                     </MessageMetadata>
                                     <MessageContent className="max-h-[520px] w-full overflow-auto rounded-md px-1 py-1">
-                                      {responseTextForDisplay(selectedExecutionDetail?.responseContent) !== undefined ? (
-                                        <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
-                                          {responseTextForDisplay(selectedExecutionDetail?.responseContent)}
-                                        </Streamdown>
-                                      ) : (
-                                        <p className="text-sm text-muted-foreground">{selectedExecutionDetail?.responsePreviewNote}</p>
-                                      )}
+                                      <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
+                                        {responseTextForDisplay(selectedExecutionDetail?.responseContent)}
+                                      </Streamdown>
                                     </MessageContent>
                                   </Message>
                                 ) : null}
@@ -1047,8 +1036,7 @@ function App() {
                                 selectedExecutionDetail.findings.length === 0 &&
                                 !selectedExecutionDetail.command &&
                                 !selectedExecutionDetail.promptContent &&
-                                selectedExecutionDetail.responseContent === undefined &&
-                                selectedExecutionDetail.responsePreviewNote === undefined ? (
+                                selectedExecutionDetail.responseContent === undefined ? (
                                   <span className="text-sm text-muted-foreground">No inline evidence for this state event.</span>
                                 ) : null}
                               </div>
@@ -1237,11 +1225,10 @@ function isOutputArtifactKind(kind: string) {
 }
 
 function artifactDisplayContent(
-  artifact: { content: string } | { truncated: true; size: number } | undefined,
+  artifact: { content: string } | undefined,
 ): string | undefined {
   if (!artifact) return undefined
-  if ("content" in artifact) return artifact.content
-  return `Artifact is too large for inline preview (${formatBytes(artifact.size)}).`
+  return artifact.content
 }
 
 function artifactDisplayTitle(kind: string) {
@@ -1388,12 +1375,6 @@ function formatDuration(ms: number) {
   if (ms < 1000) return `${ms} ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`
   return `${Math.round(ms / 60_000)} min`
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 
 export default App
