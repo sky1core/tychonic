@@ -24,7 +24,7 @@ export function extractAgentResult(raw: string): string {
     }
 
     for (let index = objects.length - 1; index >= 0; index--) {
-      const assistantText = assistantMessageText(objects[index])
+      const assistantText = assistantMessageText(objects[index]) ?? codexItemText(objects[index])
       if (assistantText) return assistantText
     }
   }
@@ -133,4 +133,12 @@ function assistantMessageText(value: JsonObject): string | undefined {
       isJsonObject(block) && block.type === "text" && typeof block.text === "string",
   )
   return textBlocks.length > 0 ? textBlocks.map((block) => block.text).join("\n") : undefined
+}
+
+function codexItemText(value: JsonObject): string | undefined {
+  if (value.type !== "item.completed") return undefined
+  const item = value.item
+  if (!isJsonObject(item)) return undefined
+  if (typeof item.text !== "string") return undefined
+  return formatJsonReviewText(item.text) ?? item.text
 }

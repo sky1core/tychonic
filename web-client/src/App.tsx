@@ -186,6 +186,7 @@ type WorkflowDetail = {
   evidence?: WorkflowEvidence
   evidenceError?: string
   artifactContents?: Record<string, { content: string }>
+  activeStateEvidence?: { promptContent?: string; liveOutput?: string }
   stateConfigs?: Record<string, { type?: string; command?: string; agent?: string; model?: string; timeout?: string }>
   workflowGraph?: {
     mermaid: string
@@ -581,21 +582,26 @@ function App() {
     const session = step.attempt?.agent_session_id
       ? detail.evidence.sessions.find((candidate) => candidate.id === step.attempt?.agent_session_id)
       : undefined
+    const isRunningState = state.status === "running"
+    const activeEvidence = isRunningState ? detail.activeStateEvidence : undefined
     const promptContent = session?.prompt_artifact_id
       ? artifactDisplayContent(detail.artifactContents?.[session.prompt_artifact_id])
-      : undefined
+      : activeEvidence?.promptContent ?? undefined
     const stateArtifacts = detail.evidence.artifacts.filter((artifact) => state.artifact_ids.includes(artifact.id))
     const responseArtifact = session?.result_artifact_id ? detail.artifactContents?.[session.result_artifact_id] : undefined
     const parsedResponseArtifact = stateArtifacts.find((artifact) => artifact.kind === `${state.name}_parsed`)
     const parsedResponseContent = parsedResponseArtifact
       ? artifactDisplayContent(detail.artifactContents?.[parsedResponseArtifact.id])
       : undefined
+    const liveResponseContent = activeEvidence?.liveOutput
+      ? extractAgentResult(activeEvidence.liveOutput)
+      : undefined
     const responseContent =
       responseArtifact
         ? extractAgentResult(responseArtifact.content)
         : parsedResponseContent
           ? extractAgentResult(parsedResponseContent)
-          : undefined
+          : liveResponseContent
     const hasResponseContent = Boolean(responseContent?.trim())
     const shouldShowPromptAsAgentMessage =
       Boolean(promptContent) && (session?.agent !== "custom" || hasResponseContent || state.status !== "succeeded")
@@ -623,6 +629,7 @@ function App() {
       outputItems,
       promptContent: shouldShowPromptAsAgentMessage ? promptContent : undefined,
       responseContent,
+      isStreamingResponse: isRunningState && liveResponseContent !== undefined,
       session,
       stateConfig,
     }
@@ -1007,7 +1014,7 @@ function App() {
                                       <MessageMetadataItem>Response</MessageMetadataItem>
                                     </MessageMetadata>
                                     <MessageContent className="max-h-[520px] w-full overflow-auto rounded-md px-1 py-1">
-                                      <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
+                                      <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode={selectedExecutionDetail?.isStreamingResponse ? "streaming" : "static"}>
                                         {responseTextForDisplay(selectedExecutionDetail?.responseContent)}
                                       </Streamdown>
                                     </MessageContent>

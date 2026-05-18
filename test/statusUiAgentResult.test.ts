@@ -74,6 +74,53 @@ describe("status UI agent result extraction", () => {
     );
   });
 
+  it("extracts Codex item.completed text during streaming (no trailing object yet)", () => {
+    const output = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_1" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "item_1",
+          type: "agent_message",
+          text: "I'm analyzing the code and will provide a review shortly."
+        }
+      })
+    ].join("\n");
+
+    expect(extractAgentResult(output)).toBe(
+      "I'm analyzing the code and will provide a review shortly."
+    );
+  });
+
+  it("extracts Codex item.completed structured review text during streaming", () => {
+    const output = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread_1" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "item_1",
+          type: "agent_message",
+          text: JSON.stringify({
+            status: "fail",
+            summary: "partial review in progress",
+            findings: [{ severity: "low", title: "progress", detail: "not final" }]
+          })
+        }
+      })
+    ].join("\n");
+
+    expect(extractAgentResult(output)).toBe(
+      [
+        "**Status:** fail",
+        "",
+        "partial review in progress",
+        "",
+        "**Findings**",
+        "- Severity: **low** - progress: not final"
+      ].join("\n")
+    );
+  });
+
   it("formats failed structured review findings as readable Markdown", () => {
     const output = [
       JSON.stringify({ type: "thread.started", thread_id: "thread_1" }),

@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, relative, resolve, sep } from "node:path";
@@ -292,12 +292,12 @@ async function statusEventSignature(input: {
     : undefined;
   return JSON.stringify({
     workflows: workflowSummaries,
-    selected: selected ? workflowStatusEventSignature(selected) : undefined
+    selected: selected ? await workflowStatusEventSignature(selected) : undefined
   });
 }
 
-function workflowStatusEventSignature(workflow: TychonicTemporalWorkflowStatus): Record<string, unknown> {
-  return {
+async function workflowStatusEventSignature(workflow: TychonicTemporalWorkflowStatus): Promise<Record<string, unknown>> {
+  const base: Record<string, unknown> = {
     workflowId: workflow.workflowId,
     runId: workflow.runId,
     status: workflow.status,
@@ -306,6 +306,28 @@ function workflowStatusEventSignature(workflow: TychonicTemporalWorkflowStatus):
     resultError: workflow.resultError,
     result: workflowResultEventSignature(workflow.result)
   };
+  if (workflow.status === "RUNNING" && workflow.result && isRecord(workflow.result)) {
+    const activeState = isRecord(workflow.result.activeState) ? workflow.result.activeState : undefined;
+    if (activeState && activeState.status === "running" && typeof activeState.name === "string") {
+      base.activeStateName = activeState.name;
+      try {
+        const run = workflow.result.run as TychonicWorkflowResult["run"];
+        const store = runArtifactStoreForRun(run);
+        const promptPrefix = `${activeState.name}_prompt-`;
+        const artifactFiles = await readdir(store.artifactsDir(run.id));
+        const promptFile = artifactFiles.filter((f: string) => f.startsWith(promptPrefix) && f.endsWith(".txt")).sort().at(-1);
+        if (promptFile) {
+          base.hasPrompt = true;
+          const attemptId = promptFile.slice(promptPrefix.length, -".txt".length);
+          try {
+            const logStat = await stat(join(store.liveDir(run.id), `${attemptId}.log`));
+            base.liveLogSize = logStat.size;
+          } catch { /* live log may not exist yet */ }
+        }
+      } catch { /* artifacts dir may not exist yet */ }
+    }
+  }
+  return base;
 }
 
 function workflowResultEventSignature(result: unknown): Record<string, unknown> | undefined {
@@ -334,6 +356,9 @@ function workflowResultEventSignature(result: unknown): Record<string, unknown> 
           reason: latestState.reason,
           finished_at: latestState.finished_at
         }
+      : undefined,
+    activeState: isRecord(result.activeState)
+      ? { name: result.activeState.name, status: result.activeState.status }
       : undefined
   };
 }
@@ -379,6 +404,10 @@ async function handleWorkflowDetailApi(
       output.evidence = evidenceView;
       output.artifactContents = await loadArtifactContents(workflow.result);
       output.stateConfigs = await loadStateConfigs(workflow.result);
+      const activeEvidence = await loadActiveStateEvidence(workflow.result);
+      if (activeEvidence) {
+        output.activeStateEvidence = activeEvidence;
+      }
     } catch (error) {
       output.evidenceError = error instanceof Error ? error.message : String(error);
     }
@@ -704,6 +733,43 @@ async function loadArtifactContents(
     );
   } catch { /* no artifact root */ }
   return out;
+}
+
+async function loadActiveStateEvidence(
+  result: TychonicWorkflowResult
+): Promise<{ promptContent?: string; liveOutput?: string } | undefined> {
+  const activeState = result.activeState;
+  if (!activeState || activeState.status !== "running") return undefined;
+  try {
+    const store = runArtifactStoreForRun(result.run);
+    const artifactsDir = store.artifactsDir(result.run.id);
+    const liveDir = store.liveDir(result.run.id);
+    let promptContent: string | undefined;
+    let liveOutput: string | undefined;
+    let attemptId: string | undefined;
+    const promptPrefix = `${activeState.name}_prompt-`;
+    try {
+      const files = await readdir(artifactsDir);
+      const promptFile = files
+        .filter((f) => f.startsWith(promptPrefix) && f.endsWith(".txt"))
+        .sort()
+        .at(-1);
+      if (promptFile) {
+        promptContent = await readFile(join(artifactsDir, promptFile), "utf8");
+        attemptId = promptFile.slice(promptPrefix.length, -".txt".length);
+      }
+    } catch { /* artifacts dir may not exist yet */ }
+    if (attemptId) {
+      try {
+        liveOutput = await readFile(join(liveDir, `${attemptId}.log`), "utf8");
+      } catch { /* live log may not exist yet */ }
+    }
+    if (!promptContent && !liveOutput) return undefined;
+    const out: { promptContent?: string; liveOutput?: string } = {};
+    if (promptContent) out.promptContent = promptContent;
+    if (liveOutput) out.liveOutput = liveOutput;
+    return out;
+  } catch { return undefined; }
 }
 
 async function loadStateConfigs(
