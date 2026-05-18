@@ -15,6 +15,7 @@ const stateHome = join(root, "state");
 const logHome = join(root, "logs");
 const target = join(root, "target");
 const instance = await makeInstanceName("rl");
+const webPort = await findFreePort();
 const env = {
   ...process.env,
   HOME: home,
@@ -49,7 +50,7 @@ try {
   await installWorkflow("architectBuilderFinalQaWorkflow");
   await installWorkflow("architectBuilderFirstReviewQaWorkflow");
   await installWorkflowSource(yamlReviewFeedbackBundle);
-  await runCli(["runtime", "up", "--detach"], { timeout: 60_000 });
+  await runCli(["runtime", "up", "--detach", "--web-port", String(webPort)], { timeout: 60_000 });
   runtimeStarted = true;
   await waitForRuntime();
 
@@ -293,6 +294,18 @@ async function portIsFree(port) {
     server.once("error", () => resolve(false));
     server.listen({ host: "127.0.0.1", port }, () => {
       server.close(() => resolve(true));
+    });
+  });
+}
+
+async function findFreePort() {
+  const { createServer } = await import("node:net");
+  const server = createServer();
+  return await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0 }, () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
     });
   });
 }

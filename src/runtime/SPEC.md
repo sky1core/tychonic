@@ -78,6 +78,7 @@ and uses them in place of the operational defaults:
 | Temporal address | `127.0.0.1:7233` | `127.0.0.1:<derived API port>` |
 | Temporal namespace | `default` | `default` (unchanged — the DB file is already separate) |
 | Temporal task queue | `tychonic` | `tychonic-<name>` |
+| status UI port | `19733` | `19733` (unchanged — override with `--web-port` when the operational runtime already occupies the default) |
 | workflow module registry | `<state>/workflows/modules/` | `<instance-state>/workflows/modules/` (state dir derivation propagates) |
 
 Instance activation never creates a registry file, an entry in a global index,
@@ -91,6 +92,7 @@ default**, applied independently to each of:
 
 - `--temporal-mode`, `--temporal-port`, `--temporal-address`,
   `--temporal-task-queue`, `--temporal-namespace`
+- `--web-port`
 - `$TYCHONIC_STATE_HOME`, `$TYCHONIC_LOG_HOME`
 
 This is the same replace-not-merge precedence that applies between a bundle's
