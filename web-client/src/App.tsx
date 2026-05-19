@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react"
+import { startTransition, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react"
 import { Streamdown } from "streamdown"
 import {
   AlertCircleIcon,
@@ -264,7 +264,7 @@ function SmallStreamdown({ children }: { children: string }) {
     for (const el of ref.current.querySelectorAll<HTMLElement>("code, pre")) {
       el.style.fontSize = "inherit"
     }
-  })
+  }, [children])
   return (
     <div ref={ref} style={{ fontSize: "13px" }}>
       <Streamdown className="tychonic-markdown-sm" linkSafety={streamdownLinkSafety} mode="static">
@@ -320,8 +320,11 @@ function App() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState<string>()
   const [definitionOpen, setDefinitionOpen] = useState(false)
-  const selectedWorkflow = workflowList?.workflows.find(
-    (workflow) => workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId,
+  const selectedWorkflow = useMemo(
+    () => workflowList?.workflows.find(
+      (workflow) => workflow.workflowId === selectedWorkflowId && workflow.runId === selectedRunId,
+    ),
+    [workflowList, selectedWorkflowId, selectedRunId],
   )
   const hasSelectedRun = selectedWorkflowId !== undefined && selectedRunId !== undefined
 
@@ -477,10 +480,13 @@ function App() {
   }, [selectedWorkflowId, selectedRunId])
 
   const workflows = useMemo(() => workflowList?.workflows ?? [], [workflowList])
-  const selectedRunReceivesEvents =
-    selectedWorkflow?.status === "RUNNING" ||
-    workflowDetail?.workflow.status === "RUNNING" ||
-    workflowDetail?.evidence?.status === "running"
+  const selectedRunReceivesEvents = useMemo(
+    () =>
+      selectedWorkflow?.status === "RUNNING" ||
+      workflowDetail?.workflow.status === "RUNNING" ||
+      workflowDetail?.evidence?.status === "running",
+    [selectedWorkflow?.status, workflowDetail?.workflow.status, workflowDetail?.evidence?.status],
+  )
 
   useEffect(() => {
     if (typeof EventSource === "undefined") {
@@ -696,7 +702,9 @@ function App() {
   function openWorkflow(workflow: WorkflowSummary) {
     const currentSelection = selectedRunRef.current
     const sameSelection = currentSelection.workflowId === workflow.workflowId && currentSelection.runId === workflow.runId
-    applySelection({ workflowId: workflow.workflowId, runId: workflow.runId })
+    startTransition(() => {
+      applySelection({ workflowId: workflow.workflowId, runId: workflow.runId })
+    })
     if (sameSelection) {
       void loadWorkflowDetail(workflow.workflowId, workflow.runId)
     }
@@ -1013,7 +1021,7 @@ function App() {
                                     <button
                                       type="button"
                                       aria-current={selected ? "true" : undefined}
-                                      onClick={() => setSelectedExecutionStateId(state.id)}
+                                      onClick={() => startTransition(() => setSelectedExecutionStateId(state.id))}
                                       className={cn(
                                         "relative flex w-full gap-2 px-3 py-2 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                                         (failed || blocked) && "bg-destructive/5",
