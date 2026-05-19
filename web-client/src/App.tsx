@@ -841,8 +841,8 @@ function App() {
               ) : (
                 <>
                   {/* Title + Status | Goal */}
-                  <div className={cn("grid gap-3 md:max-h-[300px]", workflowDetail?.runContext?.goal ? "md:grid-cols-[2fr_3fr]" : "")}>
-                    <div className="flex min-w-0 flex-col self-stretch">
+                  <div className={cn("grid gap-3 overflow-hidden md:max-h-[300px] md:grid-rows-[minmax(0,1fr)]", workflowDetail?.runContext?.goal ? "md:grid-cols-[2fr_3fr]" : "")}>
+                    <div className="flex min-w-0 max-h-[240px] flex-col overflow-hidden self-stretch md:max-h-none">
                       <h2 className="truncate text-lg font-semibold leading-snug">
                         {projectName(workflowDetail?.runContext?.cwd ?? selectedWorkflow?.cwd) ?? workflowDetail?.evidence?.template ?? selectedWorkflow?.type ?? "Workflow"}
                       </h2>
