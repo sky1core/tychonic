@@ -20,12 +20,14 @@ filesystem evidence directories as a state database or create any repo-local
 state store.
 
 The UI may expose summaries of workflows, states, inbox items, findings,
-artifacts, logs, sessions, and timing. For a selected state, the UI may also
-show focused evidence content that answers the operator's primary question:
-the prompt sent to the agent, the terminal agent response or structured review
-result, and small related artifact excerpts. Large raw artifacts, full logs,
-and complete run-record dumps must stay behind the focused CLI commands already
-carried by the evidence view. Any truncation in the UI must be explicit.
+artifacts, logs, sessions, timing, and run-level warnings. Config warnings
+recorded at workflow start must be visible on the selected workflow detail view.
+For a selected state, the UI may also show focused evidence content that answers
+the operator's primary question: the prompt sent to the agent, the terminal
+agent response or structured review result, and small related artifact excerpts.
+Large raw artifacts, full logs, and complete run-record dumps must stay behind
+the focused CLI commands already carried by the evidence view. Any truncation in
+the UI must be explicit.
 
 The UI may listen to a local event stream for refresh notifications, but event
 delivery is only a convenience trigger to re-read Temporal-backed status data.

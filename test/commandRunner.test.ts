@@ -35,10 +35,11 @@ describe("runCommand", () => {
   });
 
 
-  it("adds launchd-safe user CLI directories to child PATH", () => {
+  it("keeps child PATH limited to explicit agent paths and ambient PATH", () => {
     const env = sanitizeChildEnv({
       HOME: "/home/example",
       PATH: "/custom/bin:/usr/bin",
+      TYCHONIC_AGENT_PATH: "/explicit/agents",
       TYCHONIC_CODEX_REVIEW_COMMAND: "auto",
       TYCHONIC_TEST_REVIEW_COMMAND: "auto"
     });
@@ -46,14 +47,9 @@ describe("runCommand", () => {
     expect(env.TYCHONIC_CODEX_REVIEW_COMMAND).toBeUndefined();
     expect(env.TYCHONIC_TEST_REVIEW_COMMAND).toBeUndefined();
     expect(env.PATH?.split(":")).toEqual([
+      "/explicit/agents",
       "/custom/bin",
-      "/usr/bin",
-      "/home/example/.local/bin",
-      "/home/example/.npm-global/bin",
-      "/home/example/bin",
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/bin"
+      "/usr/bin"
     ]);
   });
 

@@ -7,8 +7,8 @@ existing agent CLIs and deterministic checks through Temporal, keeps durable
 run history, and records the evidence needed to inspect what happened.
 
 It is not a coding agent, chat wrapper, dashboard, or team service. Tychonic is
-the orchestration layer around Codex, Claude Code, Gemini CLI, Kiro CLI, shell
-checks, and review gates.
+the orchestration layer around Codex, Claude Code, Kiro CLI, shell checks, and
+review gates.
 
 ## Why Use It
 
@@ -40,6 +40,7 @@ the source of truth; install validates it and generates the Temporal
 - macOS
 - Node.js 22+
 - Temporal CLI on `PATH`
+- Install the OpenP CLI: `https://github.com/sky1core/open-p`
 - Installed and authenticated agent CLIs for the agents your workflow uses
 
 Tychonic does not ship a public web UI/API surface. The CLI is the primary
@@ -103,9 +104,15 @@ tychonic runtime stop
 For development/debugging, use `tychonic runtime up --foreground` to keep the
 worker attached to the current terminal and stop it with `Ctrl-C`.
 
-For the persistent macOS service path, install the LaunchAgent set instead:
+For the persistent macOS service path, install the LaunchAgent set instead.
+Choose either the manual operational daemon (`tychonic runtime up`) or the
+service path; do not run both for the same operational runtime. Once
+`tychonic service install` has loaded the LaunchAgents, `tychonic runtime up`
+refuses to start a second operational runtime. Conversely, `tychonic service
+install` refuses while a verified manual operational runtime is already running.
 `tychonic service install` manages Temporal, the worker, and the web status UI
-together; `tychonic service status` reports the same set.
+together; `tychonic service status` reports the same set. Use `tychonic runtime
+up --instance <name>` only for isolated development runtimes.
 
 Start a run from another terminal:
 
@@ -281,13 +288,10 @@ states:
   architect:
     type: work
     agent: claude
-    permission_mode: plan
   builder:
     type: work
     agent: kiro
     trust_all_tools: true
-    sandbox: workspace-write
-    approval: never
   verify:
     type: verify
     command: |
@@ -298,7 +302,6 @@ states:
     type: review
     on_fail_return_to: builder
     agent: codex
-    approval: never
 ```
 
 Every `review` state must declare `on_fail_return_to`, naming the non-review
@@ -311,14 +314,15 @@ state is prompt-bearing.
 A workflow author may explicitly choose `model` and supported
 `reasoning_effort` per state only after checking the target account, model
 availability, plan/tier, quota, pricing, region/country access, and organization
-policy. Omission delegates to the selected CLI's default or auto-selection
-behavior.
-For exact versioned Claude model names, Tychonic compares the CLI-reported
+policy. Omission delegates to the selected OpenP backend's default or
+auto-selection behavior.
+For exact versioned Claude model names, Tychonic compares the OpenP-reported
 model with the configured string and fails the activity on mismatch; aliases
 such as `opus` are passed through without exact-match assertion.
-Kiro model ids are Kiro CLI ids; availability can be account-, tier-, or
-region-scoped. `kiro-cli chat --list-models` proves what this account can run,
-not whether every documented Kiro model id exists globally.
+Kiro model ids are OpenP Kiro backend ids; availability can be account-, tier-,
+or region-scoped. A successful OpenP Kiro smoke in the target account is
+evidence for that account, not proof that every documented Kiro model id exists
+globally.
 Include other knobs such as `resume`, permissions, sandbox, timeout, trust, and
 policy settings only when the workflow behavior needs them.
 
@@ -333,15 +337,19 @@ of `agent` or `command`.
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
 | `kiro` | yes | with normalizer | yes |
-| `gemini` | yes | with normalizer | no |
 
-For review states, `gemini` and `kiro` require `normalizer: claude` or
+For review states, `kiro` requires `normalizer: claude` or
 `normalizer: codex`. The primary agent performs the review; the normalizer only
 structures that output into Tychonic's review result.
 
-Kiro uses ACP session APIs for session capture and resume. Kiro review states
-may inspect files and run checks, but the adapter rejects direct file writes
-and fails the review if tracked files change during the review turn.
+Kiro runs through `openp kiro` for session capture and resume. Kiro review
+states produce prose and require a normalizer for the structured Tychonic review
+contract. Review states may inspect files and run checks, but they must not
+modify source; review activities fail the review if tracked files change during
+the review turn.
+
+Codex runs through Tychonic's built-in `codex` adapter. Use `command` for a
+custom Codex invocation if a workflow needs a different execution contract.
 
 ## Example Workflows
 

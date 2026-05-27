@@ -23,6 +23,35 @@ const temporalHarness = vi.hoisted(() => {
 });
 
 vi.mock("@temporalio/workflow", () => ({
+  ActivityFailure: class ActivityFailure extends Error {
+    constructor(
+      message: string | undefined,
+      readonly activityType: string,
+      readonly activityId: string | undefined,
+      readonly retryState: unknown,
+      readonly identity: string | undefined,
+      cause?: Error
+    ) {
+      super(message);
+      this.name = "ActivityFailure";
+      this.cause = cause;
+    }
+  },
+  ApplicationFailure: class ApplicationFailure extends Error {
+    readonly type?: string | undefined | null;
+    readonly nonRetryable?: boolean | undefined | null;
+
+    constructor(message?: string | undefined | null, type?: string | undefined | null, nonRetryable?: boolean | undefined | null) {
+      super(message ?? undefined);
+      this.name = "ApplicationFailure";
+      this.type = type;
+      this.nonRetryable = nonRetryable;
+    }
+
+    static create(options: { message?: string; type?: string; nonRetryable?: boolean }) {
+      return new this(options.message, options.type, options.nonRetryable);
+    }
+  },
   defineSignal: (name: string) => {
     const handle = { __name: name, __kind: "signal" };
     temporalHarness.definedSignals.set(handle, name);
@@ -46,6 +75,7 @@ vi.mock("@temporalio/workflow", () => ({
     }
     throw new Error("unknown signal/query handle");
   },
+  isCancellation: (error: unknown) => Boolean(error && typeof error === "object" && "isCancellation" in error),
   workflowInfo: () => ({ workflowId: "wf_context_test" }),
   condition: (predicate: () => boolean) =>
     new Promise<void>((resolve) => {
@@ -58,6 +88,8 @@ vi.mock("@temporalio/workflow", () => ({
 }));
 
 const { createTychonicWorkflowContext } = await import("../src/workflow.js");
+const { AGENT_EXECUTABLE_MISSING_FAILURE_TYPE } = await import("../src/adapters/failureTypes.js");
+const { ActivityFailure, ApplicationFailure } = await import("@temporalio/workflow");
 const { __resetInteractionHookState } = await import("../src/workflows/interactionHook.js");
 const {
   interactionApproveStateSignalName,
@@ -235,6 +267,255 @@ describe("Tychonic workflow context recoverable state rerun", () => {
     expect(published.worktreePath).toBe(worktreePath);
   });
 
+  it("publishes cancelled run evidence without dropping prior state records", async () => {
+    const finalizeRunActivity = vi.fn(async (): Promise<ActivityResult> => ({ delta: { status: "succeeded" } }));
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            verify: { type: "verify", command: "npm test" }
+          },
+          policies: {}
+        }
+      },
+      template: "cancel_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        finalizeRunActivity
+      }
+    });
+
+    await ctx.start();
+    ctx.apply({
+      delta: {
+        states: [
+          {
+            id: "state_verify_done",
+            name: "verify",
+            status: "succeeded",
+            reason: "checks passed before cancellation",
+            activity_attempt_ids: [],
+            artifact_ids: [],
+            finding_ids: [],
+            started_at: "2026-01-01T00:00:01.000Z",
+            finished_at: "2026-01-01T00:00:02.000Z"
+          }
+        ]
+      }
+    });
+
+    const result = await ctx.cancel("operator cancelled workflow");
+
+    expect(result).toMatchObject({
+      status: "cancelled",
+      summary: "operator cancelled workflow",
+      run: {
+        status: "cancelled",
+        summary: "operator cancelled workflow",
+        states: [{ id: "state_verify_done", name: "verify", status: "succeeded" }]
+      }
+    });
+    expect((runQuery(tychonicWorkflowStateQueryName) as any).run.states).toHaveLength(1);
+    expect(finalizeRunActivity).not.toHaveBeenCalled();
+  });
+
+  it("publishes cancelled evidence immediately and adds the worktree patch when extraction completes", async () => {
+    let releaseExtract!: () => void;
+    let extractStarted = false;
+    const patchArtifact = {
+      id: "artifact_1",
+      kind: "worktree_patch" as const,
+      path: "artifacts/worktree_patch-artifact_1.patch",
+      created_at: "2026-01-01T00:00:03.000Z"
+    };
+    const extractWorktreePatchActivity = vi.fn(async (): Promise<ActivityResult & { extracted: true }> => {
+      extractStarted = true;
+      await new Promise<void>((resolve) => {
+        releaseExtract = resolve;
+      });
+      return { extracted: true, delta: {}, cleanupOutcome: { artifacts: [patchArtifact] } };
+    });
+    const finalizeRunActivity = vi.fn(async (): Promise<ActivityResult> => ({ delta: { status: "succeeded" } }));
+    const worktreePath = "/tmp/tychonic-worktree-run_recovery-test/worktree";
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {},
+          policies: {}
+        }
+      },
+      template: "cancel_extract_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        createWorktreeActivity: async () => ({
+          worktreePath,
+          worktreeParentDir: "/tmp/tychonic-worktree-run_recovery-test",
+          baseHead: "0123456789abcdef0123456789abcdef01234567"
+        }),
+        extractWorktreePatchActivity,
+        finalizeRunActivity
+      }
+    });
+
+    await ctx.start();
+    await ctx.createWorktree();
+    const pending = ctx.cancel("operator cancelled workflow");
+    await flushMicrotasks();
+
+    expect(extractStarted).toBe(true);
+    expect((runQuery(tychonicWorkflowStateQueryName) as any).status).toBe("cancelled");
+    expect((runQuery(tychonicWorkflowStateQueryName) as any).run.artifacts).toEqual([]);
+
+    releaseExtract();
+    await expect(pending).resolves.toMatchObject({
+      status: "cancelled",
+      worktreePath,
+      run: {
+        status: "cancelled",
+        artifacts: [patchArtifact]
+      }
+    });
+    const published = runQuery(tychonicWorkflowStateQueryName) as any;
+    expect(published.status).toBe("cancelled");
+    expect(published.worktreePath).toBe(worktreePath);
+    expect(published.run.artifacts).toEqual([patchArtifact]);
+    expect(extractWorktreePatchActivity).toHaveBeenCalledWith({
+      run: expect.objectContaining({ status: "cancelled", summary: "operator cancelled workflow" }),
+      cwd: "/repo",
+      worktreePath,
+      worktreeParentDir: "/tmp/tychonic-worktree-run_recovery-test",
+      baseHead: "0123456789abcdef0123456789abcdef01234567"
+    });
+    expect(finalizeRunActivity).not.toHaveBeenCalled();
+  });
+
+  it("keeps cancelled evidence when worktree patch extraction fails during cancellation", async () => {
+    const extractWorktreePatchActivity = vi.fn(async () => {
+      throw new Error("patch extract failed");
+    });
+    const finalizeRunActivity = vi.fn(async (): Promise<ActivityResult> => ({ delta: { status: "succeeded" } }));
+    const worktreePath = "/tmp/tychonic-worktree-run_recovery-test/worktree";
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {},
+          policies: {}
+        }
+      },
+      template: "cancel_extract_failure_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        createWorktreeActivity: async () => ({
+          worktreePath,
+          worktreeParentDir: "/tmp/tychonic-worktree-run_recovery-test",
+          baseHead: "0123456789abcdef0123456789abcdef01234567"
+        }),
+        extractWorktreePatchActivity,
+        finalizeRunActivity
+      }
+    });
+
+    await ctx.start();
+    await ctx.createWorktree();
+
+    await expect(ctx.cancel("operator cancelled workflow")).resolves.toMatchObject({
+      status: "cancelled",
+      worktreePath,
+      run: {
+        status: "cancelled",
+        summary: "operator cancelled workflow; worktree patch capture failed: patch extract failed",
+        artifacts: []
+      }
+    });
+    expect((runQuery(tychonicWorkflowStateQueryName) as any).status).toBe("cancelled");
+    expect((runQuery(tychonicWorkflowStateQueryName) as any).summary).toBe(
+      "operator cancelled workflow; worktree patch capture failed: patch extract failed"
+    );
+    expect(extractWorktreePatchActivity).toHaveBeenCalledTimes(1);
+    expect(finalizeRunActivity).not.toHaveBeenCalled();
+  });
+
+  it("rethrows Temporal cancellation instead of recording it as a recoverable activity failure", async () => {
+    const cancellation = Object.assign(new Error("workflow cancelled"), { isCancellation: true });
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            verify: { type: "verify", command: "npm test" }
+          },
+          policies: {}
+        }
+      },
+      template: "cancel_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        runVerifyActivity: vi.fn(async () => {
+          throw cancellation;
+        }),
+        finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+      }
+    });
+
+    await ctx.start();
+    await expect(ctx.verify("verify")).rejects.toBe(cancellation);
+    expect(ctx.run().states).toHaveLength(0);
+    expect(ctx.run().status).toBe("running");
+  });
+
+  it("rethrows Temporal cancellation from work and review activities", async () => {
+    for (const kind of ["work", "review"] as const) {
+      __resetInteractionHookState();
+      temporalHarness.harness.signalHandlersByName.clear();
+      temporalHarness.harness.queryHandlersByName.clear();
+      temporalHarness.harness.conditionCalls.length = 0;
+      temporalHarness.definedSignals.clear();
+      temporalHarness.definedQueries.clear();
+      const cancellation = Object.assign(new Error(`${kind} cancelled`), { isCancellation: true });
+      const activity = vi.fn(async () => {
+        throw cancellation;
+      });
+      const ctx = createTychonicWorkflowContext({
+        input: {
+          cwd: "/repo",
+          profile: {
+            version: "tychonic.config.v1",
+            states: kind === "work"
+              ? { work: { type: "work", agent: "claude" } }
+              : {
+                  work: { type: "work", agent: "claude" },
+                  review: { type: "review", on_fail_return_to: "work", agent: "claude" }
+                },
+            policies: {}
+          }
+        },
+        template: `${kind}_cancel_test`,
+        activities: {
+          startRunActivity: async () => baseRun(),
+          ...(kind === "work" ? { runWorkerActivity: activity } : { runReviewActivity: activity }),
+          finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+        }
+      });
+
+      await ctx.start();
+      if (kind === "work") {
+        await expect(ctx.work("work", "implement")).rejects.toBe(cancellation);
+      } else {
+        await expect(ctx.review("review", "review")).rejects.toBe(cancellation);
+      }
+      expect(ctx.run().states).toHaveLength(0);
+      expect(ctx.run().status).toBe("running");
+      expect(activity).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("does not offer rerun recovery for an ordinary failed verify result", async () => {
     const runVerifyActivity = vi
       .fn()
@@ -311,6 +592,57 @@ describe("Tychonic workflow context recoverable state rerun", () => {
     expect(runVerifyActivity).toHaveBeenCalledTimes(1);
     expect(ctx.run().status).not.toBe("waiting_user");
     expect(runQuery(interactionPendingStateQueryName)).toBeUndefined();
+  });
+
+  it("closes state execution instead of offering rerun when an agent executable is missing", async () => {
+    const missingExecutable = ApplicationFailure.create({
+      message: "work activity 'work' run: required agent executable not found. openp required by states.work.agent=claude",
+      type: AGENT_EXECUTABLE_MISSING_FAILURE_TYPE,
+      nonRetryable: true
+    });
+    const runWorkerActivity = vi.fn(async () => {
+      throw new ActivityFailure(
+        "Activity failure",
+        "runWorkerActivity",
+        "activity-1",
+        0,
+        "worker",
+        missingExecutable
+      );
+    });
+    const ctx = createTychonicWorkflowContext({
+      input: {
+        cwd: "/repo",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            work: { type: "work", agent: "claude" }
+          },
+          policies: {}
+        }
+      },
+      template: "terminal_missing_cli_test",
+      activities: {
+        startRunActivity: async () => baseRun(),
+        runWorkerActivity,
+        finalizeRunActivity: async () => ({ delta: { status: "succeeded" } })
+      }
+    });
+
+    await ctx.start();
+    await expect(ctx.work("work", "implement")).resolves.toMatchObject({
+      halted: true,
+      passed: false,
+      state: {
+        name: "work",
+        status: "failed",
+        reason: "activity 'work' failed before returning a Tychonic result; this failure is not rerunnable"
+      }
+    });
+    expect(ctx.run().status).toBe("running");
+    expect(ctx.run().activity_attempts[0]?.error).toContain("required agent executable not found");
+    expect(runQuery(interactionPendingStateQueryName)).toBeUndefined();
+    expect(temporalHarness.harness.conditionCalls).toEqual([]);
   });
 
   it("clears waiting_user when recovery receives approve", async () => {

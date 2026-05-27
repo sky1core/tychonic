@@ -138,6 +138,18 @@ export interface DecisionInboxItemRecord {
   created_at: string;
 }
 
+export interface WorkflowWarningRecord {
+  id: string;
+  source: "config";
+  code: string;
+  message: string;
+  path?: string;
+  state_name?: string;
+  agent?: string;
+  option?: string;
+  created_at: string;
+}
+
 export interface WorkflowRunRecord {
   schema_version: "tychonic.run.v1";
   id: string;
@@ -157,4 +169,5 @@ export interface WorkflowRunRecord {
   artifacts: ArtifactRecord[];
   findings: FindingRecord[];
   inbox: DecisionInboxItemRecord[];
+  warnings?: WorkflowWarningRecord[];
 }

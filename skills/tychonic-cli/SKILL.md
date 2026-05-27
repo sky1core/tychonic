@@ -64,12 +64,22 @@ Use `tychonic runtime up --foreground` only for development/debugging; stop that
 foreground process with `Ctrl-C`.
 
 For persistent macOS service mode, use `tychonic service install`; that
-LaunchAgent set includes Temporal, the worker, and the web status UI.
+LaunchAgent set includes Temporal, the worker, and the web status UI. Choose
+either the operational `runtime up` daemon or service mode for the operational
+runtime. Do not run both on the same task queue: `runtime up` refuses when the
+Tychonic LaunchAgents are loaded, and `service install` refuses while a
+verified manual operational runtime is running. Use `tychonic service status`
+to inspect service mode.
 
 Detached/isolated instance flags are development tools. Use them only when the
 task explicitly needs isolated runtime state. Prefer `tychonic --help` and
 command-specific `--help` for uncommon flags instead of copying options into
 instructions.
+
+Runtime and service startup prepare the executable environment from the current
+machine PATH and fail preflight when an installed workflow requires a missing
+built-in agent executable. Fix the PATH or install the missing CLI, then rerun
+the same Tychonic command.
 
 If the runtime cannot bind/connect to the local Temporal API port, report the
 smoke as environment-blocked. Do not switch to another operational service to
@@ -230,13 +240,9 @@ states:
   architect:
     type: work
     agent: claude
-    permission_mode: plan
   builder:
     type: work
     agent: kiro
-    trust_all_tools: true
-    sandbox: workspace-write
-    approval: never
   verify:
     type: verify
     command: |
@@ -247,7 +253,6 @@ states:
     type: review
     on_fail_return_to: builder
     agent: codex
-    approval: never
 ```
 
 A workflow author may explicitly choose `model` and supported
@@ -277,10 +282,10 @@ state. For declarative `workflow.yaml`, the generated wrapper appends failed
 review summaries and structured findings to that return state's next prompt
 when the return state is prompt-bearing.
 
-`model` applies to the primary `agent`. `reasoning_effort` is supported by
-`claude` and `codex`. Omitted fields become omitted CLI flags/config
-overrides; omission delegates to the selected external CLI's default or
-auto-selection behavior.
+`model` applies to the primary `agent`. `reasoning_effort` maps to OpenP
+`--effort` for all three built-in adapters. Omitted fields become omitted CLI
+flags/config overrides; omission delegates to the selected OpenP backend's
+default or auto-selection behavior.
 For `agent: claude`, model values are Claude CLI model values, not Kiro model
 ids. Use one of two forms:
 
@@ -333,11 +338,6 @@ codex_build:
   model: gpt-5.5
   reasoning_effort: xhigh
 
-gemini_work:
-  type: work
-  agent: gemini
-  model: gemini-3.1-pro-preview
-
 kiro_work:
   type: work
   agent: kiro
@@ -345,14 +345,13 @@ kiro_work:
   trust_all_tools: true
 ```
 
-Kiro states may set `model`, but not `reasoning_effort`;
-the installed Kiro CLI ACP surface exposes no stable reasoning/effort/thinking
-option.
-Kiro model ids are Kiro CLI ids. Availability may be account-, tier-, or
-region-scoped: `kiro-cli chat --list-models` proves what this account can run,
-not whether every documented Kiro model id exists globally. Do not rewrite a
-documented dot-form Kiro id such as `claude-opus-4.6` solely because it is not
-available in the current account.
+Kiro states may set `model` and `reasoning_effort`; Tychonic passes them to
+OpenP as `--model` and `--effort`. Kiro model ids are OpenP Kiro backend ids.
+Availability may be account-, tier-, or region-scoped: a successful
+`openp kiro --model <id>` smoke proves what that account can run, not whether
+every documented Kiro model id exists globally. Do not rewrite a documented
+dot-form Kiro id such as `claude-opus-4.6` solely because it is not available in
+the current account.
 Do not add normalizer model fields; Tychonic supplies the lightweight
 normalizer model flag internally (`claude` gets `haiku`; `codex` gets
 `gpt-5.3-codex-spark`).
@@ -366,12 +365,11 @@ Use `agent: "<name>"` for built-in adapters:
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
 | `kiro` | yes | with normalizer | yes |
-| `gemini` | yes | with normalizer | no |
 
 Use `command` only as an escape hatch for custom CLIs, unusual flags, or test
 stubs. A state sets exactly one of `agent` or `command`.
 
-For review states, `gemini` and `kiro` require `normalizer:
+For review states, `kiro` requires `normalizer:
 claude` or `normalizer: codex`. The primary agent performs the review; the
 normalizer structures that output into the semantic review payload.
 

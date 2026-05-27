@@ -9,8 +9,6 @@ states:
     agent: kiro
     model: claude-opus-4.6
     trust_all_tools: true
-    sandbox: workspace-write
-    approval: never
     prompt: |
       Complete the requested work in the target project.
 
@@ -44,7 +42,6 @@ states:
     agent: claude
     model: claude-opus-4-7
     reasoning_effort: max
-    permission_mode: plan
     prompt: |
       Review work stages 1-3 for correctness, regressions, missing tests, and risky assumptions.
 
@@ -75,7 +72,6 @@ states:
     agent: codex
     model: gpt-5.5
     reasoning_effort: xhigh
-    approval: never
     prompt: |
       Review integration and prior review follow-up for correctness, regressions, missing tests, and risky assumptions.
 

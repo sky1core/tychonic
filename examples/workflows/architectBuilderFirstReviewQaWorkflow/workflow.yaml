@@ -9,7 +9,6 @@ states:
     agent: claude
     model: claude-opus-4-7
     reasoning_effort: max
-    permission_mode: plan
     prompt: |
       You are the architect stage.
 
@@ -31,8 +30,6 @@ states:
     agent: kiro
     model: claude-opus-4.6
     trust_all_tools: true
-    sandbox: workspace-write
-    approval: never
     timeout: 60m
     prompt: |
       You are the Kiro builder stage. Implement the architect output for this run.
@@ -83,7 +80,6 @@ states:
     agent: codex
     model: gpt-5.5
     reasoning_effort: xhigh
-    approval: never
     timeout: 30m
     prompt: |
       You are the final Codex QA reviewer for this run.

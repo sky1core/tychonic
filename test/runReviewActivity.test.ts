@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { runReviewActivity } from "../src/activities/runReviewActivity.js";
+import { claudeAdapter } from "../src/adapters/openp.js";
+import { AGENT_EXECUTABLE_MISSING_FAILURE_TYPE } from "../src/adapters/failureTypes.js";
 import type { TychonicConfig } from "../src/catalog/types.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
 
@@ -14,6 +16,7 @@ const execFileAsync = promisify(execFile);
 describe("runReviewActivity", () => {
   it("returns parsed outcome on verdict=pass without mutating input.run", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-pass-"));
+    await initGitRepo(cwd);
     const run = baseRun("run_review_pass");
     const runBefore = structuredClone(run);
 
@@ -46,6 +49,7 @@ describe("runReviewActivity", () => {
 
   it("returns parsed outcome with step=failed on verdict=fail", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-fail-"));
+    await initGitRepo(cwd);
     const run = baseRun("run_review_fail");
 
     const result = await runReviewActivity({
@@ -68,6 +72,7 @@ describe("runReviewActivity", () => {
 
   it("returns unparseable outcome with step=blocked when output is malformed", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-unparse-"));
+    await initGitRepo(cwd);
     const run = baseRun("run_review_unparse");
 
     const result = await runReviewActivity({
@@ -92,6 +97,7 @@ describe("runReviewActivity", () => {
 
   it("treats command reviewer semantic-only JSON as unparseable because commands must emit the wire contract", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-command-semantic-"));
+    await initGitRepo(cwd);
     const run = baseRun("run_review_command_semantic");
 
     const result = await runReviewActivity({
@@ -111,6 +117,7 @@ describe("runReviewActivity", () => {
 
   it("treats command reviewer adapter envelopes as unparseable because commands must emit the wire contract directly", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-command-envelope-"));
+    await initGitRepo(cwd);
     const run = baseRun("run_review_command_envelope");
 
     const result = await runReviewActivity({
@@ -131,6 +138,7 @@ describe("runReviewActivity", () => {
 
   it("returns command_failed outcome with prompt/output artifacts when the reviewer command fails", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-failcmd-"));
+    await initGitRepo(cwd);
     const run = baseRun("run_review_failcmd");
 
     const result = await runReviewActivity({
@@ -188,10 +196,40 @@ describe("runReviewActivity", () => {
     ).rejects.toThrow(/requires prompt/);
   });
 
+  it("throws non-retryable ApplicationFailure when a built-in reviewer executable is missing", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-missing-exe-"));
+    const run = baseRun("run_review_missing_exe");
+    const restore = replaceClaudeExecutables(["definitely-missing-tychonic-agent-review"]);
+    try {
+      let error: unknown;
+      try {
+        await runReviewActivity({
+          stateName: ACTIVITY_NAME,
+          run,
+          cwd,
+          profile: profileWithAgent("claude"),
+          prompt: "please review"
+        });
+      } catch (err) {
+        error = err;
+      }
+
+      expect(error).toMatchObject({
+        type: AGENT_EXECUTABLE_MISSING_FAILURE_TYPE,
+        nonRetryable: true
+      });
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("definitely-missing-tychonic-agent-review");
+    } finally {
+      restore();
+    }
+  });
+
   it("runs in worktreePath while keeping review artifacts out of the target repo", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-root-"));
     const runsParent = await mkdtemp(join(tmpdir(), "tychonic-run-review-runs-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-review-worktree-"));
+    await initGitRepo(worktreePath);
     const run = baseRun("run_review_worktree");
     run.artifact_root = join(runsParent, run.id);
 
@@ -201,7 +239,7 @@ describe("runReviewActivity", () => {
       cwd,
       profile: profileWith({
         command:
-          "node -e \"require('node:fs').writeFileSync('review-cwd.txt', process.cwd()); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+          "node -e \"console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'REVIEW_CWD:' + process.cwd(),findings:[]}))\""
       }),
       prompt: "please review",
       worktreePath
@@ -212,7 +250,13 @@ describe("runReviewActivity", () => {
     expect(result.reviewOutcome?.kind).toBe("parsed");
     if (result.reviewOutcome?.kind !== "parsed") throw new Error("unreachable");
     expect(result.reviewOutcome.agentSessions[0]?.cwd).toBe(worktreePath);
-    expect(await readFile(join(worktreePath, "review-cwd.txt"), "utf8")).toBe(canonicalWorktreePath);
+    const outputArtifact = result.reviewOutcome.artifacts.find(
+      (artifact) => artifact.kind === `${ACTIVITY_NAME}_output`
+    );
+    if (!outputArtifact) throw new Error("expected output artifact");
+    const outputText = await readFile(join(run.artifact_root!, outputArtifact.path), "utf8");
+    expect(result.reviewOutcome.result.summary).toBe(`REVIEW_CWD:${canonicalWorktreePath}`);
+    expect(outputText).toContain(`REVIEW_CWD:${canonicalWorktreePath}`);
     for (const artifact of result.reviewOutcome.artifacts) {
       expect(artifact.path).toMatch(/^artifacts\//);
       expect(artifact.path).not.toContain("/worktrees/");
@@ -239,7 +283,8 @@ describe("runReviewActivity", () => {
     expect(result.reviewOutcome?.kind).toBe("command_failed");
     if (result.reviewOutcome?.kind !== "command_failed") throw new Error("unreachable");
     expect(result.delta.states[0]?.status).toBe("failed");
-    expect(result.delta.states[0]?.reason).toBe("reviewer command did not succeed");
+    expect(result.delta.states[0]?.reason).toContain("review mutation guard failed");
+    expect(result.reviewOutcome.reason).toContain("review mutation guard failed");
     expect(result.reviewOutcome.artifacts.map((a) => a.kind)).toEqual([
       `${ACTIVITY_NAME}_prompt`,
       `${ACTIVITY_NAME}_output`
@@ -265,7 +310,7 @@ describe("runReviewActivity", () => {
 
     expect(result.reviewOutcome?.kind).toBe("command_failed");
     expect(result.delta.states[0]?.status).toBe("failed");
-    expect(result.delta.states[0]?.reason).toBe("reviewer command did not succeed");
+    expect(result.delta.states[0]?.reason).toContain("review mutation guard failed");
   });
 
   it("fails a review command that commits a tracked file mutation", async () => {
@@ -286,7 +331,96 @@ describe("runReviewActivity", () => {
 
     expect(result.reviewOutcome?.kind).toBe("command_failed");
     expect(result.delta.states[0]?.status).toBe("failed");
-    expect(result.delta.states[0]?.reason).toBe("reviewer command did not succeed");
+    expect(result.delta.states[0]?.reason).toContain("review mutation guard failed");
+  });
+
+  it("fails a review command that only changes a tracked file mode", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-mode-mutation-"));
+    await initGitRepo(cwd);
+    await execFileAsync("git", ["config", "core.filemode", "true"], { cwd });
+    const run = baseRun("run_review_mode_mutation");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"require('node:fs').chmodSync('README.md', 0o755); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("command_failed");
+    expect(result.delta.states[0]?.status).toBe("failed");
+    expect(result.delta.states[0]?.reason).toContain("review mutation guard failed");
+  });
+
+  it("fails a review command that only stages a pre-existing tracked file mutation", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-index-mutation-"));
+    await initGitRepo(cwd);
+    await writeFile(join(cwd, "README.md"), "dirty before review\n", "utf8");
+    const run = baseRun("run_review_index_mutation");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"require('node:child_process').execFileSync('git',['add','README.md']); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("command_failed");
+    expect(result.delta.states[0]?.status).toBe("failed");
+    expect(result.delta.states[0]?.reason).toContain("review mutation guard failed");
+  });
+
+  it("does not fail the review guard just because the pre-existing dirty diff is large", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-large-dirty-"));
+    await initGitRepo(cwd);
+    const largeContent = `${"large dirty content\n".repeat(80_000)}\n`;
+    await writeFile(join(cwd, "README.md"), largeContent, "utf8");
+    const run = baseRun("run_review_large_dirty");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("parsed");
+    expect(result.delta.states[0]?.status).toBe("succeeded");
+  });
+
+  it("fails when a review command mutates a large pre-existing dirty file", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-review-large-dirty-mutate-"));
+    await initGitRepo(cwd);
+    const largeContent = `${"large dirty content\n".repeat(80_000)}\n`;
+    await writeFile(join(cwd, "README.md"), largeContent, "utf8");
+    const run = baseRun("run_review_large_dirty_mutate");
+
+    const result = await runReviewActivity({
+      stateName: ACTIVITY_NAME,
+      run,
+      cwd,
+      profile: profileWith({
+        command:
+          "node -e \"require('node:fs').appendFileSync('README.md','mutated during review\\\\n'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))\""
+      }),
+      prompt: "please review"
+    });
+
+    expect(result.reviewOutcome?.kind).toBe("command_failed");
+    expect(result.delta.states[0]?.status).toBe("failed");
+    expect(result.delta.states[0]?.reason).toContain("review mutation guard failed");
   });
 
   it("does not treat Tychonic run artifacts as review source mutations", async () => {
@@ -319,6 +453,19 @@ function profileWith(block: { command: string }): TychonicConfig {
         type: "review",
         on_fail_return_to: "work",
         command: block.command
+      }
+    }
+  };
+}
+
+function profileWithAgent(agent: "claude"): TychonicConfig {
+  return {
+    version: "tychonic.config.v1",
+    states: {
+      [ACTIVITY_NAME]: {
+        type: "review",
+        on_fail_return_to: "work",
+        agent
       }
     }
   };
@@ -360,4 +507,13 @@ async function initGitRepo(cwd: string): Promise<void> {
     ],
     { cwd }
   );
+}
+
+function replaceClaudeExecutables(executables: string[]): () => void {
+  const adapter = claudeAdapter as unknown as { executables: readonly string[] };
+  const previous = adapter.executables;
+  adapter.executables = executables;
+  return () => {
+    adapter.executables = previous;
+  };
 }

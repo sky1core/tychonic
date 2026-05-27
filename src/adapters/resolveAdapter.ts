@@ -17,7 +17,6 @@
 import { getAgentAdapter, isBuiltInAgentName } from "./index.js";
 import type {
   AdapterCommand,
-  AdapterPermissionMode,
   AdapterResumeInput,
   AdapterRole,
   AdapterRunInput,
@@ -53,6 +52,7 @@ export interface ResolveCommandInput {
   worktreeCwd: string;
   prompt: string;
   role: AdapterRole;
+  executablePaths?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -78,7 +78,8 @@ export function resolveCommand(input: ResolveCommandInput): ResolvedCommand | un
       worktreeCwd,
       prompt,
       role,
-      block
+      block,
+      ...(input.executablePaths ? { executablePaths: input.executablePaths } : {})
     });
     const out: AdapterCommand = adapter.runNew(adapterInput);
     return {
@@ -99,6 +100,7 @@ export interface ResolveResumeInput {
   worktreeCwd: string;
   prompt: string;
   role: AdapterRole;
+  executablePaths?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -116,7 +118,13 @@ export function resolveResumeCommand(input: ResolveResumeInput): AdapterDispatch
   }
   const adapter = getAgentAdapter(builtIn);
   const adapterInput: AdapterResumeInput = {
-    ...buildAdapterRunInput({ worktreeCwd, prompt, role, block }),
+    ...buildAdapterRunInput({
+      worktreeCwd,
+      prompt,
+      role,
+      block,
+      ...(input.executablePaths ? { executablePaths: input.executablePaths } : {})
+    }),
     sessionId
   };
   const out: AdapterCommand = adapter.runResume(adapterInput);
@@ -141,23 +149,21 @@ function buildAdapterRunInput(args: {
   prompt: string;
   role: AdapterRole;
   block: ActivityBlock;
+  executablePaths?: Readonly<Record<string, string>>;
 }): AdapterRunInput {
-  const { worktreeCwd, prompt, role, block } = args;
+  const { worktreeCwd, prompt, role, block, executablePaths } = args;
   const out: AdapterRunInput = { prompt, worktreeCwd, role };
+  if (executablePaths !== undefined) {
+    out.executablePaths = executablePaths;
+  }
   if (block.model !== undefined) {
     out.model = block.model;
   }
   if (block.reasoning_effort !== undefined) {
     out.reasoningEffort = block.reasoning_effort;
   }
-  if (block.sandbox !== undefined) {
-    out.sandbox = block.sandbox;
-  }
-  if (block.approval !== undefined) {
-    out.approval = block.approval;
-  }
   if (block.permission_mode !== undefined) {
-    out.permissionMode = block.permission_mode as AdapterPermissionMode;
+    out.permissionMode = block.permission_mode;
   }
   if (block.trust_all_tools !== undefined) {
     out.trustAllTools = block.trust_all_tools;

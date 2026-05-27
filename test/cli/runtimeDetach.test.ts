@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -51,8 +51,14 @@ function defaultStateDirForHome(home: string): string {
   return join(home, ".local", "state", "tychonic");
 }
 
-function makeIsolatedEnv(fakeHome: string): NodeJS.ProcessEnv {
+async function makeIsolatedEnv(fakeHome: string): Promise<NodeJS.ProcessEnv> {
+  const binDir = join(fakeHome, "bin");
+  await mkdir(binDir, { recursive: true });
+  const launchctlPath = join(binDir, "launchctl");
+  await writeFile(launchctlPath, "#!/bin/sh\nexit 1\n", "utf8");
+  await chmod(launchctlPath, 0o755);
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: fakeHome };
+  env.PATH = `${binDir}:${env.PATH ?? ""}`;
   delete env.TYCHONIC_STATE_HOME;
   delete env.TYCHONIC_LOG_HOME;
   delete env.XDG_STATE_HOME;
@@ -127,7 +133,7 @@ describe("tychonic runtime up daemon start", () => {
 
   it("reports already_running for an operational daemon pid", async () => {
     const fakeHome = await makeStateHome();
-    const env = makeIsolatedEnv(fakeHome);
+    const env = await makeIsolatedEnv(fakeHome);
     const stateDir = defaultStateDirForHome(fakeHome);
     const { child, cliPath } = await spawnRuntimeLikeProcess(fakeHome, ["runtime", "up", "--foreground"]);
     await mkdir(stateDir, { recursive: true });
@@ -165,7 +171,7 @@ describe("tychonic runtime up daemon start", () => {
 
   it("refuses pre-spawn when the instance has no workflow bundles installed", async () => {
     const fakeHome = await makeStateHome();
-    const env = makeIsolatedEnv(fakeHome);
+    const env = await makeIsolatedEnv(fakeHome);
 
     // No `workflows install` was run; the bundles dir does not exist. Detach
     // must fail loudly with a pointer to `workflows install ... --instance`,
@@ -184,7 +190,7 @@ describe("tychonic runtime up daemon start", () => {
 
   it("refuses to overwrite a live unverified runtime pid", async () => {
     const fakeHome = await makeStateHome();
-    const env = makeIsolatedEnv(fakeHome);
+    const env = await makeIsolatedEnv(fakeHome);
     const stateDir = defaultStateDirForHome(fakeHome);
     const pidFile = join(stateDir, "runtime.pid");
     await mkdir(stateDir, { recursive: true });
@@ -199,7 +205,7 @@ describe("tychonic runtime up daemon start", () => {
 
   it("refuses to start a second daemon while runtime start is in progress", async () => {
     const fakeHome = await makeStateHome();
-    const env = makeIsolatedEnv(fakeHome);
+    const env = await makeIsolatedEnv(fakeHome);
     const stateDir = defaultStateDirForHome(fakeHome);
     await mkdir(stateDir, { recursive: true });
     const { child, cliPath } = await spawnRuntimeLikeProcess(fakeHome, ["runtime", "up"]);
@@ -227,7 +233,7 @@ describe("tychonic runtime up daemon start", () => {
 
   it("does not allow the internal ready-file path outside daemon child mode", async () => {
     const fakeHome = await makeStateHome();
-    const env = makeIsolatedEnv(fakeHome);
+    const env = await makeIsolatedEnv(fakeHome);
     const readyFile = join(fakeHome, "runtime.ready.json");
 
     const result = await runCli(["runtime", "up", "--foreground", "--ready-file", readyFile], {
@@ -246,7 +252,7 @@ describe("tychonic runtime up daemon start", () => {
     // the Temporal child as an orphan with an open port. Fail before any
     // side-effectful process is spawned.
     const fakeHome = await makeStateHome();
-    const env = makeIsolatedEnv(fakeHome);
+    const env = await makeIsolatedEnv(fakeHome);
 
     const result = await runCli(["--instance", "empty-fg", "runtime", "up", "--foreground"], { env });
     expect(result.exitCode).not.toBe(0);
@@ -261,7 +267,7 @@ describe("tychonic runtime up daemon start", () => {
 
   it("reports already_running when an instance PID file points at a live process", async () => {
     const fakeHome = await makeStateHome();
-    const env = makeIsolatedEnv(fakeHome);
+    const env = await makeIsolatedEnv(fakeHome);
 
     // Use a live runtime-shaped pid in the throwaway instance state dir.
     // `runtime up` is idempotent and must not reject just because the daemon

@@ -8,22 +8,17 @@
  */
 
 import type { AgentAdapter, BuiltInAgentName } from "./types.js";
-import { claudeAdapter } from "./claude.js";
-import { codexAdapter } from "./codex.js";
-import { geminiAdapter } from "./gemini.js";
-import { kiroAdapter } from "./kiro.js";
+import { claudeAdapter, codexAdapter, kiroAdapter } from "./openp.js";
 
 export const BUILTIN_AGENT_NAMES: readonly BuiltInAgentName[] = [
   "claude",
   "codex",
-  "gemini",
   "kiro"
 ] as const;
 
 const REGISTRY: Record<BuiltInAgentName, AgentAdapter> = {
   claude: claudeAdapter,
   codex: codexAdapter,
-  gemini: geminiAdapter,
   kiro: kiroAdapter
 };
 
@@ -51,8 +46,6 @@ export type {
   AdapterRole,
   AdapterRunInput,
   AdapterRunResult,
-  AdapterSandbox,
-  AdapterApproval,
   AgentAdapter,
   BuiltInAgentName
 } from "./types.js";

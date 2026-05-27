@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { extname } from "node:path";
 import { promisify } from "node:util";
+import { gitChildEnv, resolveGitExecutable } from "../bootstrap/executables.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -154,7 +155,12 @@ export function classifyChangedPath(path: string): string[] {
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8" });
+  const git = await resolveGitExecutable();
+  const { stdout } = await execFileAsync(git, args, {
+    cwd,
+    encoding: "utf8",
+    env: gitChildEnv(process.env, git)
+  });
   return stdout;
 }
 

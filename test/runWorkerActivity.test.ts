@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runWorkerActivity } from "../src/activities/runWorkerActivity.js";
+import { claudeAdapter } from "../src/adapters/openp.js";
+import { AGENT_EXECUTABLE_MISSING_FAILURE_TYPE } from "../src/adapters/failureTypes.js";
 import type { TychonicConfig } from "../src/catalog/types.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
 
@@ -87,6 +89,36 @@ describe("runWorkerActivity", () => {
     ).rejects.toThrow(/worktreePath/);
   });
 
+  it("throws non-retryable ApplicationFailure when a built-in agent executable is missing", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-missing-exe-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-missing-exe-wt-"));
+    const restore = replaceClaudeExecutables(["definitely-missing-tychonic-agent-worker"]);
+    try {
+      let error: unknown;
+      try {
+        await runWorkerActivity({
+          stateName: ACTIVITY_NAME,
+          run: baseRun("run_worker_missing_exe"),
+          cwd,
+          profile: profileWithAgent("claude"),
+          worktreePath,
+          prompt: "make the requested change"
+        });
+      } catch (err) {
+        error = err;
+      }
+
+      expect(error).toMatchObject({
+        type: AGENT_EXECUTABLE_MISSING_FAILURE_TYPE,
+        nonRetryable: true
+      });
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("definitely-missing-tychonic-agent-worker");
+    } finally {
+      restore();
+    }
+  });
+
   it("does not infer resume from prior sessions when sessionId is omitted", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-run-worker-no-implicit-resume-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-no-implicit-resume-wt-"));
@@ -146,7 +178,7 @@ describe("runWorkerActivity", () => {
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-run-worker-resume-wt-"));
     const run = baseRunWithSession("run_worker_resume_pass", "sess_1");
     const runBefore = structuredClone(run);
-    const restorePath = await installFakeCodex();
+    const fakeOpenP = await installFakeOpenP();
 
     let result;
     try {
@@ -160,13 +192,14 @@ describe("runWorkerActivity", () => {
         sessionId: "sess_1"
       });
     } finally {
-      restorePath();
+      fakeOpenP.restorePath();
     }
 
     expect(run).toEqual(runBefore);
     expect(result.delta.states?.[0]?.status).toBe("succeeded");
     expect(result.delta.activityAttempts?.[0]?.kind).toBe("resume_work");
     expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("sess_1");
+    expect(result.delta.activityAttempts?.[0]?.command).toContain(`'${fakeOpenP.binPath}' codex`);
     if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
     expect(result.workerOutcome.resumedSessionId).toBe("sess_1");
     expect(result.workerOutcome.agentSessions).toHaveLength(0);
@@ -320,18 +353,37 @@ function baseRunWithSession(
   };
 }
 
-async function installFakeCodex(): Promise<() => void> {
-  const binDir = await mkdtemp(join(tmpdir(), "tychonic-fake-codex-"));
-  const binPath = join(binDir, "codex");
-  await writeFile(binPath, "#!/bin/sh\necho '{\"session_id\":\"external-session-1\"}'\n", "utf8");
+async function installFakeOpenP(): Promise<{ binPath: string; restorePath: () => void }> {
+  const binDir = await mkdtemp(join(tmpdir(), "tychonic-fake-openp-"));
+  const binPath = join(binDir, "openp");
+  await writeFile(
+    binPath,
+    [
+      "#!/bin/sh",
+      "echo '{\"openp\":{\"version\":1,\"form\":\"result\",\"scope\":\"active\",\"sessionId\":\"external-session-1\",\"output\":{\"answer\":[],\"reasoning\":[],\"toolCall\":[],\"toolResult\":[]},\"structuredOutput\":null,\"metadata\":{}}}'"
+    ].join("\n"),
+    "utf8"
+  );
   await chmod(binPath, 0o755);
   const previousPath = process.env.PATH;
   process.env.PATH = `${binDir}:${previousPath ?? ""}`;
-  return () => {
-    if (previousPath === undefined) {
-      delete process.env.PATH;
-    } else {
-      process.env.PATH = previousPath;
+  return {
+    binPath,
+    restorePath: () => {
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
     }
+  };
+}
+
+function replaceClaudeExecutables(executables: string[]): () => void {
+  const adapter = claudeAdapter as unknown as { executables: readonly string[] };
+  const previous = adapter.executables;
+  adapter.executables = executables;
+  return () => {
+    adapter.executables = previous;
   };
 }

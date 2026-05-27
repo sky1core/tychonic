@@ -64,6 +64,14 @@ but they are inert files until an operator explicitly installs one with
 bundles the project needs — own YAML bundles or reference examples — through that
 same command. There is no separate host-shipped workflow execution path.
 
+When `tychonic service install` runs against an operational registry that
+already contains installed workflow bundles, it validates every installed
+bundle's `workflow.yaml` with the installing Tychonic version and regenerates
+that bundle's `workflow.mjs` and `workflow.generated.mmd` before LaunchAgents
+are written or reloaded. This is a refresh of operator-installed bundles, not
+workflow seeding. If any installed bundle fails refresh validation, service
+install aborts without replacing any installed bundle or reloading LaunchAgents.
+
 ## Run-input Validation
 
 Run-input validation is split into two layers:

@@ -6,6 +6,12 @@ import {
 import { activityTimeoutMs, defaultActivityTimeoutMs, optionalStateConfig } from "../catalog/types.js";
 import type { WorkflowRunRecord, WorkflowStateRecord } from "../domain/types.js";
 import { AdapterUnsupported } from "../adapters/types.js";
+import {
+  AGENT_EXECUTABLE_MISSING_FAILURE_TYPE,
+  checkAgentExecutables,
+  formatMissingAgentExecutables,
+  resolvedExecutablePathMap
+} from "../adapters/executablePreflight.js";
 import { runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import { heartbeatActivity } from "./heartbeat.js";
@@ -37,6 +43,7 @@ export async function runReviewActivity(input: RunReviewActivityInput): Promise<
   const nextId = nextIdFromRun(input.run);
   const env = process.env;
   const now = (): Date => new Date();
+  const executablePaths = await assertReviewExecutablesAvailable(input.profile, input.stateName, env);
 
   let reviewOptions;
   try {
@@ -46,7 +53,8 @@ export async function runReviewActivity(input: RunReviewActivityInput): Promise<
       expectedType: "review",
       env,
       worktreeCwd: input.worktreePath ?? input.cwd,
-      prompt: input.prompt ?? ""
+      prompt: input.prompt ?? "",
+      executablePaths
     });
   } catch (err) {
     if (err instanceof AdapterUnsupported) {
@@ -70,6 +78,30 @@ export async function runReviewActivity(input: RunReviewActivityInput): Promise<
     reviewOptions,
     timeoutMs,
     stateReason: `run configured review activity ${input.stateName}`
+  });
+}
+
+async function assertReviewExecutablesAvailable(
+  profile: RunReviewActivityInput["profile"],
+  stateName: string,
+  env: NodeJS.ProcessEnv
+): Promise<Record<string, string>> {
+  const block = profile?.states?.[stateName];
+  if (!block) return {};
+  const result = await checkAgentExecutables(
+    {
+      version: "tychonic.config.v1",
+      states: {
+        [stateName]: block
+      }
+    },
+    { env }
+  );
+  if (result.missing.length === 0) return resolvedExecutablePathMap(result);
+  throw ApplicationFailure.create({
+    message: formatMissingAgentExecutables(`review activity '${stateName}' run`, result.missing),
+    type: AGENT_EXECUTABLE_MISSING_FAILURE_TYPE,
+    nonRetryable: true
   });
 }
 

@@ -1,42 +1,13 @@
 import { parseReviewResult, type ReviewResult } from "./schema.js";
 
-export type BuiltInReviewOutputAdapter = "claude" | "codex";
-
 export function parseReviewOutput(output: string): ReviewResult | undefined {
   return tryParseAsReview(output.trim());
 }
 
-export function parseBuiltInReviewOutput(
-  output: string,
-  adapter: BuiltInReviewOutputAdapter
-): ReviewResult | undefined {
+export function parseBuiltInReviewOutput(output: string): ReviewResult | undefined {
   const trimmed = output.trim();
-  if (adapter === "codex") {
-    const terminalLastMessage = extractBuiltInTrailingLastMessage(trimmed);
-    return terminalLastMessage !== undefined ? tryParseAsBuiltInReview(terminalLastMessage) : undefined;
-  }
-
   const terminalResult = extractBuiltInTerminalResult(trimmed);
-  if (terminalResult !== undefined) {
-    return tryParseAsBuiltInReview(terminalResult);
-  }
-  return undefined;
-}
-
-function extractBuiltInTrailingLastMessage(output: string): string | undefined {
-  if (output.length === 0) return undefined;
-  const lines = output.split(/\r?\n/);
-  let lastAdapterEventIndex = -1;
-  for (let index = 0; index < lines.length; index++) {
-    const parsed = parseJsonObjectLine(lines[index]?.trim() ?? "");
-    if (parsed !== undefined && isBuiltInAdapterEvent(parsed)) {
-      lastAdapterEventIndex = index;
-    }
-  }
-  if (lastAdapterEventIndex < 0) return undefined;
-
-  const trailing = lines.slice(lastAdapterEventIndex + 1).join("\n").trim();
-  return trailing.length > 0 ? trailing : undefined;
+  return terminalResult !== undefined ? tryParseAsBuiltInReview(terminalResult) : undefined;
 }
 
 function extractBuiltInTerminalResult(output: string): string | undefined {
@@ -44,20 +15,27 @@ function extractBuiltInTerminalResult(output: string): string | undefined {
   let terminalResult: string | undefined;
   for (const line of lines) {
     const parsed = parseJsonObjectLine(line);
-    if (parsed === undefined || parsed.type !== "result") continue;
-    const structuredOutput = parsed.structured_output;
-    if (structuredOutput && typeof structuredOutput === "object" && !Array.isArray(structuredOutput)) {
+    const openp = parsed ? openpRecord(parsed) : undefined;
+    if (openp === undefined || !isOpenPResultRecord(openp)) continue;
+    const structuredOutput = openp.structuredOutput;
+    if (structuredOutput !== undefined && structuredOutput !== null) {
       terminalResult = JSON.stringify(structuredOutput);
       continue;
     }
-    const text = parsed.result;
-    terminalResult = typeof text === "string" ? text : undefined;
+    terminalResult = openPResultAnswerText(openp);
   }
   return terminalResult;
 }
 
-function isBuiltInAdapterEvent(value: Record<string, unknown>): boolean {
-  return typeof value.type === "string";
+function isOpenPResultRecord(openp: Record<string, unknown>): boolean {
+  return openp.form === "result" && openp.scope === "active";
+}
+
+function openPResultAnswerText(openp: Record<string, unknown>): string | undefined {
+  const output = recordValue(openp.output);
+  const answer = output?.answer;
+  if (!Array.isArray(answer)) return undefined;
+  return answer.filter((item): item is string => typeof item === "string" && item.length > 0).join("\n\n");
 }
 
 function parseJsonObjectLine(line: string): Record<string, unknown> | undefined {
@@ -72,13 +50,47 @@ function parseJsonObjectLine(line: string): Record<string, unknown> | undefined 
   return parsed as Record<string, unknown>;
 }
 
+function openpRecord(obj: Record<string, unknown>): Record<string, unknown> | undefined {
+  return recordValue(obj.openp);
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 function normalizeBuiltInStructuredOutput(value: Record<string, unknown>): Record<string, unknown> {
+  const normalized = normalizeBuiltInReviewOptionalFields(value);
   if (value.schema_version !== undefined) {
-    return value;
+    return normalized;
   }
   return {
     schema_version: "tychonic.review.v1",
-    ...value
+    ...normalized
+  };
+}
+
+function normalizeBuiltInReviewOptionalFields(value: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(value.findings)) {
+    return value;
+  }
+  return {
+    ...value,
+    findings: value.findings.map((finding) => {
+      if (!finding || typeof finding !== "object" || Array.isArray(finding)) {
+        return finding;
+      }
+      const out = { ...(finding as Record<string, unknown>) };
+      if (out.target === null) {
+        delete out.target;
+      }
+      if (out.target_session_id === null) {
+        delete out.target_session_id;
+      }
+      return out;
+    })
   };
 }
 

@@ -148,6 +148,17 @@ type WorkflowEvidence = {
     target?: string
     created_at: string
   }>
+  warnings: Array<{
+    id: string
+    source: string
+    code: string
+    message: string
+    path?: string
+    state_name?: string
+    agent?: string
+    option?: string
+    created_at: string
+  }>
   timing: {
     run_ms?: number
     activity_ms: number
@@ -580,6 +591,7 @@ function App() {
   )
   const hasWorkflowDefinition = workflowDetail?.workflowGraph !== undefined
   const showStateFlow = executionSteps.length > 0 || hasWorkflowDefinition
+  const configWarnings = workflowDetail?.evidence?.warnings ?? []
   useEffect(() => {
     if (previousExecutionRunKeyRef.current === executionRunKey) return
     previousExecutionRunKeyRef.current = executionRunKey
@@ -963,17 +975,33 @@ function App() {
                         ) : null}
                       </div>
                     </div>
-                    {workflowDetail?.runContext?.goal ? (
-                      <section className="flex max-h-44 flex-col overflow-hidden rounded-lg border px-5 py-4 md:h-full md:max-h-none">
-                        <h3 className="mb-2.5 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">Goal</h3>
-                        <div className="min-h-0 flex-1 overflow-auto text-[14px] leading-relaxed [&_pre]:whitespace-pre-wrap [&_pre]:break-words">
-                          <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
+                  {workflowDetail?.runContext?.goal ? (
+                    <section className="flex max-h-44 flex-col overflow-hidden rounded-lg border px-5 py-4 md:h-full md:max-h-none">
+                      <h3 className="mb-2.5 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">Goal</h3>
+                      <div className="min-h-0 flex-1 overflow-auto text-[14px] leading-relaxed [&_pre]:whitespace-pre-wrap [&_pre]:break-words">
+                        <Streamdown className="tychonic-markdown" linkSafety={streamdownLinkSafety} mode="static">
                             {workflowDetail.runContext.goal}
                           </Streamdown>
-                        </div>
-                      </section>
-                    ) : null}
+                      </div>
+                    </section>
+                  ) : null}
                   </div>
+
+                  {configWarnings.length > 0 ? (
+                    <Alert>
+                      <AlertCircleIcon className="h-4 w-4 text-amber-500" />
+                      <AlertTitle>Configuration warnings</AlertTitle>
+                      <AlertDescription>
+                        <div className="mt-1 space-y-1">
+                          {configWarnings.map((warning) => (
+                            <p key={warning.id} className="text-sm leading-snug">
+                              {warning.message}
+                            </p>
+                          ))}
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
 
                   {detailLoading ? (
                     <div className="flex flex-col gap-3">

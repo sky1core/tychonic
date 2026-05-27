@@ -3,6 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { cp, lstat, mkdir, mkdtemp, readlink, realpath, rm, symlink } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { gitChildEnv, resolveGitExecutable } from "./executables.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,8 +27,12 @@ export async function createIsolatedWorktree(input: {
     const hasHead = await gitHeadExists(input.cwd);
     if (hasHead) {
       const baseHead = (await gitOutput(input.cwd, ["rev-parse", "--verify", "HEAD"])).trim();
+      const git = await resolveGitExecutable();
       gitWorktreeAddStarted = true;
-      await execFileAsync("git", ["worktree", "add", "--detach", target, "HEAD"], { cwd: input.cwd });
+      await execFileAsync(git, ["worktree", "add", "--detach", target, "HEAD"], {
+        cwd: input.cwd,
+        env: gitChildEnv(process.env, git)
+      });
       await initializeSubmodules(target);
       await copyWorkingTreeSnapshot(input.cwd, target);
       return {
@@ -63,7 +68,11 @@ export async function worktreePatch(input: {
   worktreeParentDir: string;
 }): Promise<string> {
   await validateOwnedWorktreePath(input.worktreePath, input.worktreeParentDir);
-  await execFileAsync("git", ["add", "--all"], { cwd: input.worktreePath });
+  const git = await resolveGitExecutable();
+  await execFileAsync(git, ["add", "--all"], {
+    cwd: input.worktreePath,
+    env: gitChildEnv(process.env, git)
+  });
   return await gitOutput(input.worktreePath, ["diff", "--binary", "--cached", input.baseHead, "--", "."]);
 }
 
@@ -84,7 +93,11 @@ async function temporaryWorktreeTarget(runId: string, worktreeParentDir: string)
  */
 async function initializeSubmodules(target: string): Promise<void> {
   try {
-    await execFileAsync("git", ["-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"], { cwd: target });
+    const git = await resolveGitExecutable();
+    await execFileAsync(git, ["-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"], {
+      cwd: target,
+      env: gitChildEnv(process.env, git)
+    });
   } catch (error) {
     throw new Error(
       `failed to initialize submodules in isolated worktree: ${error instanceof Error ? error.message : String(error)}`
@@ -93,23 +106,25 @@ async function initializeSubmodules(target: string): Promise<void> {
 }
 
 async function initializeIsolatedBaseline(target: string): Promise<void> {
-  await execFileAsync("git", ["init"], { cwd: target });
-  await execFileAsync("git", ["add", "."], { cwd: target });
+  const git = await resolveGitExecutable();
+  const env = {
+    ...gitChildEnv(process.env, git),
+    GIT_AUTHOR_NAME: "Tychonic",
+    GIT_AUTHOR_EMAIL: "tychonic@example.invalid",
+    GIT_COMMITTER_NAME: "Tychonic",
+    GIT_COMMITTER_EMAIL: "tychonic@example.invalid"
+  };
+  await execFileAsync(git, ["init"], { cwd: target, env });
+  await execFileAsync(git, ["symbolic-ref", "HEAD", "refs/heads/tychonic-baseline"], { cwd: target, env });
+  await execFileAsync(git, ["add", "."], { cwd: target, env });
   try {
-    await execFileAsync(
-      "git",
-      [
-        "-c",
-        "user.name=Tychonic",
-        "-c",
-        "user.email=tychonic@example.invalid",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "tychonic isolated baseline"
-      ],
-      { cwd: target }
-    );
+    const { stdout: tree } = await execFileAsync(git, ["write-tree"], { cwd: target, env, encoding: "utf8" });
+    const { stdout: commit } = await execFileAsync(git, ["commit-tree", tree.trim(), "-m", "tychonic isolated baseline"], {
+      cwd: target,
+      env,
+      encoding: "utf8"
+    });
+    await execFileAsync(git, ["update-ref", "HEAD", commit.trim()], { cwd: target, env });
   } catch (error) {
     throw new Error(`failed to create isolated baseline commit: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -124,14 +139,22 @@ async function cleanupFailedWorktree(input: {
   let gitRemoveFailed = false;
   if (input.gitWorktreeAddStarted) {
     try {
-      await execFileAsync("git", ["worktree", "remove", "--force", input.target], { cwd: input.cwd });
+      const git = await resolveGitExecutable();
+      await execFileAsync(git, ["worktree", "remove", "--force", input.target], {
+        cwd: input.cwd,
+        env: gitChildEnv(process.env, git)
+      });
     } catch {
       gitRemoveFailed = true;
     }
   }
   await rm(input.root, { recursive: true, force: true });
   if (input.gitWorktreeAddStarted && gitRemoveFailed) {
-    await execFileAsync("git", ["worktree", "prune"], { cwd: input.cwd }).catch(() => undefined);
+    const git = await resolveGitExecutable();
+    await execFileAsync(git, ["worktree", "prune"], {
+      cwd: input.cwd,
+      env: gitChildEnv(process.env, git)
+    }).catch(() => undefined);
   }
 }
 
@@ -215,14 +238,22 @@ async function copySnapshotPath(source: string, target: string): Promise<void> {
 }
 
 async function gitOutput(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+  const git = await resolveGitExecutable();
+  const { stdout } = await execFileAsync(git, args, {
+    cwd,
+    encoding: "utf8",
+    env: gitChildEnv(process.env, git),
+    maxBuffer: 20 * 1024 * 1024
+  });
   return stdout;
 }
 
 async function gitApply(cwd: string, patch: string): Promise<void> {
+  const git = await resolveGitExecutable();
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("git", ["apply", "--binary", "--whitespace=nowarn", "-"], {
+    const child = spawn(git, ["apply", "--binary", "--whitespace=nowarn", "-"], {
       cwd,
+      env: gitChildEnv(process.env, git),
       stdio: ["pipe", "ignore", "pipe"]
     });
     let stderr = "";
@@ -243,7 +274,11 @@ async function gitApply(cwd: string, patch: string): Promise<void> {
 
 async function gitHeadExists(cwd: string): Promise<boolean> {
   try {
-    await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], { cwd });
+    const git = await resolveGitExecutable();
+    await execFileAsync(git, ["rev-parse", "--verify", "HEAD"], {
+      cwd,
+      env: gitChildEnv(process.env, git)
+    });
     return true;
   } catch {
     return false;

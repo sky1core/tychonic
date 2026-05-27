@@ -9,13 +9,14 @@ import {
 } from "../src/bootstrap/executables.js";
 
 describe("executable resolver", () => {
-  it("finds user-local CLIs without relying on a shell startup PATH", async () => {
+  it("does not search user-local CLI directories unless they are explicit", async () => {
     const home = await mkdtemp(join(tmpdir(), "tychonic-executable-home-"));
     const bin = join(home, ".local", "bin");
     await mkdir(bin, { recursive: true });
     await writeExecutable(join(bin, "codex"));
 
-    await expect(findExecutable("codex", { HOME: home, PATH: "" })).resolves.toBe(join(bin, "codex"));
+    await expect(findExecutable("codex", { HOME: home, PATH: "" })).resolves.toBeUndefined();
+    await expect(findExecutable("codex", { HOME: home, PATH: bin })).resolves.toBe(join(bin, "codex"));
   });
 
   it("uses explicit Tychonic agent paths before ambient PATH", async () => {
@@ -35,6 +36,35 @@ describe("executable resolver", () => {
 
     expect(buildExecutableSearchPath(env)[0]).toBe(explicitBin);
     await expect(findExecutable("claude", env)).resolves.toBe(join(explicitBin, "claude"));
+  });
+
+  it("does not treat executable directories as executable files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tychonic-executable-directory-"));
+    const bin = join(root, "bin");
+    await mkdir(join(bin, "openp"), { recursive: true });
+    await chmod(join(bin, "openp"), 0o755);
+
+    await expect(findExecutable("openp", { HOME: root, PATH: bin })).resolves.toBeUndefined();
+  });
+
+  it("does not treat legacy per-executable env vars as executable configuration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tychonic-executable-legacy-env-"));
+    const legacyBin = join(root, "legacy");
+    const ambientBin = join(root, "ambient");
+    await mkdir(legacyBin);
+    await mkdir(ambientBin);
+    await writeExecutable(join(legacyBin, "openp"));
+    const ambientOpenp = join(ambientBin, "openp");
+    await writeExecutable(ambientOpenp);
+
+    const env = {
+      HOME: root,
+      PATH: ambientBin,
+      TYCHONIC_OPENP_PATH: join(legacyBin, "openp")
+    };
+
+    expect(buildExecutableSearchPath(env)[0]).toBe(ambientBin);
+    await expect(findExecutable("openp", env)).resolves.toBe(ambientOpenp);
   });
 });
 

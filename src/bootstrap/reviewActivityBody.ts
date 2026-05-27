@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   optionalStateConfig
@@ -22,13 +23,13 @@ import { FINDING_SEVERITIES } from "../domain/types.js";
 import { resolveCommand } from "../adapters/resolveAdapter.js";
 import {
   parseBuiltInReviewOutput,
-  parseReviewOutput,
-  type BuiltInReviewOutputAdapter
+  parseReviewOutput
 } from "../review/parse.js";
 import type { ReviewActivityOutcome } from "../review/outcome.js";
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
-import { runCommand, sanitizeChildEnv, withPeriodicProgress } from "./commandRunner.js";
+import { runCommand, sanitizeChildEnv, type CommandRunResult, withPeriodicProgress } from "./commandRunner.js";
+import { gitChildEnv, resolveGitExecutable } from "./executables.js";
 
 /**
  * Resolved reviewer invocation inputs. Callers build this from their own
@@ -40,6 +41,7 @@ export interface ResolvedReviewOptions {
   agent: string;
   adapterDispatch?: AdapterDispatch;
   normalizerAgent?: Extract<BuiltInAgentName, "claude" | "codex">;
+  executablePaths?: Readonly<Record<string, string>>;
 }
 
 export interface ReviewActivityResources {
@@ -72,10 +74,14 @@ const execFileAsync = promisify(execFile);
 const DIRECT_BUILT_IN_REVIEW_CONTRACT = [
   "",
   "Tychonic structured review output contract:",
-  "- Return the semantic review payload only: status, summary, findings.",
+  "- Return exactly one JSON object only. Do not write prose, markdown, headings, or explanatory text.",
+  "- Top-level keys are exactly: status, summary, findings.",
+  "- Do not add schema_version; the host owns that field.",
   "- findings are actionable problems only, not evidence, confirmations, or passing notes.",
   "- Use status pass only when findings is exactly [].",
-  "- Use status fail when any actionable problem exists, and list those problems in findings."
+  "- Use status fail when any actionable problem exists, and list those problems in findings.",
+  "- Each finding requires severity, title, detail, target, and target_session_id in the structured output.",
+  "- Use null for target or target_session_id when unknown; the host normalizes those nulls out."
 ].join("\n");
 
 /**
@@ -147,27 +153,37 @@ export async function runReviewActivityBody(
 
   const progress = (): void => heartbeat?.({ runId: run.id, state: state.name, attemptId: attempt.id });
 
-  const reviewMutationBefore = await snapshotReviewMutationBoundary(executionCwd, env);
-  let result = await withPeriodicProgress(progress, async () =>
-    await runCommand({
-      command,
-      cwd: executionCwd,
-      timeoutMs,
-      env,
-      liveOutputPath,
-      outputCapture: "tail",
-      stdin: prompt,
-      onProgress: progress
-    })
-  );
-  const reviewMutationViolation = await detectReviewMutation(reviewMutationBefore, executionCwd, env);
-  if (reviewMutationViolation) {
+  const reviewMutationBefore = await snapshotReviewMutationBoundary(executionCwd, env, "before");
+  let result: CommandRunResult;
+  if (!reviewMutationBefore.supported && reviewMutationBefore.reason) {
     result = {
-      ...result,
-      status: "failed",
-      exitCode: result.exitCode ?? 1,
-      output: `${result.output}\n${reviewMutationViolation}\n`
+      status: "failed" as const,
+      exitCode: 1,
+      output: `${reviewMutationBefore.reason}\n`,
+      timedOut: false
     };
+  } else {
+    result = await withPeriodicProgress(progress, async () =>
+      await runCommand({
+        command,
+        cwd: executionCwd,
+        timeoutMs,
+        env,
+        liveOutputPath,
+        outputCapture: "tail",
+        stdin: prompt,
+        onProgress: progress
+      })
+    );
+    const reviewMutationViolation = await detectReviewMutation(reviewMutationBefore, executionCwd, env);
+    if (reviewMutationViolation) {
+      result = {
+        ...result,
+        status: "failed",
+        exitCode: result.exitCode ?? 1,
+        output: `${result.output}\n${reviewMutationViolation}\n`
+      };
+    }
   }
 
   attempt.status = result.status;
@@ -246,12 +262,13 @@ export async function runReviewActivityBody(
 
   if (result.status !== "succeeded") {
     state.status = result.status;
-    state.reason = "reviewer command did not succeed";
+    state.reason = reviewCommandFailureReason(result);
     state.finished_at = now().toISOString();
     const outcome: ReviewActivityOutcome = {
       kind: "command_failed",
       status: result.status,
       ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+      reason: state.reason,
       reviewerSessionId: session.id,
       artifacts,
       agentSessions
@@ -263,7 +280,7 @@ export async function runReviewActivityBody(
   }
 
   let outputToParse = result.output;
-  let builtInParseAdapter = reviewOutputAdapter(reviewOptions.adapterDispatch?.agentName);
+  let useBuiltInReviewParser = isBuiltInStructuredReviewer(reviewOptions.adapterDispatch?.agentName);
   const createdAt = now().toISOString();
 
   if (reviewOptions.normalizerAgent !== undefined) {
@@ -274,6 +291,7 @@ export async function runReviewActivityBody(
       executionCwd,
       timeoutMs,
       env,
+      ...(reviewOptions.executablePaths ? { executablePaths: reviewOptions.executablePaths } : {}),
       heartbeat: progress,
       store,
       runId: run.id,
@@ -312,11 +330,11 @@ export async function runReviewActivityBody(
       };
     }
     outputToParse = normalized.result.output;
-    builtInParseAdapter = reviewOptions.normalizerAgent;
+    useBuiltInReviewParser = true;
   }
 
-  const parsed = builtInParseAdapter
-    ? parseBuiltInReviewOutput(outputToParse, builtInParseAdapter)
+  const parsed = useBuiltInReviewParser
+    ? parseBuiltInReviewOutput(outputToParse)
     : parseReviewOutput(outputToParse);
 
   if (!parsed) {
@@ -368,8 +386,8 @@ export async function runReviewActivityBody(
   };
 }
 
-function reviewOutputAdapter(agentName: string | undefined): BuiltInReviewOutputAdapter | undefined {
-  return agentName === "claude" || agentName === "codex" ? agentName : undefined;
+function isBuiltInStructuredReviewer(agentName: string | undefined): boolean {
+  return agentName === "claude" || agentName === "codex";
 }
 
 function reviewPromptForExecution(prompt: string, reviewOptions: ResolvedReviewOptions): string {
@@ -395,6 +413,7 @@ export async function resolveNamedReviewOptions(options: {
   env: NodeJS.ProcessEnv;
   worktreeCwd: string;
   prompt: string;
+  executablePaths?: Readonly<Record<string, string>>;
 }): Promise<ResolvedReviewOptions | undefined> {
   const review = optionalStateConfig(options.profile, options.name, options.expectedType);
   if (!review) {
@@ -405,7 +424,8 @@ export async function resolveNamedReviewOptions(options: {
     block: review,
     worktreeCwd: options.worktreeCwd,
     prompt: options.prompt,
-    role: "review"
+    role: "review",
+    ...(options.executablePaths ? { executablePaths: options.executablePaths } : {})
   });
   if (!resolved) {
     return undefined;
@@ -419,6 +439,7 @@ export async function resolveNamedReviewOptions(options: {
     command: resolved.command,
     agent: agentLabel,
     ...(review.normalizer ? { normalizerAgent: review.normalizer } : {}),
+    ...(options.executablePaths ? { executablePaths: options.executablePaths } : {}),
     ...(resolved.kind === "adapter" ? { adapterDispatch: resolved } : {})
   };
 }
@@ -430,6 +451,7 @@ async function runReviewNormalizer(input: {
   executionCwd: string;
   timeoutMs: number;
   env: NodeJS.ProcessEnv;
+  executablePaths?: Readonly<Record<string, string>>;
   heartbeat: () => void;
   store: RunArtifactStore;
   runId: string;
@@ -456,7 +478,8 @@ async function runReviewNormalizer(input: {
       prompt: normalizerPrompt,
       worktreeCwd: normalizerCwd,
       role: "review",
-      model: NORMALIZER_MODEL_BY_AGENT[input.normalizerAgent]
+      model: NORMALIZER_MODEL_BY_AGENT[input.normalizerAgent],
+      ...(input.executablePaths ? { executablePaths: input.executablePaths } : {})
     }).command;
 
     const artifacts: ArtifactRecord[] = [];
@@ -544,15 +567,15 @@ function buildReviewNormalizerPrompt(input: {
     "Return one JSON object only. Do not use markdown or prose outside JSON.",
     "Top-level keys are exactly: status, summary, findings.",
     "Do not add schema_version; the host owns that field.",
-    "Each finding object requires exactly these required keys: severity, title, detail.",
+    "Each finding object requires exactly these required keys: severity, title, detail, target, target_session_id.",
     `Finding severity must be one of: ${FINDING_SEVERITY_LIST}.`,
     "Use the exact key detail for the finding explanation. Do not use details.",
-    "Optional finding keys are target and target_session_id. Omit them unless the primary output provides them.",
+    "Use null for target or target_session_id unless the primary output provides a concrete value.",
     "Do not invent findings that are not present in the primary review output.",
     "If the primary output says the work passes, return status pass and findings [].",
     "If the primary output identifies concrete problems, return status fail and those findings.",
     "Shape:",
-    `{"status":"pass|fail","summary":"...","findings":[{"severity":"${FINDING_SEVERITY_SHAPE}","title":"...","detail":"..."}]}`,
+    `{"status":"pass|fail","summary":"...","findings":[{"severity":"${FINDING_SEVERITY_SHAPE}","title":"...","detail":"...","target":null,"target_session_id":null}]}`,
     "",
     `Primary reviewer: ${input.primaryAgent}`,
     "",
@@ -587,7 +610,7 @@ async function writeReviewArtifact(input: {
 }
 
 type ReviewMutationSnapshot =
-  | { supported: false }
+  | { supported: false; reason?: string }
   | {
       supported: true;
       fingerprint: string;
@@ -595,25 +618,28 @@ type ReviewMutationSnapshot =
 
 async function snapshotReviewMutationBoundary(
   cwd: string,
-  env: NodeJS.ProcessEnv | undefined
+  env: NodeJS.ProcessEnv | undefined,
+  phase: "before" | "after"
 ): Promise<ReviewMutationSnapshot> {
   try {
-    await execGit(cwd, env, ["rev-parse", "--is-inside-work-tree"]);
+    if (!(await hasGitMetadata(cwd))) {
+      return {
+        supported: false,
+        reason: `review mutation guard failed ${phase} reviewer command: git metadata was not found under review cwd`
+      };
+    }
+    await assertInsideGitWorkTree(cwd, env);
     const head = await execGit(cwd, env, ["rev-parse", "HEAD"]);
-    const trackedDiff = await execGit(cwd, env, [
-      "diff",
-      "--no-ext-diff",
-      "--no-color",
-      "--binary",
-      "HEAD",
-      "--",
-      ".",
-      ":(exclude).tychonic/**"
-    ]);
+    const status = await snapshotGitStatus(cwd, env);
+    const staged = await snapshotStagedDiff(cwd, env);
+    const tracked = await snapshotTrackedChangedFiles(cwd, env);
     const untracked = await snapshotUntrackedFiles(cwd, env);
-    return { supported: true, fingerprint: JSON.stringify({ head, trackedDiff, untracked }) };
-  } catch {
-    return { supported: false };
+    return { supported: true, fingerprint: JSON.stringify({ head, status, staged, tracked, untracked }) };
+  } catch (error) {
+    return {
+      supported: false,
+      reason: `review mutation guard failed ${phase} reviewer command: ${errorMessage(error)}`
+    };
   }
 }
 
@@ -622,10 +648,10 @@ async function detectReviewMutation(
   cwd: string,
   env: NodeJS.ProcessEnv | undefined
 ): Promise<string | undefined> {
-  if (!before.supported) return undefined;
-  const after = await snapshotReviewMutationBoundary(cwd, env);
+  if (!before.supported) return before.reason;
+  const after = await snapshotReviewMutationBoundary(cwd, env, "after");
   if (!after.supported) {
-    return "review mutation guard failed: git worktree became unavailable during review";
+    return after.reason ?? "review mutation guard failed: git worktree became unavailable during review";
   }
   if (after.fingerprint === before.fingerprint) return undefined;
   return [
@@ -636,6 +662,55 @@ async function detectReviewMutation(
     "After:",
     after.fingerprint
   ].join("\n");
+}
+
+async function assertInsideGitWorkTree(cwd: string, env: NodeJS.ProcessEnv | undefined): Promise<void> {
+  const output = await execGit(cwd, env, ["rev-parse", "--is-inside-work-tree"]);
+  if (output.trim() !== "true") {
+    throw new Error(`git executable did not confirm review cwd is inside a worktree: ${output.trim()}`);
+  }
+}
+
+async function snapshotGitStatus(cwd: string, env: NodeJS.ProcessEnv | undefined): Promise<string> {
+  return await execGit(cwd, env, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--",
+    ".",
+    ":(exclude).tychonic/**"
+  ]);
+}
+
+async function snapshotStagedDiff(cwd: string, env: NodeJS.ProcessEnv | undefined): Promise<string> {
+  return await execGit(cwd, env, [
+    "diff",
+    "--cached",
+    "--raw",
+    "-z",
+    "HEAD",
+    "--",
+    ".",
+    ":(exclude).tychonic/**"
+  ]);
+}
+
+async function snapshotTrackedChangedFiles(
+  cwd: string,
+  env: NodeJS.ProcessEnv | undefined
+): Promise<Array<{ path: string; kind: string; hash: string }>> {
+  const output = await execGit(cwd, env, [
+    "diff",
+    "--name-only",
+    "-z",
+    "HEAD",
+    "--",
+    ".",
+    ":(exclude).tychonic/**"
+  ]);
+  const paths = output.split("\0").filter((path) => path.length > 0).sort();
+  return await snapshotPaths(cwd, paths);
 }
 
 async function snapshotUntrackedFiles(
@@ -652,16 +727,36 @@ async function snapshotUntrackedFiles(
     ":(exclude).tychonic/**"
   ]);
   const paths = output.split("\0").filter((path) => path.length > 0).sort();
+  return await snapshotPaths(cwd, paths);
+}
+
+async function snapshotPaths(
+  cwd: string,
+  paths: string[]
+): Promise<Array<{ path: string; kind: string; hash: string }>> {
   const entries: Array<{ path: string; kind: string; hash: string }> = [];
   for (const path of paths) {
     const fullPath = join(cwd, path);
-    const stat = await lstat(fullPath);
+    let stat;
+    try {
+      stat = await lstat(fullPath);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        entries.push({ path, kind: "missing", hash: "" });
+        continue;
+      }
+      throw error;
+    }
     if (stat.isSymbolicLink()) {
-      entries.push({ path, kind: "symlink", hash: hashBuffer(Buffer.from(await readlink(fullPath))) });
+      entries.push({
+        path,
+        kind: "symlink",
+        hash: `${stat.mode}:${hashBuffer(Buffer.from(await readlink(fullPath)))}`
+      });
       continue;
     }
     if (stat.isFile()) {
-      entries.push({ path, kind: "file", hash: hashBuffer(await readFile(fullPath)) });
+      entries.push({ path, kind: "file", hash: `${stat.mode}:${await hashFile(fullPath)}` });
       continue;
     }
     entries.push({ path, kind: "other", hash: String(stat.mode) });
@@ -673,14 +768,65 @@ function hashBuffer(value: Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+async function hashFile(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const stream = createReadStream(path);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", rejectPromise);
+    stream.on("end", resolvePromise);
+  });
+  return hash.digest("hex");
+}
+
 async function execGit(
   cwd: string,
   env: NodeJS.ProcessEnv | undefined,
   args: string[]
 ): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
-    env: sanitizeChildEnv(env),
-    maxBuffer: 1_000_000
+  const gitPath = await resolveGitExecutable(env ?? process.env);
+  const { stdout } = await execFileAsync(gitPath, ["-C", cwd, ...args], {
+    env: gitChildEnv(sanitizeChildEnv(env), gitPath),
+    maxBuffer: 20 * 1024 * 1024
   });
   return stdout.trimEnd();
+}
+
+function reviewCommandFailureReason(result: CommandRunResult): string {
+  const guardReason = result.output
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("review mutation guard failed"));
+  return guardReason ?? "reviewer command did not succeed";
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    ((error as { code?: unknown }).code === "ENOENT" || (error as { code?: unknown }).code === "ENOTDIR")
+  );
+}
+
+async function hasGitMetadata(cwd: string): Promise<boolean> {
+  let current = cwd;
+  for (;;) {
+    try {
+      await lstat(join(current, ".git"));
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        throw error;
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

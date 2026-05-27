@@ -22,15 +22,13 @@ appear more than once without adding new activity kinds.
 | `review_2` | `review` | `work` |
 | `security` | `verify` | - |
 
-This example profile sets `work` to Kiro `claude-opus-4.6`, `review_1` to
-Claude `claude-opus-4-7` with `reasoning_effort: max`, and `review_2` to Codex
-`gpt-5.5` with `reasoning_effort: xhigh`.
-These values are examples; adapt them after checking the target account,
-model availability, plan/tier, quota, pricing, region/country access, and
-organization policy.
+This example profile uses Kiro for `work`, Claude for `review_1`, Codex for
+`review_2`, and pinned agent settings in `workflow.yaml`. Adapt those values
+after checking the target account, model availability, plan/tier, quota,
+pricing, region/country access, and organization policy.
 Kiro model availability is account-, tier-, and region-scoped; absence from
-`kiro-cli chat --list-models` means unavailable for that account, not that the
-documented Kiro model id is globally invalid.
+the configured `openp kiro` backend means unavailable for that account, not
+that the documented Kiro model id is globally invalid.
 
 ## Input
 

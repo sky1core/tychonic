@@ -8,15 +8,13 @@ Use this as an example staged delegation pipeline: one agent plans,
 another agent builds, and QA reviews. The YAML state machine loops failed QA
 verdicts back to `builder` until QA passes or `max_steps` is exhausted.
 
-This example profile sets `architect` to Claude `claude-opus-4-7` with
-`reasoning_effort: max`, `builder` to Kiro `claude-opus-4.6`, and `qa` to
-Codex `gpt-5.5` with `reasoning_effort: xhigh`.
-These values are examples; adapt them after checking the target account,
-model availability, plan/tier, quota, pricing, region/country access, and
-organization policy.
+This example profile uses Claude for `architect`, Kiro for `builder`, Codex for
+`qa`, and pinned agent settings in `workflow.yaml`. Adapt those values after
+checking the target account, model availability, plan/tier, quota, pricing,
+region/country access, and organization policy.
 Kiro model availability is account-, tier-, and region-scoped; absence from
-`kiro-cli chat --list-models` means unavailable for that account, not that the
-documented Kiro model id is globally invalid.
+the configured `openp kiro` backend means unavailable for that account, not
+that the documented Kiro model id is globally invalid.
 
 ## States
 

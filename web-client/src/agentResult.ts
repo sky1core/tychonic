@@ -1,26 +1,16 @@
 type JsonObject = Record<string, unknown>
 
+const REVIEW_WIRE_SCHEMA_VERSION = "tychonic.review.v1"
+const REVIEW_FINDING_SEVERITIES = ["critical", "high", "medium", "low"] as const
+
 export function extractAgentResult(raw: string): string {
   const trimmed = raw.trim()
-  if (!trimmed.startsWith("{")) return raw
-
-  const trailingObject = parseTrailingObjectAfterLastAdapterEvent(trimmed)
-  if (trailingObject) return formatReviewResult(trailingObject) ?? JSON.stringify(trailingObject, null, 2)
 
   const objects = parseJsonObjectLines(trimmed)
   if (objects.length > 0) {
     for (let index = objects.length - 1; index >= 0; index--) {
-      const structured = objects[index].structured_output
-      if (isJsonObject(structured) || Array.isArray(structured)) {
-        return formatReviewResult(structured) ?? JSON.stringify(structured, null, 2)
-      }
-      const result = objects[index].result
-      if (typeof result === "string") return formatJsonReviewText(result) ?? result
-    }
-
-    for (let index = objects.length - 1; index >= 0; index--) {
-      const object = objects[index]
-      if (!isAdapterEvent(object)) return formatReviewResult(object) ?? JSON.stringify(object, null, 2)
+      const eventResult = formatEventResult(objects[index])
+      if (eventResult) return eventResult
     }
 
     for (let index = objects.length - 1; index >= 0; index--) {
@@ -30,7 +20,9 @@ export function extractAgentResult(raw: string): string {
   }
 
   const singleObject = parseJsonObject(trimmed)
-  return singleObject ? formatReviewResult(singleObject) ?? JSON.stringify(singleObject, null, 2) : raw
+  return singleObject
+    ? formatEventResult(singleObject) ?? formatWireReviewResult(singleObject) ?? JSON.stringify(singleObject, null, 2)
+    : raw
 }
 
 function parseJsonObjectLines(value: string): JsonObject[] {
@@ -38,21 +30,6 @@ function parseJsonObjectLines(value: string): JsonObject[] {
     .split(/\r?\n/)
     .map((line) => parseJsonObject(line.trim()))
     .filter((object): object is JsonObject => object !== undefined)
-}
-
-function parseTrailingObjectAfterLastAdapterEvent(value: string): JsonObject | undefined {
-  const lines = value.split(/\r?\n/)
-  let lastAdapterEventIndex = -1
-  for (let index = 0; index < lines.length; index++) {
-    const object = parseJsonObject(lines[index].trim())
-    if (object && isAdapterEvent(object)) {
-      lastAdapterEventIndex = index
-    }
-  }
-  if (lastAdapterEventIndex < 0 || lastAdapterEventIndex >= lines.length - 1) return undefined
-  const trailing = lines.slice(lastAdapterEventIndex + 1).join("\n").trim()
-  const object = parseJsonObject(trailing)
-  return object && !isAdapterEvent(object) ? object : undefined
 }
 
 function parseJsonObject(value: string): JsonObject | undefined {
@@ -69,18 +46,47 @@ function isJsonObject(value: unknown): value is JsonObject {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
 
-function isAdapterEvent(value: JsonObject): boolean {
-  return typeof value.type === "string"
-}
-
 function formatJsonReviewText(value: string): string | undefined {
   const object = parseJsonObject(value.trim())
-  return object ? formatReviewResult(object) : undefined
+  return object ? formatSemanticReviewResult(object) : undefined
 }
 
-function formatReviewResult(value: unknown): string | undefined {
-  if (!isJsonObject(value) || !isReviewResult(value)) return undefined
+function formatEventResult(value: JsonObject): string | undefined {
+  const openp = openpPayload(value)
+  if (openp) return formatOpenPResult(openp)
+  return undefined
+}
 
+function formatOpenPResult(value: JsonObject): string | undefined {
+  if (value.form !== "result" || value.scope !== "active") return undefined
+  const structured = value.structuredOutput
+  if (isJsonObject(structured) || Array.isArray(structured)) {
+    return formatSemanticReviewResult(structured) ?? JSON.stringify(structured, null, 2)
+  }
+  const answer = openPAnswerText(value)
+  if (answer !== undefined) return formatJsonReviewText(answer) ?? answer
+  return undefined
+}
+
+function openPAnswerText(value: JsonObject): string | undefined {
+  const output = value.output
+  if (!isJsonObject(output)) return undefined
+  const answer = output.answer
+  if (!Array.isArray(answer)) return undefined
+  return answer.filter((item): item is string => typeof item === "string" && item.length > 0).join("\n\n")
+}
+
+function formatWireReviewResult(value: unknown): string | undefined {
+  const result = reviewResult(value, "wire")
+  return result ? formatReviewMarkdown(result) : undefined
+}
+
+function formatSemanticReviewResult(value: unknown): string | undefined {
+  const result = reviewResult(value, "semantic")
+  return result ? formatReviewMarkdown(result) : undefined
+}
+
+function formatReviewMarkdown(value: ReviewResult): string {
   const lines = [`**Status:** ${value.status}`, "", value.summary]
   if (value.findings.length === 0) {
     lines.push("", "**Findings:** none")
@@ -96,10 +102,11 @@ function formatReviewResult(value: unknown): string | undefined {
 }
 
 type ReviewFinding = {
-  severity: string
+  severity: (typeof REVIEW_FINDING_SEVERITIES)[number]
   title: string
   detail: string
-  target?: string
+  target?: string | null
+  target_session_id?: string | null
 }
 
 type ReviewResult = JsonObject & {
@@ -108,22 +115,67 @@ type ReviewResult = JsonObject & {
   findings: ReviewFinding[]
 }
 
-function isReviewResult(value: JsonObject): value is ReviewResult {
-  if (typeof value.status !== "string" || typeof value.summary !== "string" || !Array.isArray(value.findings)) {
-    return false
-  }
-  return value.findings.every(isReviewFinding)
+function reviewResult(value: unknown, mode: "wire" | "semantic"): ReviewResult | undefined {
+  if (!isJsonObject(value)) return undefined
+  if (!hasReviewTopLevelShape(value, mode)) return undefined
+  if (typeof value.status !== "string" || !["pass", "fail"].includes(value.status)) return undefined
+  if (typeof value.summary !== "string" || value.summary.length === 0) return undefined
+  if (!Array.isArray(value.findings)) return undefined
+  if (!value.findings.every((finding) => isReviewFinding(finding, mode))) return undefined
+  if (value.status === "pass" && value.findings.length !== 0) return undefined
+  if (value.status === "fail" && value.findings.length === 0) return undefined
+  return value as ReviewResult
 }
 
-function isReviewFinding(value: unknown): value is ReviewFinding {
+function hasReviewTopLevelShape(value: JsonObject, mode: "wire" | "semantic"): boolean {
+  const keys = Object.keys(value)
+  const hasSemanticKeys = keys.includes("status") && keys.includes("summary") && keys.includes("findings")
+  if (!hasSemanticKeys) return false
+
+  if (mode === "wire") {
+    return (
+      keys.length === 4 &&
+      keys.includes("schema_version") &&
+      value.schema_version === REVIEW_WIRE_SCHEMA_VERSION
+    )
+  }
+
+  const hasSchemaVersion = keys.includes("schema_version")
+  return (
+    (keys.length === 3 || (keys.length === 4 && hasSchemaVersion)) &&
+    (!hasSchemaVersion || value.schema_version === REVIEW_WIRE_SCHEMA_VERSION)
+  )
+}
+
+function isReviewFinding(value: unknown, mode: "wire" | "semantic"): value is ReviewFinding {
   if (!isJsonObject(value)) return false
+  const keys = Object.keys(value)
+  const allowedKeys = ["severity", "title", "detail", "target", "target_session_id"]
+  if (!keys.every((key) => allowedKeys.includes(key))) return false
   const hasRequiredFields =
-    typeof value.severity === "string" && typeof value.title === "string" && typeof value.detail === "string"
-  const hasValidTarget = value.target === undefined || typeof value.target === "string"
-  return hasRequiredFields && hasValidTarget
+    REVIEW_FINDING_SEVERITIES.includes(value.severity as (typeof REVIEW_FINDING_SEVERITIES)[number]) &&
+    typeof value.title === "string" &&
+    value.title.length > 0 &&
+    typeof value.detail === "string" &&
+    value.detail.length > 0
+  const hasValidTarget =
+    value.target === undefined ||
+    typeof value.target === "string" ||
+    (mode === "semantic" && value.target === null)
+  const hasValidTargetSessionId =
+    value.target_session_id === undefined ||
+    typeof value.target_session_id === "string" ||
+    (mode === "semantic" && value.target_session_id === null)
+  return hasRequiredFields && hasValidTarget && hasValidTargetSessionId
 }
 
 function assistantMessageText(value: JsonObject): string | undefined {
+  const openp = openpPayload(value)
+  if (openp?.form === "streaming") {
+    const output = openp.output
+    if (isJsonObject(output) && typeof output.answer === "string") return output.answer
+  }
+
   const message = value.message
   if (!isJsonObject(message)) return undefined
   const content = message.content
@@ -135,10 +187,15 @@ function assistantMessageText(value: JsonObject): string | undefined {
   return textBlocks.length > 0 ? textBlocks.map((block) => block.text).join("\n") : undefined
 }
 
+function openpPayload(value: JsonObject): JsonObject | undefined {
+  const openp = value.openp
+  return isJsonObject(openp) ? openp : undefined
+}
+
 function codexItemText(value: JsonObject): string | undefined {
   if (value.type !== "item.completed") return undefined
   const item = value.item
   if (!isJsonObject(item)) return undefined
   if (typeof item.text !== "string") return undefined
-  return formatJsonReviewText(item.text) ?? item.text
+  return item.text
 }

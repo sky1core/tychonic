@@ -72,8 +72,8 @@ Use one execution selector per executable state:
 
 Do not set both. Do not create any second execution channel.
 
-Built-in adapters are `claude`, `codex`, `gemini`, and `kiro`.
-`claude` and `codex` can serve review states directly. `gemini` and
+Built-in adapters are `claude`, `codex`, and `kiro`.
+`claude` and `codex` can serve review states directly.
 `kiro` can serve review states only with `normalizer: claude` or
 `normalizer: codex`; the normalizer structures the primary review output and
 must not invent findings.
@@ -100,25 +100,24 @@ config, Tychonic fails the activity instead of accepting a silent model
 change. Claude aliases such as `opus` are not exact-match asserted because the
 CLI resolves them to concrete model names internally.
 
-The bundled reference examples currently declare `model: gpt-5.5` for `codex`,
-`model: gemini-3.1-pro-preview` for `gemini`, and `model: claude-opus-4.6` for
-`kiro` where those exact strings fit the author's environment. Some examples
-also declare `reasoning_effort: max` for `claude` and `reasoning_effort: xhigh`
-for `codex`; `gemini` and `kiro` do not expose a supported reasoning effort
-setting through Tychonic. These values do not define a universal model choice.
-Target account, model availability, plan/tier, quota, pricing, region/country
-access, and organization policy differ by operator, so Tychonic does not
-provide one default workflow profile to reuse unchanged.
+The bundled reference examples currently declare `model: gpt-5.5` for `codex`
+and `model: claude-opus-4.6` for `kiro` where those exact strings fit the
+author's environment. Some examples also declare `reasoning_effort: max` for
+`claude` and `reasoning_effort: xhigh` for `codex`. These values do not define
+a universal model or effort choice. Target account, model availability,
+plan/tier, quota, pricing, region/country access, and organization policy
+differ by operator, so Tychonic does not provide one default workflow profile
+to reuse unchanged.
 
-Kiro states may set `model`, but not
-`reasoning_effort`; the installed Kiro CLI ACP surface exposes no stable
-reasoning/effort/thinking option. Kiro model availability may be account-,
-tier-, or region-scoped: `kiro-cli chat --list-models` proves what this account
-can run, not whether every documented Kiro model id exists globally. Do not
-rewrite a documented dot-form Kiro id such as `claude-opus-4.6` solely because
-it is not available in the current account. Do not add normalizer model fields;
-Tychonic supplies the lightweight normalizer model flag internally (`claude`
-gets `haiku`; `codex` gets `gpt-5.3-codex-spark`).
+Kiro states may set `model` and `reasoning_effort`; Tychonic passes them to
+OpenP as `--model` and `--effort`. Kiro model ids are OpenP Kiro backend ids.
+Kiro model availability may be account-, tier-, or region-scoped: a successful
+`openp kiro --model <id>` smoke proves what that account can run, not whether
+every documented Kiro model id exists globally. Do not rewrite a documented
+dot-form Kiro id such as `claude-opus-4.6` solely because it is not available in
+the current account. Do not add normalizer model fields; Tychonic supplies the
+lightweight normalizer model flag internally (`claude` gets `haiku`; `codex`
+gets `gpt-5.3-codex-spark`).
 
 QA/review is allowed to run checks; it is not limited to visual inspection.
 The boundary is source modification. Review activities compare the git

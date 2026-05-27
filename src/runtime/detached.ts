@@ -333,12 +333,7 @@ async function isRuntimeStartLockOwnerActive(
     return false;
   }
   const tokens = splitCommandLine(command);
-  const runtimeIndex = tokens.indexOf("runtime");
-  return (
-    tokens.includes(record.cliPath) &&
-    runtimeIndex >= 0 &&
-    tokens[runtimeIndex + 1] === "up"
-  );
+  return tokens.includes(record.cliPath);
 }
 
 async function removeRuntimeStartLockIfOwned(lockFile: string, pid: number): Promise<boolean> {

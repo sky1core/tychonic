@@ -1,11 +1,22 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { claimRuntimeStartLock } from "../runtime/detached.js";
 import { getActiveInstance } from "../runtime/instance.js";
-import { buildExecutablePathValue, findExecutable, TYCHONIC_AGENT_PATH_ENV } from "../bootstrap/executables.js";
+import { assertServiceInstallNotRuntimeUpManaged } from "../runtime/serviceGuard.js";
+import { findExecutable, TYCHONIC_AGENT_PATH_ENV } from "../bootstrap/executables.js";
+import {
+  prepareRuntimeExecutableEnv,
+  requiredProfilesFromBundles
+} from "../runtime/executableEnv.js";
 import { normalizeTemporalConfig, temporalStartArgs, tychonicRuntimeDirs } from "../temporal/manager.js";
+import {
+  refreshInstalledRuntimeWorkflowModules,
+  type InstalledWorkflowModuleRefreshResult
+} from "../temporal/workflowModules.js";
 import { DEFAULT_STATUS_UI_PORT } from "../web/statusUiServer.js";
 
 const execFileAsync = promisify(execFile);
@@ -50,6 +61,7 @@ export interface LaunchdServiceInstallResult {
   temporalCliPath: string;
   plists: Record<TychonicServiceName, string>;
   loaded: boolean;
+  workflowRefresh: InstalledWorkflowModuleRefreshResult;
 }
 
 export interface LaunchdServiceStatus {
@@ -97,43 +109,66 @@ export async function installLaunchdServices(
   const stateDir = tychonicRuntimeDirs().stateDir;
   const logDir = tychonicRuntimeDirs().logDir;
   const launchAgentDir = options.launchAgentDir ?? defaultLaunchAgentDir();
-  const nodePath = await resolveExecutable(options.nodePath ?? process.execPath, "node");
-  const cliPath = await resolveCliPath(options.cliPath ?? process.argv[1], options.allowSourceCli === true);
-  const temporalCliPath = await resolveExecutable(options.temporalCliPath, "temporal");
-  const projectDir = resolve(options.projectDir);
+  const startLock = await claimRuntimeStartLock(join(stateDir, "runtime.start.lock"));
+  try {
+    await assertServiceInstallNotRuntimeUpManaged();
+    const nodePath = await resolveExecutable(options.nodePath ?? process.execPath, "node");
+    const cliPath = await resolveCliPath(options.cliPath ?? process.argv[1], options.allowSourceCli === true);
+    const temporalCliPath = await resolveExecutable(options.temporalCliPath, "temporal");
+    const projectDir = resolve(options.projectDir);
 
-  await mkdir(launchAgentDir, { recursive: true });
-  await mkdir(stateDir, { recursive: true });
-  await mkdir(logDir, { recursive: true });
+    await mkdir(stateDir, { recursive: true });
+    await mkdir(logDir, { recursive: true });
+    const workflowRefresh = await refreshInstalledRuntimeWorkflowModules();
+    const runtimeExecutableEnv = await prepareRuntimeExecutableEnv({
+      requiredProfiles: await requiredProfilesFromBundles(workflowRefresh.refreshed)
+    });
+    await mkdir(launchAgentDir, { recursive: true });
 
-  const definitions = serviceDefinitions({
-    stateDir,
-    logDir,
-    projectDir,
-    nodePath,
-    cliPath,
-    temporalCliPath,
-    ...(options.workerShutdownGraceTime ? { workerShutdownGraceTime: options.workerShutdownGraceTime } : {}),
-    ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {}),
-    ...(options.webPort !== undefined ? { webPort: options.webPort } : {})
-  });
-  const plists = {} as Record<TychonicServiceName, string>;
-  for (const service of serviceNames) {
-    const plistPath = join(launchAgentDir, `${definitions[service].label}.plist`);
-    await writeFile(plistPath, renderPlist(definitions[service]), "utf8");
-    plists[service] = plistPath;
-  }
-
-  if (options.load !== false) {
+    const existingWebAllowedHosts = await readExistingWebAllowedHosts(launchAgentDir);
+    const definitions = serviceDefinitions({
+      stateDir,
+      logDir,
+      projectDir,
+      nodePath,
+      cliPath,
+      temporalCliPath,
+      runtimeExecutableEnv,
+      ...(options.workerShutdownGraceTime ? { workerShutdownGraceTime: options.workerShutdownGraceTime } : {}),
+      ...(options.temporalPort !== undefined ? { temporalPort: options.temporalPort } : {}),
+      ...(options.webPort !== undefined ? { webPort: options.webPort } : {}),
+      ...(existingWebAllowedHosts ? { existingWebAllowedHosts } : {})
+    });
+    const plists = {} as Record<TychonicServiceName, string>;
     for (const service of serviceNames) {
-      await bootout(definitions[service].label);
+      const plistPath = join(launchAgentDir, `${definitions[service].label}.plist`);
+      await writeFile(plistPath, renderPlist(definitions[service]), "utf8");
+      plists[service] = plistPath;
     }
-    for (const service of serviceNames) {
-      await bootstrap(plists[service]);
-    }
-  }
 
-  return { stateDir, logDir, projectDir, cliPath, nodePath, temporalCliPath, plists, loaded: options.load !== false };
+    if (options.load !== false) {
+      for (const service of serviceNames) {
+        await bootout(definitions[service].label);
+      }
+      for (const service of serviceNames) {
+        await bootstrap(plists[service]);
+      }
+    }
+
+    return {
+      stateDir,
+      logDir,
+      projectDir,
+      cliPath,
+      nodePath,
+      temporalCliPath,
+      plists,
+      loaded: options.load !== false,
+      workflowRefresh
+    };
+  } finally {
+    await startLock.release();
+  }
 }
 
 export async function statusLaunchdServices(): Promise<LaunchdServiceStatus[]> {
@@ -252,9 +287,11 @@ interface ServiceDefinitionInput {
   nodePath: string;
   cliPath: string;
   temporalCliPath: string;
+  runtimeExecutableEnv: Record<string, string>;
   workerShutdownGraceTime?: string;
   temporalPort?: number;
   webPort?: number;
+  existingWebAllowedHosts?: string;
 }
 
 function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServiceName, ServiceDefinition> {
@@ -262,8 +299,8 @@ function serviceDefinitions(input: ServiceDefinitionInput): Record<TychonicServi
     ...(input.temporalPort !== undefined ? { apiPort: input.temporalPort } : {})
   });
   const temporalArgs = temporalStartArgs(temporalConfig);
-  const environmentVariables = serviceEnvironmentVariables();
-  const webEnvironmentVariables = webServiceEnvironmentVariables(environmentVariables);
+  const environmentVariables = serviceEnvironmentVariables(input.runtimeExecutableEnv);
+  const webEnvironmentVariables = webServiceEnvironmentVariables(environmentVariables, input.existingWebAllowedHosts);
   return {
     temporal: {
       label: serviceLabel("temporal"),
@@ -367,27 +404,36 @@ function replaceKeepAliveFalse(plist: string): string {
   return plist.replace(/<key>KeepAlive<\/key>\s*<true\/>/, "<key>KeepAlive</key>\n  <false/>");
 }
 
-function serviceEnvironmentVariables(): Record<string, string> {
+function serviceEnvironmentVariables(runtimeExecutableEnv: Record<string, string>): Record<string, string> {
   return {
     ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
     ...(process.env[TYCHONIC_AGENT_PATH_ENV] ? { [TYCHONIC_AGENT_PATH_ENV]: process.env[TYCHONIC_AGENT_PATH_ENV] } : {}),
-    PATH: serviceSearchPath(process.env.HOME)
+    PATH: runtimeExecutableEnv.PATH!
   };
 }
 
-function webServiceEnvironmentVariables(base: Record<string, string>): Record<string, string> {
+const WEB_ALLOWED_HOSTS_ENV = "TYCHONIC_WEB_ALLOWED_HOSTS";
+
+function webServiceEnvironmentVariables(base: Record<string, string>, existingAllowedHosts?: string): Record<string, string> {
+  const allowedHosts = process.env[WEB_ALLOWED_HOSTS_ENV] ?? existingAllowedHosts;
   return {
     ...base,
-    ...(process.env.TYCHONIC_WEB_ALLOWED_HOSTS ? { TYCHONIC_WEB_ALLOWED_HOSTS: process.env.TYCHONIC_WEB_ALLOWED_HOSTS } : {})
+    ...(allowedHosts ? { [WEB_ALLOWED_HOSTS_ENV]: allowedHosts } : {})
   };
 }
 
-function serviceSearchPath(home: string | undefined): string {
-  return buildExecutablePathValue({
-    ...(home ? { HOME: home } : {}),
-    ...(process.env[TYCHONIC_AGENT_PATH_ENV] ? { [TYCHONIC_AGENT_PATH_ENV]: process.env[TYCHONIC_AGENT_PATH_ENV] } : {}),
-    PATH: ""
-  });
+async function readExistingWebAllowedHosts(launchAgentDir: string): Promise<string | undefined> {
+  const plistPath = join(launchAgentDir, `${serviceLabel("web")}.plist`);
+  let content: string;
+  try {
+    content = await readFile(plistPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  const match = content.match(
+    new RegExp(`<key>${escapeRegExp(WEB_ALLOWED_HOSTS_ENV)}</key>\\s*<string>([^<]*)</string>`)
+  );
+  return match?.[1] || undefined;
 }
 
 async function launchdServiceStatus(label: string, plistPath: string): Promise<LaunchdServiceStatus> {
@@ -484,7 +530,17 @@ async function isSourceCheckoutCli(cliPath: string): Promise<boolean> {
 
 async function resolveExecutable(path: string | undefined, name: string): Promise<string> {
   if (path) {
-    return realpath(path);
+    const resolved = await realpath(path);
+    const info = await stat(resolved);
+    if (!info.isFile()) {
+      throw new Error(`${name} executable path is not a file: ${resolved}`);
+    }
+    try {
+      await access(resolved, constants.X_OK);
+    } catch {
+      throw new Error(`${name} executable is not executable: ${resolved}`);
+    }
+    return resolved;
   }
   const resolved = await findExecutable(name, process.env);
   if (resolved) {

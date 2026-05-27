@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
+import { platform } from "node:os";
 import { Command, Option } from "commander";
 import { stringify } from "yaml";
 import {
@@ -21,6 +22,7 @@ import {
   loadBundleDefaultProfile,
   resolveEffectiveBundleConfig
 } from "../catalog/bundleConfig.js";
+import { collectConfigWarnings, type TychonicConfig } from "../catalog/types.js";
 import { productName } from "../index.js";
 import {
   getActiveInstance,
@@ -37,7 +39,14 @@ import {
   claimRuntimeStartLock
 } from "../runtime/detached.js";
 import { killAndRemoveInstance } from "../runtime/reset.js";
+import {
+  applyPersistedRuntimeExecutableEnv,
+  applyRuntimeExecutableEnv,
+  mergeRuntimeExecutableEnv,
+  prepareRuntimeExecutableEnv
+} from "../runtime/executableEnv.js";
 import { tychonicInstanceRunsParentDir } from "../runtime/runDirs.js";
+import { assertOperationalRuntimeUpNotLaunchdManaged } from "../runtime/serviceGuard.js";
 import { stopRuntimeParent } from "../runtime/stop.js";
 import { tychonicWorktreeParentDir } from "../runtime/worktreeDirs.js";
 import {
@@ -75,6 +84,7 @@ import {
   inspectWorkflowBundleDirectory
 } from "../temporal/workflowModules.js";
 import { validateTaskWorkflowInput } from "../inputValidation.js";
+import { assertAgentExecutablesAvailable } from "../adapters/executablePreflight.js";
 import { productVersion } from "../version.js";
 
 const program = new Command();
@@ -263,6 +273,7 @@ workflowsCommand
   .description("Install a workflow bundle and refresh the LaunchAgent worker when applicable")
   .action(async (directory: string) => {
     const bundle = await installRuntimeWorkflowModule({ sourcePath: directory });
+    await prepareRuntimeExecutableEnv();
     const replacement = await tryReplaceLaunchdWorker();
     console.log(
       JSON.stringify(
@@ -285,6 +296,7 @@ workflowsCommand
   .description("Remove an installed workflow bundle and refresh the LaunchAgent worker when applicable")
   .action(async (name: string) => {
     const bundle = await removeRuntimeWorkflowModule(name);
+    await prepareRuntimeExecutableEnv();
     const replacement = await tryReplaceLaunchdWorker();
     console.log(
       JSON.stringify(
@@ -325,7 +337,8 @@ configCommand
       workflow: options.workflowName,
       bundleDir,
       source: resolved.source,
-      profile: resolved.profile
+      profile: resolved.profile,
+      warnings: collectConfigWarnings(resolved.profile)
     };
     if (options.format === "json") {
       console.log(JSON.stringify({ ok: true, ...payload }, null, 2));
@@ -353,7 +366,8 @@ configCommand
             version: "tychonic.config.validate.v2",
             workflow: options.workflowName,
             source: resolved.source,
-            profile: resolved.profile
+            profile: resolved.profile,
+            warnings: collectConfigWarnings(resolved.profile)
           },
           null,
           2
@@ -432,6 +446,7 @@ runtimeCommand
       if (options.daemonChild && !options.readyFile) {
         throw new Error("runtime up --daemon-child is internal and requires --ready-file");
       }
+      await assertOperationalRuntimeUpAllowed();
       if (!options.foreground) {
         await handleRuntimeUpDaemon(options);
         return;
@@ -464,6 +479,7 @@ runtimeCommand
       let statusUiServerForCleanup: Server | undefined;
       let stopTemporalOnFailure = false;
       try {
+        applyRuntimeExecutableEnv(await prepareRuntimeExecutableEnv());
         const workflowBundle = await buildWorkflowBundle();
         const temporalConfig = temporalConfigFromOptions(options);
         const manager = new TemporalManager(temporalConfig);
@@ -1355,6 +1371,9 @@ temporalCommand
     temporalTaskQueue?: string;
     shutdownGraceTime?: string;
   }) => {
+    if (!(await applyPersistedRuntimeExecutableEnv())) {
+      applyRuntimeExecutableEnv(await prepareRuntimeExecutableEnv());
+    }
     await runTemporalWorker({
       ...temporalConfigFromOptions(options),
       ...(options.shutdownGraceTime ? { shutdownGraceTime: options.shutdownGraceTime } : {})
@@ -1426,6 +1445,11 @@ async function startNamedWorkflowFromCli(workflowName: string, options: RunComma
   await loadBundleDir();
   if (workflowInput.hasInput) {
     validateTaskWorkflowInput(workflowInput.input);
+    const profile = workflowProfileFromRunInput(workflowInput.input);
+    emitConfigWarnings(profile);
+    await assertAgentExecutablesAvailable(profile, {
+      context: `tychonic run ${workflowName}`
+    });
   }
   const temporalConfig = temporalConfigFromOptions(options);
   const result = await startNamedTemporalWorkflow({
@@ -1467,6 +1491,22 @@ async function startNamedWorkflowFromCli(workflowName: string, options: RunComma
       2
     )
   );
+}
+
+function workflowProfileFromRunInput(input: unknown): TychonicConfig | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  const profile = (input as { profile?: unknown }).profile;
+  return profile && typeof profile === "object" && !Array.isArray(profile)
+    ? profile as TychonicConfig
+    : undefined;
+}
+
+function emitConfigWarnings(profile: TychonicConfig | undefined): void {
+  for (const warning of collectConfigWarnings(profile)) {
+    process.stderr.write(`tychonic warning: ${warning.message}\n`);
+  }
 }
 
 async function waitForStoppedWorkflowFromCli(options: {
@@ -1695,6 +1735,13 @@ async function tryReplaceLaunchdWorker(): Promise<{ worker_replacement: unknown 
   }
 }
 
+async function assertOperationalRuntimeUpAllowed(): Promise<void> {
+  if (getActiveInstance() !== undefined) return;
+  if (platform() !== "darwin") return;
+  const services = await statusLaunchdServices();
+  assertOperationalRuntimeUpNotLaunchdManaged(services);
+}
+
 /**
  * `runtime up` user path. Spawns the foreground runtime in a detached session
  * and returns immediately. The foreground worker remains available as
@@ -1775,6 +1822,7 @@ async function handleRuntimeUpDaemon(options: {
     // Without this, a missing bundle dependency can make the child exit after
     // the parent already printed a success-looking detached PID.
     await buildWorkflowBundle();
+    const runtimeExecutableEnv = await prepareRuntimeExecutableEnv();
 
     // Reconstruct the flags the child should receive. The child always receives
     // `--foreground`; `--instance` is re-passed explicitly inside
@@ -1798,7 +1846,8 @@ async function handleRuntimeUpDaemon(options: {
       ...(instance ? { instance } : {}),
       extraArgs,
       logFile,
-      pidFile
+      pidFile,
+      env: mergeRuntimeExecutableEnv(process.env, runtimeExecutableEnv)
     });
 
     let ready: RuntimeReadyPayload;

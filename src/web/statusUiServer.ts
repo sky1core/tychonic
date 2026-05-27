@@ -432,8 +432,7 @@ function statusEventHeaders(): Record<string, string> {
 function writeStatusEvent(response: ServerResponse, event: string, payload: Record<string, unknown>): boolean {
   if (response.destroyed || response.writableEnded) return false;
   try {
-    response.write(`event: ${event}\n`);
-    response.write(`data: ${JSON.stringify(payload)}\n\n`);
+    response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     return true;
   } catch {
     return false;

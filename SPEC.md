@@ -145,7 +145,7 @@ bundles installed via `tychonic workflows install`. Reference examples under
 `examples/workflows/` are opt-in bundle sources, not host defaults.
 
 Users select supported agent CLIs through state config `agent` labels:
-`claude`, `codex`, `gemini`, and `kiro`. Hand-written `command` values are an
+`claude`, `codex`, and `kiro`. Hand-written `command` values are an
 escape hatch for non-default execution paths.
 
 Public workflow run input must not require callers to memorize workflow-internal

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { claudeAdapter } from "../../src/adapters/claude.js";
+import { claudeAdapter } from "../../src/adapters/openp.js";
 import type { AdapterRunInput } from "../../src/adapters/types.js";
-import { FINDING_SEVERITIES } from "../../src/domain/types.js";
 
 const BASE: AdapterRunInput = {
   prompt: "do the thing",
@@ -14,164 +13,46 @@ describe("claudeAdapter", () => {
     expect(claudeAdapter.name).toBe("claude");
   });
 
-  it("runNew(work) emits stream-json + acceptEdits permission mode", () => {
+  it("runNew(work) uses only OpenP public flags by default", () => {
     const { command } = claudeAdapter.runNew(BASE);
     expect(command).toBe(
-      "claude -p --output-format stream-json --verbose --permission-mode acceptEdits"
+      "openp claude --timeout 0 --output-format stream-json"
     );
   });
 
-  it("runNew passes explicit model and effort settings", () => {
-    const { command } = claudeAdapter.runNew({
-      ...BASE,
-      model: "opus",
-      reasoningEffort: "max"
-    });
-    expect(command).toBe(
-      "claude -p --model 'opus' --effort 'max' --output-format stream-json --verbose --permission-mode acceptEdits"
-    );
-  });
-
-  it("runNew(review) flips permission mode to plan", () => {
+  it("runNew(review) includes --json-schema without private permission-mode flags", () => {
     const { command } = claudeAdapter.runNew({ ...BASE, role: "review" });
-    expect(command).toContain("--permission-mode plan");
-    expect(command).toContain("--tools Read,Grep,Glob");
     expect(command).toContain("--json-schema");
-    expect(command).not.toContain("tychonic.review.v1");
+    expect(command).not.toContain("--permission-mode");
   });
 
-  it("runNew(review) embeds a schema for semantic review payloads only", () => {
-    const { command } = claudeAdapter.runNew({ ...BASE, role: "review" });
-    const schema = extractReviewJsonSchema(command);
-    expect(schema).toMatchObject({
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        status: { enum: ["pass", "fail"] },
-        summary: { type: "string", minLength: 1 },
-        findings: { type: "array" }
-      },
-      required: ["status", "summary", "findings"]
-    });
-    expect(objectField(schema, "properties")).not.toHaveProperty("schema_version");
-    expect(schema).not.toHaveProperty("oneOf");
-    expect(schema).not.toHaveProperty("allOf");
-    expect(schema).not.toHaveProperty("anyOf");
-
-    const properties = objectField(schema, "properties");
-    const findings = objectField(properties, "findings");
-    const findingItems = objectField(findings, "items");
-    expect(findingItems).toMatchObject({
-      additionalProperties: false,
-      properties: {
-        severity: { enum: FINDING_SEVERITIES },
-        title: { type: "string", minLength: 1 },
-        detail: { type: "string", minLength: 1 },
-        target: { type: "string", minLength: 1 },
-        target_session_id: { type: "string" }
-      },
-      required: ["severity", "title", "detail"]
-    });
-    expect(String(findings.description)).toContain("Actionable problems only");
-    expect(String(findingItems.description)).toContain("One actionable problem");
-  });
-
-  it("runNew honours an explicit permissionMode override", () => {
+  it("runNew maps explicit bypass permission to OpenP's public trust flag", () => {
     const { command } = claudeAdapter.runNew({
       ...BASE,
       permissionMode: "bypassPermissions"
     });
-    expect(command).toContain("--permission-mode bypassPermissions");
-    expect(command).not.toContain("acceptEdits");
+    expect(command).toContain("--dangerously-skip-permissions");
+    expect(command).not.toContain("--permission-mode");
   });
 
-  it("runResume appends --resume <session-id> to base args", () => {
+  it("runResume appends --resume without private permission-mode flags", () => {
     const { command } = claudeAdapter.runResume({
       ...BASE,
       sessionId: "11111111-2222-3333-4444-555555555555"
     });
     expect(command).toBe(
-      "claude -p --output-format stream-json --verbose --permission-mode acceptEdits --resume '11111111-2222-3333-4444-555555555555'"
+      "openp claude --timeout 0 --output-format stream-json --resume '11111111-2222-3333-4444-555555555555'"
     );
   });
 
-  it("runResume keeps explicit model and effort settings", () => {
-    const { command } = claudeAdapter.runResume({
-      ...BASE,
-      model: "opus",
-      reasoningEffort: "max",
-      sessionId: "11111111-2222-3333-4444-555555555555"
-    });
-    expect(command).toBe(
-      "claude -p --model 'opus' --effort 'max' --output-format stream-json --verbose --permission-mode acceptEdits --resume '11111111-2222-3333-4444-555555555555'"
-    );
-  });
-
-  it("runResume(review) keeps role-specific permission mode", () => {
+  it("runResume(review) includes --json-schema and --resume", () => {
     const { command } = claudeAdapter.runResume({
       ...BASE,
       role: "review",
       sessionId: "abc"
     });
-    expect(command).toContain("--permission-mode plan");
-    expect(command).toContain("--tools Read,Grep,Glob");
     expect(command).toContain("--json-schema");
     expect(command).toContain("--resume 'abc'");
-  });
-
-  it("quotes resume session ids because they come from external CLI output", () => {
-    const { command } = claudeAdapter.runResume({
-      ...BASE,
-      sessionId: "abc'; echo unsafe #"
-    });
-    expect(command).toContain("--resume 'abc'\\''; echo unsafe #'");
-  });
-
-  it("parseResult extracts session_id from the system.init event", () => {
-    const stdout = [
-      JSON.stringify({
-        type: "system",
-        subtype: "init",
-        session_id: "11111111-2222-3333-4444-555555555555",
-        model: "claude-opus-4-7",
-        cwd: "/tmp/wt"
-      }),
-      JSON.stringify({ type: "assistant", message: { role: "assistant" } })
-    ].join("\n");
-    expect(claudeAdapter.parseResult(stdout, "", 0)).toEqual({
-      sessionId: "11111111-2222-3333-4444-555555555555",
-      reportedModel: "claude-opus-4-7"
-    });
-  });
-
-  it("parseResult tolerates non-JSON noise before the JSONL stream", () => {
-    const stdout = [
-      "warning: telemetry disabled",
-      "",
-      JSON.stringify({ type: "system", session_id: "abc-123" })
-    ].join("\n");
-    expect(claudeAdapter.parseResult(stdout, "", 0)).toEqual({
-      sessionId: "abc-123"
-    });
-  });
-
-  it("parseResult returns empty when no session_id is present", () => {
-    expect(claudeAdapter.parseResult("hello world\n", "", 0)).toEqual({});
+    expect(command).not.toContain("--permission-mode");
   });
 });
-
-function extractReviewJsonSchema(command: string): Record<string, unknown> {
-  const match = /--json-schema '([^']+)'/.exec(command);
-  if (!match?.[1]) {
-    throw new Error(`expected --json-schema argument in command: ${command}`);
-  }
-  return JSON.parse(match[1]) as Record<string, unknown>;
-}
-
-function objectField(value: Record<string, unknown>, key: string): Record<string, unknown> {
-  const field = value[key];
-  if (!field || typeof field !== "object" || Array.isArray(field)) {
-    throw new Error(`expected object field ${key}`);
-  }
-  return field as Record<string, unknown>;
-}

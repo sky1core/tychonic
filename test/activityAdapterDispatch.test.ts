@@ -1,11 +1,12 @@
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runWorkerActivity } from "../src/activities/runWorkerActivity.js";
 import { runReviewActivity } from "../src/activities/runReviewActivity.js";
+import { claudeAdapter } from "../src/adapters/openp.js";
 import { TYCHONIC_AGENT_PATH_ENV } from "../src/bootstrap/executables.js";
 import type { TychonicConfig } from "../src/catalog/types.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
@@ -33,20 +34,22 @@ let stubBinDir: string;
 beforeEach(async () => {
   originalAgentPath = process.env[TYCHONIC_AGENT_PATH_ENV];
   stubBinDir = await mkdtemp(join(tmpdir(), "tychonic-adapter-dispatch-bin-"));
-  await writeStubBinary(join(stubBinDir, "claude"));
-  await writeStubBinary(join(stubBinDir, "codex"));
-  await writeStubBinary(join(stubBinDir, "gemini"));
-  await writeKiroStubBinary(join(stubBinDir, "kiro-cli"));
+  await writeStubBinary(join(stubBinDir, "openp"));
   process.env[TYCHONIC_AGENT_PATH_ENV] = stubBinDir;
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   if (originalAgentPath === undefined) {
     delete process.env[TYCHONIC_AGENT_PATH_ENV];
   } else {
     process.env[TYCHONIC_AGENT_PATH_ENV] = originalAgentPath;
   }
 });
+
+function quotedStub(name: string): string {
+  return `'${join(stubBinDir, name)}'`;
+}
 
 describe("runWorkerActivity adapter dispatch", () => {
   it("verbatim block.command path: adapter is NOT called", async () => {
@@ -84,7 +87,7 @@ describe("runWorkerActivity adapter dispatch", () => {
 
     const command = result.delta.activityAttempts?.[0]?.command;
     expect(command).toBe(
-      "claude -p --output-format stream-json --verbose --permission-mode acceptEdits"
+      `${quotedStub("openp")} claude --timeout 0 --output-format stream-json`
     );
     if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
     expect(result.workerOutcome.agentSessions[0]?.agent).toBe("claude");
@@ -116,7 +119,7 @@ describe("runWorkerActivity adapter dispatch", () => {
   });
 
   it("fails a Claude worker when the reported model differs from the requested model", async () => {
-    await writeClaudeModelReportingStubBinary(join(stubBinDir, "claude"), "claude-opus-4-5");
+    await writeClaudeModelReportingStubBinary(join(stubBinDir, "openp"), "claude-opus-4-5");
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-mismatch-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-mismatch-wt-"));
 
@@ -144,7 +147,7 @@ describe("runWorkerActivity adapter dispatch", () => {
   });
 
   it("does not reject Claude alias model names when the CLI reports a concrete version", async () => {
-    await writeClaudeModelReportingStubBinary(join(stubBinDir, "claude"), "claude-opus-4-7");
+    await writeClaudeModelReportingStubBinary(join(stubBinDir, "openp"), "claude-opus-4-7");
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-alias-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-alias-wt-"));
 
@@ -183,7 +186,7 @@ describe("runWorkerActivity adapter dispatch", () => {
     ).rejects.toThrow(/profile\.states\.work_disp failed schema validation/);
   });
 
-  it("block.agent built-in (kiro) captures ACP session id", async () => {
+  it("block.agent built-in (kiro) dispatches via openp kiro with dangerously-skip-permissions", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-wt-"));
 
@@ -197,24 +200,56 @@ describe("runWorkerActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain("kiro-cli");
-    expect(command).toContain("session/new");
-    expect(command).toContain("session/prompt");
-    expect(command).not.toContain("/chat save");
+    expect(command).toBe(
+      `${quotedStub("openp")} kiro --timeout 0 --output-format stream-json --dangerously-skip-permissions`
+    );
     if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
     expect(result.workerOutcome.agentSessions[0]?.agent).toBe("kiro");
-    expect(result.workerOutcome.agentSessions[0]?.id).toBe("kiro-stub-session-id");
+    expect(result.workerOutcome.agentSessions[0]?.id).toBe("stub-session-id");
     expect(result.workerOutcome.agentSessions[0]?.resumable).toBe(true);
-    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("kiro-stub-session-id");
-    await expect(readFile(join(worktreePath, "kiro-written.txt"), "utf8")).resolves.toBe(
-      "written through ACP fs client"
+    expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("stub-session-id");
+  });
+
+  it("resumes a Kiro worker session through openp kiro --resume", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-resume-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-kiro-resume-wt-"));
+    const run = baseRun("disp_worker_kiro_resume");
+    run.agent_sessions.push({
+      id: "kiro-prev-session",
+      agent: "kiro",
+      role: "worker",
+      cwd: worktreePath,
+      status: "succeeded",
+      resumable: true,
+      started_at: "2026-04-26T00:00:00.000Z",
+      finished_at: "2026-04-26T00:00:01.000Z"
+    });
+
+    const result = await runWorkerActivity({
+      stateName: WORK_NAME,
+      run,
+      cwd,
+      profile: workProfile({ agent: "kiro" }),
+      worktreePath,
+      prompt: "resume kiro work",
+      sessionId: "kiro-prev-session"
+    });
+
+    const command = result.delta.activityAttempts?.[0]?.command ?? "";
+    expect(command).toBe(
+      `${quotedStub("openp")} kiro --timeout 0 --output-format stream-json --dangerously-skip-permissions --resume 'kiro-prev-session'`
     );
+    expect(result.delta.activityAttempts?.[0]?.kind).toBe("resume_work");
+    expect(result.workerOutcome?.kind).toBe("executed");
+    if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
+    expect(result.workerOutcome.resumedSessionId).toBe("kiro-prev-session");
   });
 });
 
 describe("runReviewActivity adapter dispatch", () => {
   it("verbatim block.command path: adapter is NOT called", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-verbatim-"));
+    await initGitWorktree(cwd);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
@@ -234,8 +269,10 @@ describe("runReviewActivity adapter dispatch", () => {
 
   it("block.agent built-in (claude) with no command -> dispatches via claudeAdapter.runNew with role review", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-claude-"));
+    await initGitWorktree(cwd);
 
-    // Adapter dispatches `claude ... --permission-mode plan`. The stub claude
+    // Adapter dispatches the resolved OpenP executable with Claude backend.
+    // The stub OpenP
     // binary emits a session id but no review payload, so the review body
     // blocks on parsing while still preserving the adapter-owned session id.
     const result = await runReviewActivity({
@@ -256,8 +293,10 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain("claude -p --output-format stream-json --verbose --permission-mode plan");
-    expect(command).toContain("--tools Read,Grep,Glob");
+    expect(command).toContain(`${quotedStub("openp")} claude --timeout 0 --output-format stream-json`);
+    expect(command).not.toContain("--permission-mode");
+    expect(command).not.toContain("--verbose");
+    expect(command).not.toContain("--tools");
     expect(command).toContain("--json-schema");
     expect(command).not.toContain("tychonic.review.v1");
     expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("stub-session-id");
@@ -267,9 +306,10 @@ describe("runReviewActivity adapter dispatch", () => {
     expect(result.reviewOutcome.agentSessions[0]?.id).toBe("stub-session-id");
   });
 
-  it("block.agent built-in (claude) parses structured_output through the review activity path", async () => {
-    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"));
+  it("block.agent built-in (claude) parses structuredOutput through the review activity path", async () => {
+    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "openp"));
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-claude-structured-"));
+    await initGitWorktree(cwd);
     const run = baseRun("disp_review_claude_structured", cwd);
 
     const result = await runReviewActivity({
@@ -281,8 +321,10 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain("claude -p --output-format stream-json --verbose --permission-mode plan");
-    expect(command).toContain("--tools Read,Grep,Glob");
+    expect(command).toContain(`${quotedStub("openp")} claude --timeout 0 --output-format stream-json`);
+    expect(command).not.toContain("--permission-mode");
+    expect(command).not.toContain("--verbose");
+    expect(command).not.toContain("--tools");
     expect(command).toContain("--json-schema");
     expect(result.delta.states?.[0]?.status).toBe("succeeded");
     expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("structured-session-id");
@@ -299,6 +341,8 @@ describe("runReviewActivity adapter dispatch", () => {
     const promptArtifactText = await readFile(join(run.artifact_root!, promptArtifact.path), "utf8");
     expect(promptArtifactText).toContain("review please");
     expect(promptArtifactText).toContain("Tychonic structured review output contract");
+    expect(promptArtifactText).toContain("Return exactly one JSON object only");
+    expect(promptArtifactText).toContain("Use null for target or target_session_id when unknown");
     expect(promptArtifactText).toContain("findings are actionable problems only");
 
     const parsedArtifact = result.reviewOutcome.artifacts.find(
@@ -314,9 +358,10 @@ describe("runReviewActivity adapter dispatch", () => {
     });
   });
 
-  it("block.agent built-in (claude) parses terminal structured_output after large tool output", async () => {
-    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"), undefined, 1_100_000);
+  it("block.agent built-in (claude) parses terminal structuredOutput after large tool output", async () => {
+    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "openp"), undefined, 1_100_000);
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-claude-structured-large-"));
+    await initGitWorktree(cwd);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
@@ -333,8 +378,9 @@ describe("runReviewActivity adapter dispatch", () => {
   });
 
   it("fails a Claude review when the reported model differs from the requested model", async () => {
-    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "claude"), "claude-opus-4-5");
+    await writeClaudeStructuredReviewStubBinary(join(stubBinDir, "openp"), "claude-opus-4-5");
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-model-mismatch-"));
+    await initGitWorktree(cwd);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
@@ -358,9 +404,10 @@ describe("runReviewActivity adapter dispatch", () => {
     expect(result.reviewOutcome.agentSessions[0]?.status).toBe("failed");
   });
 
-  it("block.agent built-in (codex) parses the appended last-message through the review activity path", async () => {
-    await writeCodexSemanticReviewStubBinary(join(stubBinDir, "codex"));
+  it("block.agent built-in (codex) parses OpenP structuredOutput through the review activity path", async () => {
+    await writeCodexSemanticReviewStubBinary(join(stubBinDir, "openp"));
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-codex-semantic-"));
+    await initGitWorktree(cwd);
 
     const result = await runReviewActivity({
       stateName: REVIEW_NAME,
@@ -371,10 +418,10 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain('review_schema=$(mktemp');
     expect(command).toContain(
-      'codex -a never exec --skip-git-repo-check --json --sandbox workspace-write --output-schema "$review_schema" --output-last-message "$last_message" -'
+      `${quotedStub("openp")} codex --timeout 0 --output-format stream-json --dangerously-skip-permissions --json-schema`
     );
+    expect(command).not.toContain("--permission-mode");
     expect(result.delta.states?.[0]?.status).toBe("succeeded");
     expect(result.delta.activityAttempts?.[0]?.agent_session_id).toBe("codex-structured-thread-id");
     expect(result.reviewOutcome?.kind).toBe("parsed");
@@ -384,30 +431,9 @@ describe("runReviewActivity adapter dispatch", () => {
     expect(result.reviewOutcome.reviewerSessionId).toBe("codex-structured-thread-id");
   });
 
-  it("rejects a partial built-in adapter on a review state without normalizer", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-gemini-"));
-
-    await expect(
-      runReviewActivity({
-        stateName: REVIEW_NAME,
-        run: baseRun("disp_review_gemini"),
-        cwd,
-        profile: {
-          version: "tychonic.config.v1",
-          states: {
-            [REVIEW_NAME]: {
-              type: "review",
-              agent: "gemini"
-            }
-          }
-        },
-        prompt: "review please"
-      })
-    ).rejects.toThrow(/profile\.states\.review_disp failed schema validation/);
-  });
-
   it("runs a partial review adapter through the declared normalizer", async () => {
-    await writeClaudeStructuredReviewWithCwdStubBinary(join(stubBinDir, "claude"));
+    await writeClaudeStructuredReviewWithCwdStubBinary(join(stubBinDir, "openp"));
+    const normalizerSpy = vi.spyOn(claudeAdapter, "runNew");
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-normalized-"));
     const worktreePath = await mkdtemp(
       join(tmpdir(), "tychonic-disp-review-kiro-normalized-wt-")
@@ -425,13 +451,15 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain("session/new");
-    expect(command).toContain("session/prompt");
-    expect(command).toContain("node --input-type=module - \"$prompt_file\" '' '0'");
+    expect(command).toContain(`${quotedStub("openp")} kiro --timeout 0 --output-format stream-json`);
+    expect(command).not.toContain("--dangerously-skip-permissions");
+    expect(normalizerSpy.mock.calls.at(-1)?.[0].executablePaths?.openp).toBe(
+      join(stubBinDir, "openp")
+    );
     expect(result.reviewOutcome?.kind).toBe("parsed");
     if (result.reviewOutcome?.kind !== "parsed") throw new Error("expected parsed outcome");
     expect(result.reviewOutcome.result.status).toBe("pass");
-    expect(result.reviewOutcome.reviewerSessionId).toBe("kiro-stub-session-id");
+    expect(result.reviewOutcome.reviewerSessionId).toBe("structured-session-id");
     expect(result.reviewOutcome.agentSessions.map((session) => session.agent)).toEqual([
       "kiro",
       "claude"
@@ -449,7 +477,7 @@ describe("runReviewActivity adapter dispatch", () => {
     if (!normalizerOutputArtifact) throw new Error("expected normalizer output artifact");
     const normalizerOutputText = await readFile(join(run.artifact_root!, normalizerOutputArtifact.path), "utf8");
     expect(normalizerOutputText).toContain("NORMALIZER_CWD:");
-    expect(normalizerOutputText).toContain("ARGV:-p --model haiku --output-format");
+    expect(normalizerOutputText).toContain("ARGV:claude --timeout 0 --model haiku --output-format");
     expect(normalizerOutputText).not.toContain(cwd);
     expect(normalizerOutputText).not.toContain(worktreePath);
     const normalizerSession = result.reviewOutcome.agentSessions.find(
@@ -460,52 +488,8 @@ describe("runReviewActivity adapter dispatch", () => {
     expect(normalizerSession?.cwd).not.toBe(worktreePath);
   });
 
-  it("runs a partial review adapter through a codex normalizer", async () => {
-    await writeCodexSemanticReviewStubBinary(join(stubBinDir, "codex"));
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-gemini-codex-normalized-"));
-    const run = baseRun("disp_review_gemini_codex_normalized", cwd);
-
-    const result = await runReviewActivity({
-      stateName: REVIEW_NAME,
-      run,
-      cwd,
-      profile: reviewProfile({ agent: "gemini", normalizer: "codex" }),
-      prompt: "review please"
-    });
-
-    const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toBe('gemini --approval-mode plan --sandbox --output-format stream-json -p ""');
-    expect(result.reviewOutcome?.kind).toBe("parsed");
-    if (result.reviewOutcome?.kind !== "parsed") throw new Error("expected parsed outcome");
-    expect(result.reviewOutcome.result.status).toBe("pass");
-    expect(result.reviewOutcome.agentSessions.map((session) => session.agent)).toEqual([
-      "gemini",
-      "codex"
-    ]);
-    expect(result.reviewOutcome.agentSessions.at(-1)?.id).toBe("codex-structured-thread-id");
-
-    const normalizerPromptArtifact = result.reviewOutcome.artifacts.find(
-      (artifact) => artifact.kind === `${REVIEW_NAME}_normalizer_prompt`
-    );
-    if (!normalizerPromptArtifact) throw new Error("expected normalizer prompt artifact");
-    const normalizerPrompt = await readFile(join(run.artifact_root!, normalizerPromptArtifact.path), "utf8");
-    expect(normalizerPrompt).toContain("Top-level keys are exactly: status, summary, findings.");
-    expect(normalizerPrompt).toContain("severity, title, detail");
-    expect(normalizerPrompt).toContain("Use the exact key detail");
-    expect(normalizerPrompt).toContain('"detail":"..."');
-
-    const normalizerOutputArtifact = result.reviewOutcome.artifacts.find(
-      (artifact) => artifact.kind === `${REVIEW_NAME}_normalizer_output`
-    );
-    if (!normalizerOutputArtifact) throw new Error("expected normalizer output artifact");
-    const normalizerOutputText = await readFile(join(run.artifact_root!, normalizerOutputArtifact.path), "utf8");
-    expect(normalizerOutputText).toContain(
-      "ARGV:-a never --model gpt-5.3-codex-spark exec --skip-git-repo-check --json --sandbox workspace-write -"
-    );
-  });
-
-  it("lets Kiro QA run tools but blocks direct review file writes", async () => {
-    await writeClaudeStructuredReviewWithCwdStubBinary(join(stubBinDir, "claude"));
+  it("maps trust_all_tools to --dangerously-skip-permissions for Kiro review", async () => {
+    await writeClaudeStructuredReviewWithCwdStubBinary(join(stubBinDir, "openp"));
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-tool-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-tool-wt-"));
     await initGitWorktree(worktreePath);
@@ -524,41 +508,196 @@ describe("runReviewActivity adapter dispatch", () => {
     });
 
     const command = result.delta.activityAttempts?.[0]?.command ?? "";
-    expect(command).toContain("--trust-all-tools");
+    expect(command).toContain("--dangerously-skip-permissions");
     expect(result.reviewOutcome?.kind).toBe("parsed");
-    await expect(readFile(join(worktreePath, "kiro-written.txt"), "utf8")).rejects.toThrow();
   });
 
-  it("fails Kiro QA when a terminal tool modifies tracked source", async () => {
-    await writeClaudeStructuredReviewWithCwdStubBinary(join(stubBinDir, "claude"));
-    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-mutating-"));
-    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-kiro-mutating-wt-"));
+  it("keeps review mutation guard active when PATH points at the git executable directory", async () => {
+    const { stdout: gitPathOutput } = await execFileAsync("/bin/sh", ["-lc", "command -v git"]);
+    const gitPath = gitPathOutput.trim();
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-path-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-path-wt-"));
     await initGitWorktree(worktreePath);
-    const originalMode = process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE;
-    process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE = "1";
+    const run = baseRun("disp_review_git_path_guard");
+    const originalPath = process.env.PATH;
+    process.env.PATH = dirname(gitPath);
     try {
       const result = await runReviewActivity({
         stateName: REVIEW_NAME,
-        run: baseRun("disp_review_kiro_mutating_terminal"),
+        run,
         cwd,
         worktreePath,
         profile: reviewProfile({
-          agent: "kiro",
-          normalizer: "claude",
-          trust_all_tools: true
+          command: `'${process.execPath}' -e "require('node:fs').writeFileSync('README.md', 'mutated by review\\\\n'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))"`
         }),
-        prompt: "review and run checks"
+        prompt: "review please"
       });
 
-      expect(result.reviewOutcome?.kind).toBe("command_failed");
-      expect(result.delta.states?.[0]?.reason).toBe("reviewer command did not succeed");
-    } finally {
-      if (originalMode === undefined) {
-        delete process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE;
-      } else {
-        process.env.TYCHONIC_KIRO_STUB_TERMINAL_MUTATE = originalMode;
+      if (result.reviewOutcome?.kind !== "command_failed") {
+        throw new Error("expected command_failed outcome");
       }
+      const outputArtifact = result.reviewOutcome.artifacts.find(
+        (artifact) => artifact.kind === `${REVIEW_NAME}_output`
+      );
+      if (!outputArtifact) throw new Error("expected output artifact");
+      const outputText = await readFile(join(run.artifact_root!, outputArtifact.path), "utf8");
+      expect(result.delta.states?.[0]?.reason).toContain("review mutation guard failed");
+      expect(outputText).toContain("review mutation guard failed: review changed the git worktree");
+      expect(result.delta.activityAttempts?.[0]?.status).toBe("failed");
+    } finally {
+      restoreEnv("PATH", originalPath);
     }
+  });
+
+  it("fails a git worktree review before running the reviewer when git is unavailable", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-missing-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-missing-wt-"));
+    await initGitWorktree(worktreePath);
+    const run = baseRun("disp_review_git_missing_guard");
+    const originalPath = process.env.PATH;
+    process.env.PATH = "/definitely/missing";
+    try {
+      const result = await runReviewActivity({
+        stateName: REVIEW_NAME,
+        run,
+        cwd,
+        worktreePath,
+        profile: reviewProfile({
+          command: `'${process.execPath}' -e "require('node:fs').writeFileSync('review-ran.txt', 'ran'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))"`
+        }),
+        prompt: "review please"
+      });
+
+      if (result.reviewOutcome?.kind !== "command_failed") {
+        throw new Error("expected command_failed outcome");
+      }
+      const outputArtifact = result.reviewOutcome.artifacts.find(
+        (artifact) => artifact.kind === `${REVIEW_NAME}_output`
+      );
+      if (!outputArtifact) throw new Error("expected output artifact");
+      const outputText = await readFile(join(run.artifact_root!, outputArtifact.path), "utf8");
+      expect(outputText).toContain("review mutation guard failed before reviewer command");
+      expect(outputText).toContain("git executable was not found");
+      expect(result.delta.states?.[0]?.reason).toContain("review mutation guard failed before reviewer command");
+      expect(result.reviewOutcome.reason).toContain("git executable was not found");
+      await expect(readFile(join(worktreePath, "review-ran.txt"), "utf8")).rejects.toThrow();
+    } finally {
+      restoreEnv("PATH", originalPath);
+    }
+  });
+
+  it("fails a git worktree review before running the reviewer when PATH git is not executable", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-not-exec-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-not-exec-wt-"));
+    await initGitWorktree(worktreePath);
+    const run = baseRun("disp_review_git_not_exec_guard");
+    const gitDir = join(cwd, "bad-bin");
+    const gitPath = join(gitDir, "git");
+    const originalPath = process.env.PATH;
+    process.env.PATH = gitDir;
+    try {
+      await mkdir(gitDir, { recursive: true });
+      await writeFile(gitPath, "#!/bin/sh\n", "utf8");
+      const result = await runReviewActivity({
+        stateName: REVIEW_NAME,
+        run,
+        cwd,
+        worktreePath,
+        profile: reviewProfile({
+          command: `'${process.execPath}' -e "require('node:fs').writeFileSync('review-ran.txt', 'ran'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))"`
+        }),
+        prompt: "review please"
+      });
+
+      if (result.reviewOutcome?.kind !== "command_failed") {
+        throw new Error("expected command_failed outcome");
+      }
+      const outputArtifact = result.reviewOutcome.artifacts.find(
+        (artifact) => artifact.kind === `${REVIEW_NAME}_output`
+      );
+      if (!outputArtifact) throw new Error("expected output artifact");
+      const outputText = await readFile(join(run.artifact_root!, outputArtifact.path), "utf8");
+      expect(outputText).toContain("review mutation guard failed before reviewer command");
+      expect(outputText).toContain("git executable was not found");
+      expect(result.delta.states?.[0]?.reason).toContain("review mutation guard failed before reviewer command");
+      expect(result.reviewOutcome.reason).toContain("git executable was not found");
+      await expect(readFile(join(worktreePath, "review-ran.txt"), "utf8")).rejects.toThrow();
+    } finally {
+      restoreEnv("PATH", originalPath);
+    }
+  });
+
+  it("fails a git worktree review before running the reviewer when PATH git is not git", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-fake-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-git-fake-wt-"));
+    await initGitWorktree(worktreePath);
+    const run = baseRun("disp_review_git_fake_guard");
+    const gitDir = join(cwd, "fake-bin");
+    const gitPath = join(gitDir, "git");
+    const originalPath = process.env.PATH;
+    process.env.PATH = gitDir;
+    try {
+      await mkdir(gitDir, { recursive: true });
+      await writeFile(gitPath, "#!/bin/sh\necho not-git\n", "utf8");
+      await chmod(gitPath, 0o755);
+      const result = await runReviewActivity({
+        stateName: REVIEW_NAME,
+        run,
+        cwd,
+        worktreePath,
+        profile: reviewProfile({
+          command: `'${process.execPath}' -e "require('node:fs').writeFileSync('review-ran.txt', 'ran'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))"`
+        }),
+        prompt: "review please"
+      });
+
+      if (result.reviewOutcome?.kind !== "command_failed") {
+        throw new Error("expected command_failed outcome");
+      }
+      const outputArtifact = result.reviewOutcome.artifacts.find(
+        (artifact) => artifact.kind === `${REVIEW_NAME}_output`
+      );
+      if (!outputArtifact) throw new Error("expected output artifact");
+      const outputText = await readFile(join(run.artifact_root!, outputArtifact.path), "utf8");
+      expect(outputText).toContain("review mutation guard failed before reviewer command");
+      expect(outputText).toContain("git executable did not report a git version");
+      expect(result.delta.states?.[0]?.reason).toContain("review mutation guard failed before reviewer command");
+      expect(result.reviewOutcome.reason).toContain("git executable did not report a git version");
+      await expect(readFile(join(worktreePath, "review-ran.txt"), "utf8")).rejects.toThrow();
+    } finally {
+      restoreEnv("PATH", originalPath);
+    }
+  });
+
+  it("fails a non-git review cwd before running the reviewer", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-review-non-git-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-review-non-git-wt-"));
+    const run = baseRun("disp_review_non_git_guard");
+
+    const result = await runReviewActivity({
+      stateName: REVIEW_NAME,
+      run,
+      cwd,
+      worktreePath,
+      profile: reviewProfile({
+        command: `'${process.execPath}' -e "require('node:fs').writeFileSync('review-ran.txt', 'ran'); console.log(JSON.stringify({schema_version:'tychonic.review.v1',status:'pass',summary:'ok',findings:[]}))"`
+      }),
+      prompt: "review please"
+    });
+
+    if (result.reviewOutcome?.kind !== "command_failed") {
+      throw new Error("expected command_failed outcome");
+    }
+    const outputArtifact = result.reviewOutcome.artifacts.find(
+      (artifact) => artifact.kind === `${REVIEW_NAME}_output`
+    );
+    if (!outputArtifact) throw new Error("expected output artifact");
+    const outputText = await readFile(join(run.artifact_root!, outputArtifact.path), "utf8");
+    expect(outputText).toContain("review mutation guard failed before reviewer command");
+    expect(outputText).toContain("git metadata was not found under review cwd");
+    expect(result.delta.states?.[0]?.reason).toContain("review mutation guard failed before reviewer command");
+    expect(result.reviewOutcome.reason).toContain("git metadata was not found under review cwd");
+    await expect(readFile(join(worktreePath, "review-ran.txt"), "utf8")).rejects.toThrow();
   });
 
   it("rejects an unvalidated review agent before skip handling", async () => {
@@ -584,6 +723,14 @@ describe("runReviewActivity adapter dispatch", () => {
     ).rejects.toThrow(/profile\.states\.review_disp failed schema validation/);
   });
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 function workProfile(args: {
   agent?: string;
@@ -666,21 +813,31 @@ async function initGitWorktree(path: string): Promise<void> {
 
 async function writeStubBinary(path: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(path, "#!/bin/sh\ncat > /dev/null\necho '{\"session_id\":\"stub-session-id\"}'\n", "utf8");
+  const resultEvent = openPResultLine({ sessionId: "stub-session-id" });
+  await writeFile(
+    path,
+    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", resultEvent, "JSON"].join("\n"),
+    "utf8"
+  );
   await chmod(path, 0o755);
 }
 
 async function writeClaudeModelReportingStubBinary(path: string, reportedModel: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
-  const systemEvent = JSON.stringify({
-    type: "system",
-    subtype: "init",
-    session_id: "stub-session-id",
-    model: reportedModel
+  const resultEvent = JSON.stringify({
+    openp: {
+      version: 1,
+      form: "result",
+      scope: "active",
+      sessionId: "stub-session-id",
+      output: openPResultOutput(),
+      structuredOutput: null,
+      metadata: { model: reportedModel }
+    }
   });
   await writeFile(
     path,
-    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", systemEvent, "JSON"].join("\n"),
+    ["#!/bin/sh", "cat > /dev/null", "cat <<'JSON'", resultEvent, "JSON"].join("\n"),
     "utf8"
   );
   await chmod(path, 0o755);
@@ -692,32 +849,18 @@ async function writeClaudeStructuredReviewStubBinary(
   largePrefixBytes = 0
 ): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
-  const systemEvent = JSON.stringify({
-    type: "system",
-    subtype: "init",
-    session_id: "structured-session-id",
-    ...(reportedModel !== undefined ? { model: reportedModel } : {})
-  });
-  const resultEvent = JSON.stringify({
-    type: "result",
-    subtype: "success",
-    is_error: false,
-    result: "structured review emitted",
-    structured_output: {
+  const resultEvent = openPResultLine({
+    sessionId: "structured-session-id",
+    answer: "structured review emitted",
+    structuredOutput: {
       status: "pass",
       summary: "structured review passed",
       findings: []
     },
-    session_id: "structured-session-id"
+    metadata: reportedModel !== undefined ? { model: reportedModel } : undefined
   });
   const largePrefixEvent = largePrefixBytes > 0
-    ? JSON.stringify({
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "x".repeat(largePrefixBytes) }]
-        }
-      })
+    ? openPStreamingAnswerLine("structured-session-id", "x".repeat(largePrefixBytes))
     : undefined;
   await writeFile(
     path,
@@ -725,7 +868,6 @@ async function writeClaudeStructuredReviewStubBinary(
       "#!/bin/sh",
       "cat > /dev/null",
       "cat <<'JSON'",
-      systemEvent,
       ...(largePrefixEvent ? [largePrefixEvent] : []),
       resultEvent,
       "JSON"
@@ -737,22 +879,14 @@ async function writeClaudeStructuredReviewStubBinary(
 
 async function writeClaudeStructuredReviewWithCwdStubBinary(path: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
-  const systemEvent = JSON.stringify({
-    type: "system",
-    subtype: "init",
-    session_id: "structured-session-id"
-  });
-  const resultEvent = JSON.stringify({
-    type: "result",
-    subtype: "success",
-    is_error: false,
-    result: "structured review emitted",
-    structured_output: {
+  const resultEvent = openPResultLine({
+    sessionId: "structured-session-id",
+    answer: "structured review emitted",
+    structuredOutput: {
       status: "pass",
       summary: "structured review passed",
       findings: []
-    },
-    session_id: "structured-session-id"
+    }
   });
   await writeFile(
     path,
@@ -762,7 +896,6 @@ async function writeClaudeStructuredReviewWithCwdStubBinary(path: string): Promi
       "printf 'ARGV:%s\\n' \"$*\" >&2",
       "cat > /dev/null",
       "cat <<'JSON'",
-      systemEvent,
       resultEvent,
       "JSON"
     ].join("\n"),
@@ -773,56 +906,75 @@ async function writeClaudeStructuredReviewWithCwdStubBinary(path: string): Promi
 
 async function writeCodexSemanticReviewStubBinary(path: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
-  const semanticReview = JSON.stringify({
-    status: "pass",
-    summary: "codex semantic review passed",
-    findings: []
-  });
-  const threadEvent = JSON.stringify({
-    type: "thread.started",
-    thread_id: "codex-structured-thread-id"
-  });
-  const messageEvent = JSON.stringify({
-    type: "item.completed",
-    item: {
-      id: "item_1",
-      type: "agent_message",
-      text: JSON.stringify({
-        status: "fail",
-        summary: "starting review",
-        findings: [{ severity: "low", title: "progress", detail: "not final" }]
-      })
+  const progressEvent = openPStreamingAnswerLine("codex-structured-thread-id", JSON.stringify({
+    status: "fail",
+    summary: "starting review",
+    findings: [{ severity: "low", title: "progress", detail: "not final" }]
+  }));
+  const resultEvent = openPResultLine({
+    sessionId: "codex-structured-thread-id",
+    structuredOutput: {
+      status: "pass",
+      summary: "codex semantic review passed",
+      findings: []
     }
   });
-  const completedEvent = JSON.stringify({ type: "turn.completed" });
   await writeFile(
     path,
     [
       "#!/bin/sh",
       "printf 'ARGV:%s\\n' \"$*\" >&2",
-      "last_message=",
-      "while [ \"$#\" -gt 0 ]; do",
-      "  if [ \"$1\" = \"--output-last-message\" ]; then",
-      "    shift",
-      "    last_message=${1:-}",
-      "  fi",
-      "  shift || break",
-      "done",
-      "if [ -n \"$last_message\" ]; then",
-      "  cat > \"$last_message\" <<'TYCHONIC_LAST_MESSAGE'",
-      semanticReview,
-      "TYCHONIC_LAST_MESSAGE",
-      "fi",
       "cat > /dev/null",
       "cat <<'JSON'",
-      threadEvent,
-      messageEvent,
-      completedEvent,
+      progressEvent,
+      resultEvent,
       "JSON"
     ].join("\n"),
     "utf8"
   );
   await chmod(path, 0o755);
+}
+
+function openPResultLine(input: {
+  sessionId: string;
+  answer?: string;
+  structuredOutput?: unknown;
+  metadata?: Record<string, unknown>;
+}): string {
+  return JSON.stringify({
+    openp: {
+      version: 1,
+      form: "result",
+      scope: "active",
+      sessionId: input.sessionId,
+      output: openPResultOutput(input.answer),
+      structuredOutput: input.structuredOutput ?? null,
+      metadata: input.metadata ?? {}
+    }
+  });
+}
+
+function openPStreamingAnswerLine(sessionId: string, answer: string): string {
+  return JSON.stringify({
+    openp: {
+      version: 1,
+      form: "streaming",
+      scope: "active",
+      sessionId,
+      output: { answer },
+      structuredOutput: null,
+      metadata: {}
+    }
+  });
+}
+
+function openPResultOutput(answer?: string): Record<string, unknown[]> {
+  return {
+    answer: answer && answer.length > 0 ? [answer] : [],
+    reasoning: [],
+    toolCall: [],
+    toolResult: []
+  };
 }
 
 async function writeKiroStubBinary(path: string): Promise<void> {
@@ -866,9 +1018,10 @@ async function writeKiroStubBinary(path: string): Promise<void> {
       "      send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kiro-stub-session-id' } });",
       "      return;",
       "    }",
-      "    if (message.method === 'session/load') {",
-      "      workspaceCwd = message.params.cwd;",
-      "      send({ jsonrpc: '2.0', id: message.id, result: null });",
+    "    if (message.method === 'session/load') {",
+    "      workspaceCwd = message.params.cwd;",
+    "      fs.writeFileSync(path.join(workspaceCwd, 'kiro-loaded.txt'), message.params.sessionId);",
+    "      send({ jsonrpc: '2.0', id: message.id, result: null });",
       "      return;",
       "    }",
       "    if (message.method === 'session/prompt') {",

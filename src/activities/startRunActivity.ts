@@ -1,4 +1,4 @@
-import type { TychonicConfig } from "../catalog/types.js";
+import { collectConfigWarnings, type TychonicConfig } from "../catalog/types.js";
 import type { WorkflowRunRecord } from "../domain/types.js";
 import { newRunArtifactStore } from "../storage/runArtifactStore.js";
 
@@ -47,6 +47,7 @@ export async function startRunActivity(input: StartRunActivityInput): Promise<St
     run.goal = input.goal;
   }
   if (input.profile !== undefined) {
+    const warnings = collectConfigWarnings(input.profile);
     await store.initializeRunArtifacts(run);
     const { snapshot } = await store.writeProfileArtifacts({
       run,
@@ -57,7 +58,22 @@ export async function startRunActivity(input: StartRunActivityInput): Promise<St
     run = {
       ...run,
       artifacts: [...run.artifacts, snapshot],
-      profile_snapshot_artifact_id: snapshot.id
+      profile_snapshot_artifact_id: snapshot.id,
+      ...(warnings.length > 0
+        ? {
+            warnings: warnings.map((warning, index) => ({
+              id: `warning_${index + 1}`,
+              source: "config" as const,
+              code: warning.code,
+              message: warning.message,
+              ...(warning.path ? { path: warning.path } : {}),
+              ...(warning.stateName ? { state_name: warning.stateName } : {}),
+              ...(warning.agent ? { agent: warning.agent } : {}),
+              ...(warning.option ? { option: warning.option } : {}),
+              created_at: createdAt
+            }))
+          }
+        : {})
     };
   }
   return run;

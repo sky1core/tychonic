@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { TychonicConfigSchema } from "../src/catalog/types.js";
+import { TychonicConfigSchema, collectConfigWarnings } from "../src/catalog/types.js";
 import { EXAMPLE_WORKFLOW_NAMES, loadExampleWorkflowSpec } from "./exampleYamlHelpers.js";
 
-const BUILTIN_AGENTS = new Set(["claude", "codex", "gemini", "kiro"]);
+const BUILTIN_AGENTS = new Set(["claude", "codex", "kiro"]);
 const ADAPTER_TYPES = new Set(["work", "review"]);
 const ESCAPE_HATCH_TYPES = new Set(["verify"]);
 
@@ -22,6 +22,11 @@ describe("example workflow.yaml profile shape", () => {
         expect(result.success, JSON.stringify(result.error?.issues ?? null, null, 2)).toBe(true);
       });
 
+      it("does not declare adapter options ignored by the selected OpenP backend", async () => {
+        const spec = await loadExampleWorkflowSpec(name);
+        expect(collectConfigWarnings(spec.profile)).toEqual([]);
+      });
+
       it("uses built-in adapters on every work / review state", async () => {
         const spec = await loadExampleWorkflowSpec(name);
         for (const [stateName, block] of Object.entries(spec.profile.states ?? {})) {
@@ -29,7 +34,7 @@ describe("example workflow.yaml profile shape", () => {
           expect(block.agent, `${name}.${stateName} must declare a built-in agent`).toBeDefined();
           expect(
             BUILTIN_AGENTS.has(block.agent ?? ""),
-            `${name}.${stateName} agent must be one of claude/codex/gemini/kiro, got ${block.agent}`
+            `${name}.${stateName} agent must be one of claude/codex/kiro, got ${block.agent}`
           ).toBe(true);
         }
       });
@@ -49,8 +54,7 @@ describe("example workflow.yaml profile shape", () => {
         const spec = await loadExampleWorkflowSpec(name);
         for (const [stateName, block] of Object.entries(spec.profile.states ?? {})) {
           if (block.type !== "review" || block.normalizer !== undefined) continue;
-          expect(block.agent, `${name}.${stateName} must not use gemini or kiro without normalizer`).not.toBe("gemini");
-          expect(block.agent, `${name}.${stateName} must not use gemini or kiro without normalizer`).not.toBe("kiro");
+          expect(block.agent, `${name}.${stateName} must not use kiro without normalizer`).not.toBe("kiro");
         }
       });
     });

@@ -22,7 +22,6 @@ states:
     agent: claude
     model: claude-opus-4-7
     reasoning_effort: max
-    permission_mode: plan
     timeout: 45m
     prompt: |
       Review Temporal workflow control flow, recovery, rerun, interaction gates,
@@ -43,7 +42,6 @@ states:
     agent: claude
     model: claude-opus-4-7
     reasoning_effort: max
-    permission_mode: plan
     timeout: 45m
     prompt: |
       Review agent adapters, review parsing, structured output handling,
@@ -64,7 +62,6 @@ states:
     agent: claude
     model: claude-opus-4-7
     reasoning_effort: max
-    permission_mode: plan
     timeout: 45m
     prompt: |
       Review public docs, skills, example bundle docs, run input shape, and naming consistency.
@@ -84,7 +81,6 @@ states:
     agent: claude
     model: claude-opus-4-7
     reasoning_effort: max
-    permission_mode: plan
     timeout: 30m
     prompt: |
       Audit the recorded finding set for duplicates, unsupported claims,

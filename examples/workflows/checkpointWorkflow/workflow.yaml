@@ -26,7 +26,6 @@ states:
     agent: claude
     model: claude-opus-4-7
     reasoning_effort: max
-    permission_mode: plan
     timeout: 20m
     prompt: |
       Review changes for correctness, regressions, missing tests, and risky assumptions.
@@ -51,7 +50,6 @@ states:
     agent: codex
     model: gpt-5.5
     reasoning_effort: xhigh
-    approval: never
     timeout: 20m
     prompt: |
       Review test coverage for correctness, regressions, missing tests, and risky assumptions.

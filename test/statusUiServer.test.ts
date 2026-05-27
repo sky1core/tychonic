@@ -90,7 +90,20 @@ describe("status UI server", () => {
             agent_sessions: [],
             artifacts: [],
             findings: [],
-            inbox: []
+            inbox: [],
+            warnings: [
+              {
+                id: "warning_1",
+                source: "config",
+                code: "unsupported_config_option",
+                message: "states.work.sandbox is configured for agent kiro, but this adapter does not support that option; it will be ignored.",
+                path: "states.work.sandbox",
+                state_name: "work",
+                agent: "kiro",
+                option: "sandbox",
+                created_at: now
+              }
+            ]
           }
         }
       })
@@ -167,6 +180,14 @@ describe("status UI server", () => {
         status: "succeeded",
         latest_state: { name: "verify", status: "succeeded" },
         counts: { states: 1, attempts: 0 },
+        warnings: [
+          {
+            id: "warning_1",
+            path: "states.work.sandbox",
+            agent: "kiro",
+            option: "sandbox"
+          }
+        ],
         state_attempt_summaries: []
       },
       runContext: {
@@ -296,6 +317,90 @@ describe("status UI server", () => {
         liveOutput: "architect live response"
       }
     });
+  });
+
+  it("keeps cancelled workflow evidence when the workflow returns a cancelled run result", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-cancelled-"));
+    tempDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>Tychonic</title>");
+
+    const now = "2026-05-12T00:00:00.000Z";
+    const deps: StatusUiServerDeps = {
+      listWorkflows: async () => ({
+        address: "127.0.0.1:7233",
+        namespace: "default",
+        taskQueue: "tychonic",
+        workflows: []
+      }),
+      describeWorkflow: async () => ({
+        workflowId: "tychonic_simpleWorkflow_cancelled",
+        runId: "temporal_run_cancelled",
+        type: "simpleWorkflow",
+        taskQueue: "tychonic",
+        status: "COMPLETED",
+        startTime: now,
+        closeTime: now,
+        pendingActivities: [],
+        input: { cwd: staticDir, goal: "preserve evidence after cancellation" },
+        result: {
+          runId: "run_cancelled",
+          status: "cancelled",
+          run: {
+            schema_version: "tychonic.run.v1",
+            id: "run_cancelled",
+            template: "simpleWorkflow",
+            status: "cancelled",
+            summary: "operator cancelled workflow",
+            goal: "preserve evidence after cancellation",
+            cwd: staticDir,
+            artifact_root: join(staticDir, "runs", "run_cancelled"),
+            created_at: now,
+            updated_at: now,
+            states: [
+              {
+                id: "state_verify_done",
+                name: "verify",
+                status: "succeeded",
+                reason: "checks passed before cancellation",
+                activity_attempt_ids: [],
+                artifact_ids: [],
+                finding_ids: [],
+                started_at: now,
+                finished_at: now
+              }
+            ],
+            activity_attempts: [],
+            agent_sessions: [],
+            artifacts: [],
+            findings: [],
+            inbox: []
+          }
+        }
+      })
+    };
+
+    const detail = JSON.parse((await statusUiRequest(staticDir, "/api/workflows/tychonic_simpleWorkflow_cancelled", deps)).body);
+
+    expect(detail).toMatchObject({
+      ok: true,
+      workflow: {
+        workflowId: "tychonic_simpleWorkflow_cancelled",
+        runId: "temporal_run_cancelled",
+        status: "COMPLETED"
+      },
+      evidence: {
+        runId: "run_cancelled",
+        status: "cancelled",
+        summary: "operator cancelled workflow",
+        latest_state: { id: "state_verify_done", name: "verify", status: "succeeded" },
+        states: [{ id: "state_verify_done", name: "verify", status: "succeeded" }]
+      },
+      runContext: {
+        cwd: staticDir,
+        goal: "preserve evidence after cancellation"
+      }
+    });
+    expect(detail.evidenceError).toBeUndefined();
   });
 
   it("streams workflow refresh events over server-sent events", async () => {
@@ -535,5 +640,8 @@ async function readEventStreamRefreshes(
 }
 
 function refreshEventCount(text: string): number {
-  return text.match(/^event: refresh$/gm)?.length ?? 0;
+  return text
+    .split("\n\n")
+    .filter((frame) => frame.split("\n").includes("event: refresh"))
+    .length;
 }

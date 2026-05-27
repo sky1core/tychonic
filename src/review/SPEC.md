@@ -24,14 +24,16 @@ among arbitrary JSON objects in stdout.
 
 - Escape-hatch `command` reviewers: stdout must be exactly one complete
   `tychonic.review.v1` wire result.
-- Codex built-in reviewer: the terminal source is the final block appended by
-  the adapter through `--output-last-message` after the JSONL stream. JSON
-  objects inside JSONL `agent_message` events are evidence only and must never
-  be accepted as the review verdict.
-- Claude built-in reviewer: the terminal source is the stream-json
-  `type: "result"` event. `structured_output` is preferred when present;
-  otherwise the `result` string is parsed. Assistant message text is evidence
-  only and must never be accepted as the review verdict.
+- Codex built-in reviewer: the terminal source is the OpenP stream-json active
+  `openp.form: "result"` record. `openp.structuredOutput` is preferred when
+  present; otherwise the aggregate `openp.output.answer` array is joined and
+  parsed. Streaming answer text is evidence only and must never be accepted as
+  the review verdict.
+- Claude built-in reviewer: the terminal source is the OpenP stream-json active
+  `openp.form: "result"` record. `openp.structuredOutput` is preferred when
+  present; otherwise the aggregate `openp.output.answer` array is joined and
+  parsed. Streaming answer text is evidence only and must never be accepted as
+  the review verdict.
 
 If the terminal source exists but does not validate, reviewer output is
 malformed. The parser must not fall back to an earlier JSON object.
@@ -41,6 +43,12 @@ Finding objects must include `severity`, `title`, and `detail`. A finding may
 also include `target` when the reviewer can identify a file, state, session, or
 other concrete subject. It may include `target_session_id` only when it can
 identify a recorded worker session.
+
+Built-in OpenP schema-constrained reviewers encode `target` and
+`target_session_id` as required nullable fields because Codex structured output
+requires every declared object property to be listed in `required`. The review
+parser normalizes `null` values for those two fields to semantic absence before
+validating `tychonic.review.v1`.
 
 Rules:
 

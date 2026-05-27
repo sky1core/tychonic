@@ -1,6 +1,6 @@
 {
   "name": "tychonic",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "macOS-local AI work operations manager built on Temporal",
   "license": "MIT",
   "type": "module",
@@ -58,7 +58,7 @@
     "check:contracts": "tsx src/contracts/checks/cli.ts",
     "install:local": "npm run build && npm pack --pack-destination /tmp && npm install -g /tmp/tychonic-$npm_package_version.tgz",
     "validate:examples": "for d in examples/workflows/*/; do node dist/cli/main.js workflows validate \"$d\" >/dev/null || exit 1; done",
-    "test": "vitest run --exclude '**/.tychonic/**'",
+    "test": "vitest run --exclude '**/.tychonic/**' --exclude '**/.claude/**'",
     "smoke:package": "node scripts/smoke-pack-install.mjs",
     "verify:agents-live": "npm run build && node scripts/verify-agent-resume-live.mjs",
     "verify:workflow-review-loop": "npm run build && node scripts/verify-workflow-review-loop.mjs",

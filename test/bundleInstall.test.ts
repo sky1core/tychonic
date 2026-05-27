@@ -89,6 +89,8 @@ describe("workflow bundle install", () => {
     );
     const generatedWorkflow = await readFile(join(installed.path, "workflow.mjs"), "utf8");
     expect(generatedWorkflow).toContain("createTychonicWorkflowContext");
+    expect(generatedWorkflow).toContain("CancellationScope");
+    expect(generatedWorkflow).toContain("ctx.cancel()");
     expect(generatedWorkflow).toContain("case \"verify\"");
     expect(generatedWorkflow).not.toContain(bundleDir);
     await expect(readFile(join(installed.path, "workflow.generated.mmd"), "utf8")).resolves.toContain(

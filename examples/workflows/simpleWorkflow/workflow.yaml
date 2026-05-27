@@ -8,7 +8,6 @@ states:
     type: work
     agent: claude
     resume: 3
-    permission_mode: acceptEdits
     timeout: 45m
     prompt: |
       Complete the requested work in the target project.
@@ -41,7 +40,6 @@ states:
     agent: codex
     model: gpt-5.5
     reasoning_effort: xhigh
-    approval: never
     timeout: 20m
     prompt: |
       Review the work for correctness, regressions, missing tests, and risky assumptions.

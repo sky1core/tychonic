@@ -4,109 +4,148 @@ This file applies to built-in agent adapters under `src/adapters/`.
 
 ## Adapter Model
 
-Tychonic ships **built-in adapters for the supported agent CLI paths**:
-`claude`, `codex`, `gemini`, `kiro`. The host owns command synthesis,
-session-id handling, agent-specific flags (permission, sandbox, approval,
-trust), and resume semantics where the selected adapter supports same-session
-resume. Workflow authors and operators select an adapter by setting
-`agent: "<name>"` on a state block.
+Tychonic ships three built-in adapter labels: `claude`, `codex`, and `kiro`.
+Workflow authors select one of those labels with `agent: "<name>"` in a state
+config block. The label is a Tychonic contract, not a direct promise to invoke a
+vendor CLI with the same binary name.
 
-The default code path for every executable activity is **agent-driven**:
+All built-in adapter labels dispatch through OpenP:
 
-- `agent` selects a built-in adapter
-- `resume` is a numeric option (default `0`) that a workflow may use as a
-  same-session continuation budget. The host only writes a resume invocation
-  when workflow code explicitly calls a resume-capable adapter path with a prior
-  session id; it does not auto-resume by role, TYPE, NAME, or profile shape. The
-  workflow owns the recovery path after that budget is exhausted and must expose
-  it as part of that workflow's own contract.
-- the host writes the actual `argv`, the resume flag where supported, the
-  session-id round trip, and the role-aware permission flags
+```text
+openp <backend>
+```
 
-`command` is an **escape hatch** for non-default scenarios — a custom CLI not in
-the built-in adapter set, an unusual flag combination, or a test stub. When
-`command` is set, the host runs that command verbatim and skips the adapter
-layer entirely; the workflow's resume bookkeeping does not apply because the
-host has no way to know how the user's CLI handles session continuation. That
-part is the user's responsibility.
+The single `src/adapters/openp.ts` module is the built-in adapter
+implementation. It creates one adapter instance per backend and owns the shared
+command-building, resume flag, execution-policy mapping, JSON-schema review flag, and
+stream-json result parsing. Do not reintroduce `claude.ts`, `codex.ts`, or
+`kiro.ts` as separate adapter implementations unless the product contract is
+changed first.
 
-`agent` and `command` are mutually exclusive execution selectors. The state
-either runs through a built-in adapter (`agent`) or through an explicit escape
-hatch (`command`). A block that sets both is invalid.
+The default code path for every executable agent activity is agent-driven:
 
-Built-in adapters that support same-session resume know their own resume
-invocation. An escape-hatch `command` user who wants resume-aware behavior has
-to build that into their own CLI wrapper. Tychonic core carries only one
-execution selector for a state, plus the numeric `resume` budget used by
-workflow code.
+- `agent` selects one built-in OpenP backend.
+- `command` is the escape hatch for custom CLIs, unusual flags, or test stubs.
+- `agent` and `command` are mutually exclusive execution selectors.
+- Workflow call inputs carry runtime data such as `prompt`, `worktreePath`,
+  `sessionId`, and `verificationCommands`; they do not carry execution
+  selection.
+- Activity call sites execute the selector declared by
+  `profile.states.<name>`.
 
-Activity call sites execute the one selector declared by the validated state
-block: `command` runs the state-block escape hatch, and `agent` runs a built-in
-adapter. Schema validation rejects a block that sets both selectors or neither
-selector when its TYPE requires an executable agent path.
+The host validates selector shape before execution. A TYPE that requires an
+agent path must set exactly one selector. A `command` state bypasses the adapter
+layer entirely; Tychonic does not synthesize OpenP flags, session continuation,
+or structured-review normalization for that escape-hatch path.
 
-Workflow call inputs carry runtime data such as `prompt`, `worktreePath`,
-`sessionId`, and `verificationCommands`. They do not carry `command` or `agent`;
-execution selection belongs to `profile.states.<name>`.
+## OpenP Command Contract
 
-## Built-in Adapter Coverage
+All built-in adapters require the `openp` executable. The command shape is:
 
-The built-in adapters do not have identical capabilities:
+```text
+openp <backend> --timeout 0 [--model <model>] [--effort <level>] \
+  --output-format stream-json [--dangerously-skip-permissions] \
+  [--json-schema <json>] [--resume <session-id>]
+```
 
-- **claude**, **codex** — full coverage: new run, resume by session id,
-  role-aware permission flags, and worker / reviewer roles.
-- **kiro** — Kiro path through `kiro-cli acp`. Fresh runs call ACP
-  `session/new`, store the returned `sessionId` as `AgentSessionRecord.id`,
-  send the prompt through `session/prompt`, and resume through `session/load`.
-  The adapter acts as the ACP client for the one workflow turn. Work states may
-  use file and terminal client capabilities inside the workflow worktree. Review
-  states may inspect files and run checks, but must not edit code: the review
-  client does not advertise file-write capability, rejects direct
-  `fs/write_text_file` requests, and fails the review if tracked files change
-  during the turn. Tychonic must not infer identity from
-  `kiro-cli chat --list-sessions` before/after diffs. Review states may use it
-  only with `normalizer: claude` or `normalizer: codex`.
-- **gemini** — worker and prose-review fresh-run coverage only. Review states
-  may use it only with `normalizer: claude` or `normalizer: codex`.
-  `runResume` throws `AdapterUnsupported` because `gemini --resume` takes a
-  project-relative index rather than a stable session id.
+Rules:
 
-The host schema rejects `agent: "gemini"` or `agent: "kiro"` on a
-`type: "review"` state unless `normalizer` is `claude` or `codex`. A custom
-`command` wrapper may still implement its own review or continuation contract,
-but Tychonic does not synthesize adapter normalization or resume behavior for
-the escape-hatch command path.
+- Prompt text is delivered on stdin.
+- `--timeout 0` disables OpenP's turn timeout so the Tychonic activity timeout
+  remains the authoritative wall-clock budget.
+- `--model` is emitted only when the state config declares `model`.
+- `--effort` is emitted only when the state config declares
+  `reasoning_effort`.
+- `--output-format stream-json` is always emitted. The adapter reads JSONL
+  output and ignores non-JSON or malformed lines.
+- `--resume <session-id>` is emitted only when workflow code explicitly calls a
+  resume adapter path with a prior session id. The host does not infer resume by
+  role, TYPE, NAME, agent label, or profile shape.
+- `--dangerously-skip-permissions` is emitted according to the backend-specific
+  Tychonic execution contract listed below.
+- `--json-schema <json>` is emitted for review runs only on built-in backends
+  that provide direct structured review output.
+
+OpenP stdout is parsed for two adapter facts:
+
+- `sessionId` comes from the first non-empty `openp.sessionId` field found in
+  the stream-json output.
+- `reportedModel` comes from the terminal active
+  `openp.form: "result"` record's non-empty `openp.metadata.model` field.
+
+These parsed values are evidence from OpenP. Temporal workflow history remains
+the source of truth for Tychonic workflow state.
+
+## Backend Coverage
+
+The built-in labels share the OpenP command path but do not have identical
+capabilities.
+
+| Agent label | Backend command | Review output | Resume | Model | Reasoning effort |
+| --- | --- | --- | --- | --- | --- |
+| `claude` | `openp claude` | `--json-schema` | `--resume` | `--model` | `--effort` |
+| `codex` | `openp codex` | `--json-schema` | `--resume` | `--model` | `--effort` |
+| `kiro` | `openp kiro` | prose primary review plus normalizer | `--resume` | `--model` | `--effort` |
+
+Execution-policy mapping is backend-specific and constrained to OpenP public
+options:
+
+- `claude` emits no execution trust flag by default. The only accepted
+  `permission_mode` value is `bypassPermissions`, which maps to
+  `--dangerously-skip-permissions`. Claude-specific modes such as `plan`,
+  `acceptEdits`, and `default` are not part of the Tychonic OpenP adapter
+  contract. `sandbox`, `approval`, and `trust_all_tools` are unsupported for
+  Claude and produce config warnings when declared.
+- `codex` always emits `--dangerously-skip-permissions`. This is Tychonic's
+  built-in Codex execution contract. `sandbox: danger-full-access` is accepted
+  as an explicit declaration of the effective behavior. Other `sandbox` values
+  produce config warnings and are ignored. `approval`, `permission_mode`, and
+  `trust_all_tools` are unsupported for the Codex OpenP path and produce config
+  warnings when declared.
+- `kiro` emits `--dangerously-skip-permissions` when `trust_all_tools` is true.
+  If `trust_all_tools` is omitted, work states default to trusted tool
+  execution and review states default to no skip-permissions flag. `sandbox`,
+  `approval`, and `permission_mode` are unsupported for Kiro and produce config
+  warnings when declared.
+
+Structured review availability is backend capability, not a global OpenP
+guarantee.
+
+Kiro backend review does not provide schema-constrained structured output.
+Therefore a `type: review` state with `agent: kiro` must declare
+`normalizer: claude` or `normalizer: codex`. The primary Kiro run produces
+review prose. The normalizer turns that prose into the shared
+`tychonic.review.v1` semantic payload. The normalizer must not invent findings
+that are not grounded in the primary review output.
 
 ## Pass-Through Values vs Orchestration Values
 
-Tychonic is an orchestrator for external agent CLIs. It must not bake in
-defaults for settings whose authoritative source is the external CLI or its
-provider.
+Tychonic is an orchestrator for OpenP-backed external agents. It must not bake
+in defaults for settings whose authoritative source is OpenP, the selected
+backend, or the model provider.
 
-**Rule:** if a supported built-in agent CLI exposes a model or reasoning effort
-setting, Tychonic may expose the corresponding state config field as an optional
-pass-through. Tychonic must not carry a system default for that setting, must
-not maintain the vendor's valid-value catalog, and must omit the downstream
-flag/config override when the field is absent. Escape-hatch `command` states
-own their complete command string and do not use these adapter fields.
+Adapter pass-through values:
 
-- **Orchestration values** — settings Tychonic owns because they encode
-  Tychonic's own isolation and safety contract. Role-aware defaults are allowed
-  only when they are attached to an explicit adapter contract. Current
-  config-field list: `sandbox`, `approval`, `permission_mode`, and
-  `trust_all_tools`. The command shape itself (argv, stdin contract, resume flag
-  where supported) is owned by the built-in adapter and by the operator for the
-  escape-hatch `command` path.
-- **Adapter pass-through values** — optional settings the built-in adapter maps
-  directly to a verified CLI surface. Current fields are `model` and
-  `reasoning_effort`. Unsupported vendor knobs such as `thinking_budget`,
-  `approval_mode`, `effort`, and provider endpoints are not schema fields; use
-  an escape-hatch `command` if a workflow must own such a command line before
-  Tychonic has an explicit adapter contract.
+- `model` maps to OpenP `--model` for all three built-in backends.
+- `reasoning_effort` maps to OpenP `--effort` for all three built-in backends.
+- If either field is absent, the corresponding OpenP flag is omitted.
+- Tychonic does not maintain a model catalog or effort-level catalog. The
+  selected OpenP backend validates its own values.
 
-Consequence: a new model name or renamed effort level on the external side does
-not require a Tychonic schema change. The field remains a string and the
-selected external CLI is the validator for its own value set.
+Orchestration values:
+
+- `sandbox`, `approval`, `permission_mode`, and `trust_all_tools` encode
+  Tychonic execution policy, not provider model selection.
+- A value may be syntactically accepted by the shared config schema and still be
+  unsupported by a specific built-in backend. Unsupported backend options must
+  produce operator-visible config warnings and be ignored for that adapter.
+- Role-aware defaults are allowed only where this SPEC explicitly assigns them
+  to a backend command contract.
+
+Unsupported vendor knobs such as `thinking_budget`, `approval_mode`, provider
+endpoints, or raw OpenP-specific options are not schema fields. Use an
+escape-hatch `command` if a workflow must own such a command line before
+Tychonic has an explicit adapter contract for it.
 
 Reviewer-capable adapters and reviewer-capable escape-hatch commands must
 produce the shared `tychonic.review.v1` object documented under

@@ -83,7 +83,7 @@ public invocation contract.
 Two consequences follow and must both hold:
 
 - Absent fields stay absent. Agent settings whose valid values are owned by the
-  external CLI, such as `model` and `reasoning_effort`, appear only as state
+  OpenP/backend CLI, such as `model` and `reasoning_effort`, appear only as state
   config fields documented below. Workflow authors may explicitly choose them
   per state only after checking the target account, model availability,
   plan/tier, quota, pricing, region/country access, and organization policy.
@@ -136,8 +136,6 @@ states:
     model: gpt-5.5
     reasoning_effort: xhigh
     resume: 3
-    sandbox: workspace-write
-    approval: never
     timeout: 30m
   primary_review:
     type: review
@@ -145,7 +143,6 @@ states:
     agent: claude
     model: opus
     reasoning_effort: max
-    permission_mode: plan
   first_review:
     type: review
     on_fail_return_to: work
@@ -172,13 +169,16 @@ Rules:
   supported), and orchestration values Tychonic owns (`resume`, `sandbox`,
   `approval`, `permission_mode`, `trust_all_tools`, `timeout`). Unknown fields
   are a validation error.
+  Known settings that the selected built-in adapter does not support remain
+  syntactically valid, but Tychonic records operator-visible config warnings
+  and ignores those unsupported settings for that adapter.
 - `model` is valid only with `agent`. It selects the model for the primary
   built-in adapter when that CLI supports a model flag. Current built-in
-  adapters `claude`, `codex`, `gemini`, and `kiro` all support it. A workflow
+  adapters `claude`, `codex`, and `kiro` all support it. A workflow
   author may explicitly choose `model` per state only after checking the target
   account, model availability, plan/tier, quota, pricing, region/country access,
   and organization policy. Omitting `model` explicitly delegates model choice to
-  the selected external CLI's default or auto-selection behavior. Tychonic
+  the selected OpenP backend's default or auto-selection behavior. Tychonic
   passes the string through and does not maintain the vendor model list. Because
   target account, model availability, plan/tier, quota, pricing, region/country
   access, and organization policy vary by operator, Tychonic does not define a
@@ -189,17 +189,14 @@ Rules:
   on mismatch. Claude versionless aliases such as `opus` are pass-through
   aliases, so they are not exact-match asserted against the concrete model the
   CLI resolves internally. Some CLI catalogs are account-, tier-, or
-  region-scoped; `kiro-cli chat --list-models` output is evidence of
-  availability for that account, not a global validity list for every documented
-  Kiro model id.
-- `reasoning_effort` is valid only with `agent` when that CLI exposes a
-  reasoning/effort surface. Current built-in support is `claude` and `codex`. A
-  workflow author may explicitly choose it per state only after the same
+  region-scoped; provider model listing output is evidence of availability for
+  that account, not a global validity list for every documented model id.
+- `reasoning_effort` is valid only with `agent`. All three built-in adapters
+  (`claude`, `codex`, `kiro`) support it through OpenP `--effort`. A workflow
+  author may explicitly choose it per state only after the same
   target-environment checks required for `model`. Omitting it delegates to the
-  external CLI's configured/default effort. Tychonic passes the string through
-  and does not invent a default. `gemini` and `kiro` currently expose model
-  selection but no stable reasoning/effort/thinking CLI option, so the schema
-  rejects `reasoning_effort` for those agents.
+  selected OpenP backend's configured/default effort. Tychonic passes the string
+  through and does not invent a default.
 - Allowed fields inside a state block are exactly `type`, `agent`,
   `on_fail_return_to`, `normalizer`, `resume`, `command`, `model`,
   `reasoning_effort`, `timeout`, `sandbox`, `approval`, `permission_mode`, and
@@ -211,11 +208,11 @@ Rules:
   has a review loop; it does not define a full graph, ordering, or branching
   model.
 - `agent` is the primary input: it selects one of the built-in adapters
-  (`claude`, `codex`, `gemini`, `kiro`). The host writes the CLI's `argv`,
-  role-aware permission flags, and resume invocation where the selected adapter
-  supports same-session resume.
+  (`claude`, `codex`, `kiro`). The host writes the CLI's `argv`, the supported
+  OpenP public flags, and resume invocation where the selected adapter supports
+  same-session resume.
 - `normalizer` is review-only. It is required when `type: review` selects
-  `agent: gemini` or `agent: kiro`, because those agents produce prose review
+  `agent: kiro`, because that agent produces prose review
   output rather than the structured semantic payload the host can validate. The
   normalizer must be `claude` or `codex`, is prompted with only the primary
   review output, and emits the semantic review payload that the host normalizes

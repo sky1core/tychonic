@@ -24,6 +24,11 @@ describe("parseReviewOutput — raw JSON", () => {
     expect(parsed?.findings[0]?.target).toBeUndefined();
   });
 
+  it("rejects null optional fields on raw command reviewer output", () => {
+    const rawNullTarget = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"one issue","findings":[{"severity":"medium","title":"unclear behavior","detail":"needs investigation","target":null,"target_session_id":null}]}`;
+    expect(parseReviewOutput(rawNullTarget)).toBeUndefined();
+  });
+
   it("parses a pretty-printed review JSON object", () => {
     const parsed = parseReviewOutput(JSON.stringify(JSON.parse(failReview), null, 2));
     expect(parsed?.status).toBe("fail");
@@ -71,19 +76,16 @@ describe("parseReviewOutput — raw JSON", () => {
 
   it("rejects built-in adapter envelopes on the command/wire-only parser", () => {
     const codexSemanticEnvelope = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\\"status\\":\\"pass\\",\\"summary\\":\\"ok\\",\\"findings\\":[]}"}}`,
-      `{"type":"turn.completed"}`
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: `{"status":"pass","summary":"ok","findings":[]}` }),
+      openpResultLine({ sessionId: "t", answer: `{"status":"pass","summary":"ok","findings":[]}` })
     ].join("\n");
-    const claudeSemanticEnvelope = JSON.stringify({
-      type: "result",
-      result: "ok",
-      structured_output: { status: "pass", summary: "ok", findings: [] }
+    const claudeSemanticEnvelope = openpResultLine({
+      sessionId: "s1",
+      answer: "ok",
+      structuredOutput: { status: "pass", summary: "ok", findings: [] }
     });
-    const claudeWireEnvelope = JSON.stringify({
-      type: "result",
-      result: passReview
-    });
+    const claudeWireEnvelope = openpResultLine({ sessionId: "s1", answer: passReview });
 
     expect(parseReviewOutput(codexSemanticEnvelope)).toBeUndefined();
     expect(parseReviewOutput(claudeSemanticEnvelope)).toBeUndefined();
@@ -100,250 +102,270 @@ describe("parseReviewOutput — raw JSON", () => {
   });
 });
 
-describe("parseBuiltInReviewOutput — codex exec --json stream envelope", () => {
+describe("parseBuiltInReviewOutput — OpenP codex stream-json envelope", () => {
   it("does not treat codex agent_message JSON as a review verdict", () => {
     const wireStream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"turn.started"}`,
-      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"thinking out loud"}}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
-      `{"type":"turn.completed","usage":{"input_tokens":1}}`
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: "thinking out loud" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: passReview })
     ].join("\n");
     const semanticPass = `{"status":"pass","summary":"semantic pass","findings":[]}`;
     const semanticStream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"turn.started"}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(semanticPass)}}}`,
-      `{"type":"turn.completed"}`
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: semanticPass })
     ].join("\n");
 
-    expect(parseBuiltInReviewOutput(wireStream, "codex")).toBeUndefined();
-    expect(parseBuiltInReviewOutput(semanticStream, "codex")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(wireStream)).toBeUndefined();
+    expect(parseBuiltInReviewOutput(semanticStream)).toBeUndefined();
   });
 
   it("does not select among multiple codex agent_message JSON objects", () => {
     const earlier = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"draft","findings":[{"severity":"low","title":"x","detail":"y","target":"z"}]}`;
     const stream = [
-      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":${JSON.stringify(earlier)}}}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(passReview)}}}`,
-      `{"type":"turn.completed"}`
+      openpStreamingAnswerLine({ sessionId: "t", answer: earlier }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: passReview })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
-  it("uses the appended codex --output-last-message payload over earlier agent_message JSON", () => {
+  it("uses the terminal OpenP result over earlier assistant JSON", () => {
     const earlyProgress = `{"status":"fail","summary":"starting review...","findings":[{"severity":"low","title":"not final","detail":"progress message only"}]}`;
-    const semanticPass = `{"status":"pass","summary":"final review passed","findings":[]}`;
     const stream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"turn.started"}`,
-      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":${JSON.stringify(earlyProgress)}}}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"sed -n '1,80p' src/file.ts"}}`,
-      `{"type":"turn.completed"}`,
-      semanticPass
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: earlyProgress }),
+      openpResultLine({
+        sessionId: "t",
+        structuredOutput: { status: "pass", summary: "final review passed", findings: [] }
+      })
     ].join("\n");
 
-    const parsed = parseBuiltInReviewOutput(stream, "codex");
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.schema_version).toBe("tychonic.review.v1");
     expect(parsed?.status).toBe("pass");
     expect(parsed?.summary).toBe("final review passed");
     expect(parsed?.findings).toEqual([]);
   });
 
-  it("does not fall back to earlier agent_message JSON when appended codex last message is invalid", () => {
-    const earlyProgress = `{"status":"pass","summary":"not final","findings":[]}`;
-    const invalidFinal = `{"status":"fail","summary":"invalid terminal review","findings":[]}`;
+  it("normalizes OpenP structuredOutput null optional finding fields to absent", () => {
     const stream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":${JSON.stringify(earlyProgress)}}}`,
-      `{"type":"turn.completed"}`,
-      invalidFinal
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpResultLine({
+        sessionId: "t",
+        structuredOutput: {
+          status: "fail",
+          summary: "one issue",
+          findings: [
+            {
+              severity: "medium",
+              title: "unclear behavior",
+              detail: "needs investigation",
+              target: null,
+              target_session_id: null
+            }
+          ]
+        }
+      })
     ].join("\n");
 
-    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+    const parsed = parseBuiltInReviewOutput(stream);
+    expect(parsed?.status).toBe("fail");
+    expect(parsed?.findings[0]?.target).toBeUndefined();
+    expect(parsed?.findings[0]?.target_session_id).toBeUndefined();
+  });
+
+  it("does not fall back to earlier assistant JSON when terminal result is invalid", () => {
+    const earlyProgress = `{"status":"pass","summary":"not final","findings":[]}`;
+    const stream = [
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: earlyProgress }),
+      openpResultLine({
+        sessionId: "t",
+        structuredOutput: { status: "fail", summary: "invalid terminal review", findings: [] }
+      })
+    ].join("\n");
+
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+  });
+
+  it("does not fall back to result answer when non-null structuredOutput is invalid", () => {
+    const stream = [
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpResultLine({
+        sessionId: "t",
+        answer: `{"status":"pass","summary":"answer fallback","findings":[]}`,
+        structuredOutput: []
+      })
+    ].join("\n");
+
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("ignores review JSON wrapped in a fenced code block inside agent_message", () => {
     const fenced = "Here is the review:\n\n```json\n" + failReview + "\n```\n";
     const stream = [
-      `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":${JSON.stringify(fenced)}}}`,
-      `{"type":"turn.completed"}`
+      openpStreamingAnswerLine({ sessionId: "t", answer: fenced })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
-  it("returns undefined when no appended codex last-message exists", () => {
+  it("returns undefined when no OpenP terminal result exists", () => {
     const stream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"i looked at the code"}}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls"}}`,
-      `{"type":"turn.completed"}`
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: "i looked at the code" })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
-  it("does not accept claude-style result events on the codex path", () => {
+  it("accepts OpenP result events on the codex path", () => {
     const stream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"result","result":${JSON.stringify(`{"status":"pass","summary":"wrong path","findings":[]}`)}}`,
-      `{"type":"turn.completed"}`
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpResultLine({
+        sessionId: "t",
+        answer: `{"status":"pass","summary":"openp result","findings":[]}`
+      })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
+    const parsed = parseBuiltInReviewOutput(stream);
+    expect(parsed?.status).toBe("pass");
+    expect(parsed?.summary).toBe("openp result");
   });
 
-  it("ignores non-JSON adapter warning lines before the codex appended last-message", () => {
-    const semanticPass = `{"status":"pass","summary":"last message passed","findings":[]}`;
+  it("rejects scope-less OpenP result events because terminal review verdicts must be active results", () => {
+    const stream = openpResultLineWithoutScope({
+      sessionId: "t",
+      answer: `{"status":"pass","summary":"scope-less result","findings":[]}`
+    });
+
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
+  });
+
+  it("ignores non-JSON adapter warning lines before the OpenP terminal result", () => {
     const stream = [
       `2026-04-27T15:59:43.003779Z ERROR codex_core::session: failed to load skill /path/SKILL.md: invalid YAML`,
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"checking"}}`,
-      `{"type":"turn.completed"}`,
-      semanticPass
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: "checking" }),
+      openpResultLine({
+        sessionId: "t",
+        answer: `{"status":"pass","summary":"terminal result passed","findings":[]}`
+      })
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream, "codex");
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
-    expect(parsed?.summary).toBe("last message passed");
+    expect(parsed?.summary).toBe("terminal result passed");
   });
 
   it("rejects a bare semantic payload line after a malformed codex tool event", () => {
     const semanticPass = `{"status":"pass","summary":"last message file","findings":[]}`;
     const stream = [
-      `{"type":"thread.started","thread_id":"t"}`,
-      `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"checking"}}`,
-      `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","aggregated_output":"unterminated`,
+      openpStreamingAnswerLine({ sessionId: "t" }),
+      openpStreamingAnswerLine({ sessionId: "t", answer: "checking" }),
+      `{"openp":{"version":1,"form":"streaming","scope":"active","sessionId":"t","output":{"answer":"unterminated`,
       semanticPass
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "codex")).toBeUndefined();
-  });
-
-});
-
-describe("parseBuiltInReviewOutput — gemini envelope is not unwrapped", () => {
-  it("does not treat gemini --output-format json as a built-in reviewer contract", () => {
-    // src/review/SPEC.md §Structured Reviewer Contract: only documented adapter envelopes are
-    // normalized by the host. A real gemini --output-format json object has
-    // `{ response: "<stringified review>", ... }`. The parser must NOT unwrap
-    // that envelope; gemini review requires a declared normalizer or an
-    // escape-hatch command that emits the wire contract directly.
-    const geminiLike = JSON.stringify({
-      session_id: "sess_test",
-      response: passReview,
-      stats: { models: { "gemini-test": {} } }
-    });
-    expect(parseReviewOutput(geminiLike)).toBeUndefined();
-    expect(parseBuiltInReviewOutput(geminiLike, "codex")).toBeUndefined();
-    expect(parseBuiltInReviewOutput(geminiLike, "claude")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 });
 
-describe("parseBuiltInReviewOutput — claude --print --output-format stream-json", () => {
+describe("parseBuiltInReviewOutput — OpenP claude stream-json envelope", () => {
   it("unwraps the final result field containing raw review JSON", () => {
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-7"}`,
-      `{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"let me check"}]}}`,
-      `{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"found nothing"}]}}`,
-      `{"type":"result","subtype":"success","is_error":false,"duration_ms":12,"result":${JSON.stringify(passReview)},"session_id":"s1"}`
+      openpStreamingAnswerLine({ sessionId: "s1", metadata: { model: "claude-opus-4-7" } }),
+      openpStreamingAnswerLine({ sessionId: "s1", answer: "let me check" }),
+      openpStreamingAnswerLine({ sessionId: "s1", answer: "found nothing" }),
+      openpResultLine({ sessionId: "s1", answer: passReview })
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream, "claude");
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
   });
 
-  it("unwraps the terminal structured_output object when result is prose", () => {
+  it("unwraps the terminal structuredOutput object when result is prose", () => {
     const semanticFailReview = {
       status: "fail",
       summary: "one bug",
       findings: [{ severity: "high", title: "t", detail: "d" }]
     };
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-7"}`,
-      JSON.stringify({
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        result: "Reviewed the change and produced structured output.",
-        structured_output: semanticFailReview,
-        session_id: "s1"
+      openpStreamingAnswerLine({ sessionId: "s1", metadata: { model: "claude-opus-4-7" } }),
+      openpResultLine({
+        sessionId: "s1",
+        answer: "Reviewed the change and produced structured output.",
+        structuredOutput: semanticFailReview
       })
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream, "claude");
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.schema_version).toBe("tychonic.review.v1");
     expect(parsed?.status).toBe("fail");
     expect(parsed?.findings[0]?.title).toBe("t");
     expect(parsed?.findings[0]?.target).toBeUndefined();
   });
 
-  it("rejects structured_output that does not match the review contract", () => {
+  it("rejects structuredOutput that does not match the review contract", () => {
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1"}`,
-      JSON.stringify({
-        type: "result",
-        subtype: "success",
-        result: "looks fine",
-        structured_output: {
+      openpStreamingAnswerLine({ sessionId: "s1" }),
+      openpResultLine({
+        sessionId: "s1",
+        answer: "looks fine",
+        structuredOutput: {
           status: "pass",
           summary: "contradictory payload",
           findings: [{ severity: "low", title: "t", detail: "d" }]
-        },
-        session_id: "s1"
+        }
       })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
-  it("rejects structured_output that supplies a wrong schema_version", () => {
+  it("rejects structuredOutput that supplies a wrong schema_version", () => {
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1"}`,
-      JSON.stringify({
-        type: "result",
-        subtype: "success",
-        result: "Reviewed the change and produced structured output.",
-        structured_output: {
+      openpStreamingAnswerLine({ sessionId: "s1" }),
+      openpResultLine({
+        sessionId: "s1",
+        answer: "Reviewed the change and produced structured output.",
+        structuredOutput: {
           schema_version: "tychonic.review.v2",
           status: "pass",
           summary: "wrong version",
           findings: []
-        },
-        session_id: "s1"
+        }
       })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("rejects a result field with fenced code block around review JSON", () => {
     const fenced = "Summary of review:\n\n```json\n" + failReview + "\n```";
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1"}`,
-      `{"type":"result","subtype":"success","result":${JSON.stringify(fenced)},"session_id":"s1"}`
+      openpStreamingAnswerLine({ sessionId: "s1" }),
+      openpResultLine({ sessionId: "s1", answer: fenced })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
-  it("rejects assistant.message.content text when result field is absent", () => {
+  it("rejects streaming answer text when result field is absent", () => {
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1"}`,
-      `{"type":"assistant","message":{"id":"m","role":"assistant","content":[{"type":"text","text":${JSON.stringify(passReview)}}]}}`
+      openpStreamingAnswerLine({ sessionId: "s1" }),
+      openpStreamingAnswerLine({ sessionId: "s1", answer: passReview })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 
   it("selects the LAST terminal result over earlier terminal results", () => {
     const earlier = `{"schema_version":"tychonic.review.v1","status":"fail","summary":"early","findings":[{"severity":"low","title":"x","detail":"y","target":"z"}]}`;
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1"}`,
-      `{"type":"result","subtype":"success","result":${JSON.stringify(earlier)},"session_id":"s1"}`,
-      `{"type":"result","subtype":"success","result":${JSON.stringify(passReview)},"session_id":"s1"}`
+      openpStreamingAnswerLine({ sessionId: "s1" }),
+      openpResultLine({ sessionId: "s1", answer: earlier }),
+      openpResultLine({ sessionId: "s1", answer: passReview })
     ].join("\n");
-    const parsed = parseBuiltInReviewOutput(stream, "claude");
+    const parsed = parseBuiltInReviewOutput(stream);
     expect(parsed?.status).toBe("pass");
   });
 
   it("returns undefined for a stream that never emits a conforming review", () => {
     const stream = [
-      `{"type":"system","subtype":"init","session_id":"s1"}`,
-      `{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"i am working on it"}]}}`,
-      `{"type":"result","subtype":"success","result":"looked good to me","session_id":"s1"}`
+      openpStreamingAnswerLine({ sessionId: "s1" }),
+      openpStreamingAnswerLine({ sessionId: "s1", answer: "i am working on it" }),
+      openpResultLine({ sessionId: "s1", answer: "looked good to me" })
     ].join("\n");
-    expect(parseBuiltInReviewOutput(stream, "claude")).toBeUndefined();
+    expect(parseBuiltInReviewOutput(stream)).toBeUndefined();
   });
 });
 
@@ -358,3 +380,66 @@ describe("parseReviewOutput — generic fenced code blocks", () => {
     expect(parseReviewOutput(out)).toBeUndefined();
   });
 });
+
+function openpResultLine(input: {
+  sessionId: string;
+  answer?: string;
+  structuredOutput?: unknown;
+  metadata?: Record<string, unknown>;
+}): string {
+  return JSON.stringify({
+    openp: {
+      version: 1,
+      form: "result",
+      scope: "active",
+      sessionId: input.sessionId,
+      output: {
+        answer: input.answer && input.answer.length > 0 ? [input.answer] : [],
+        reasoning: [],
+        toolCall: [],
+        toolResult: []
+      },
+      structuredOutput: input.structuredOutput ?? null,
+      metadata: input.metadata ?? {}
+    }
+  });
+}
+
+function openpResultLineWithoutScope(input: {
+  sessionId: string;
+  answer?: string;
+}): string {
+  return JSON.stringify({
+    openp: {
+      version: 1,
+      form: "result",
+      sessionId: input.sessionId,
+      output: {
+        answer: input.answer && input.answer.length > 0 ? [input.answer] : [],
+        reasoning: [],
+        toolCall: [],
+        toolResult: []
+      },
+      structuredOutput: null,
+      metadata: {}
+    }
+  });
+}
+
+function openpStreamingAnswerLine(input: {
+  sessionId: string;
+  answer?: string;
+  metadata?: Record<string, unknown>;
+}): string {
+  return JSON.stringify({
+    openp: {
+      version: 1,
+      form: "streaming",
+      scope: "active",
+      sessionId: input.sessionId,
+      output: { answer: input.answer ?? "" },
+      structuredOutput: null,
+      metadata: input.metadata ?? {}
+    }
+  });
+}

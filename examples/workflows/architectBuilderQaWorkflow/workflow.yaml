@@ -10,7 +10,6 @@ states:
     model: claude-opus-4-7
     reasoning_effort: max
     timeout: 30m
-    permission_mode: plan
     prompt: |
       You are the architect stage of a three-stage delegated-work pipeline.
 
@@ -35,8 +34,6 @@ states:
     resume: 2
     timeout: 60m
     trust_all_tools: true
-    sandbox: workspace-write
-    approval: never
     prompt: |
       You are the builder stage. Implement the architect output for this run.
 
@@ -59,7 +56,6 @@ states:
     agent: codex
     model: gpt-5.5
     reasoning_effort: xhigh
-    approval: never
     timeout: 30m
     prompt: |
       You are the QA reviewer for this three-stage run.

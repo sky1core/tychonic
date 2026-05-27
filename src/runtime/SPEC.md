@@ -136,7 +136,13 @@ Lifecycle commands:
   idempotent and reports `already_running`; it must not fail just because the
   caller's PID differs from the daemon PID. If another `runtime up` is already
   starting that same instance, the command refuses instead of starting a second
-  worker.
+  worker. On the operational path, it also refuses when the documented Tychonic
+  LaunchAgents are loaded; `service install` owns that runtime until the
+  operator uninstalls the service set. Isolated `--instance <name>` runtimes
+  remain separate development runtimes and do not touch operational LaunchAgents.
+- `tychonic service install` — persistent LaunchAgent service path. It refuses
+  while a verified operational `runtime up` daemon is running; stop the manual
+  runtime before installing service mode.
 - `tychonic runtime up --foreground` — development/debug mode. Starts Temporal
   and the status UI if needed and runs the worker in the current terminal. It
   records the runtime parent PID in `<state>/runtime.pid`, refuses to start when

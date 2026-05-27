@@ -92,10 +92,10 @@ type ActivityBlockField =
  * - `work` and `review` require either `agent` or `command`
  * - when `agent` is set on a `work` / `review` block it
  *   must name one of the built-in adapters (`claude`, `codex`,
- *   `gemini`, `kiro`); the host dispatches the CLI argv, resume invocation,
+ *   `kiro`); the host dispatches the CLI argv, resume invocation,
  *   and session-id capture for those names
  * - `normalizer` is review-only. It is required when a review state selects
- *   `gemini` or `kiro`, and must be `claude` or `codex`.
+ *   `kiro`, and must be `claude` or `codex`.
  * - `model` is an optional built-in adapter setting. The host passes it
  *   to the selected agent only when declared.
  * - `reasoning_effort` is an optional built-in adapter setting for agents
@@ -108,7 +108,7 @@ type ActivityBlockField =
  */
 const SandboxSchema = z.enum(["read-only", "workspace-write", "danger-full-access"]);
 const ApprovalSchema = z.enum(["never", "on-request", "on-failure", "untrusted"]);
-const PermissionModeSchema = z.enum(["plan", "default", "acceptEdits", "bypassPermissions"]);
+const PermissionModeSchema = z.enum(["bypassPermissions"]);
 
 export const StateConfigBlockSchema = z
   .object({
@@ -150,6 +150,15 @@ export type TychonicConfig = z.infer<typeof TychonicConfigSchema>;
 
 export type ActivityTimeoutName = string;
 export type ActivityTimeoutOverrides = Partial<Record<ActivityTimeoutName, number>>;
+
+export interface ConfigWarning {
+  code: string;
+  message: string;
+  path: string;
+  stateName?: string;
+  agent?: string;
+  option?: string;
+}
 
 export const DEFAULT_ACTIVITY_TIMEOUT_BY_TYPE = {
   verify: 30 * 60 * 1000,
@@ -210,6 +219,15 @@ export function activityTimeoutOverrides(
     }
   }
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+export function collectConfigWarnings(profile: TychonicConfig | undefined): ConfigWarning[] {
+  const warnings: ConfigWarning[] = [];
+  for (const [stateName, block] of Object.entries(profile?.states ?? {})) {
+    if (block.agent === undefined || !isBuiltInAgentName(block.agent)) continue;
+    warnings.push(...unsupportedAdapterOptionWarnings(stateName, block));
+  }
+  return warnings;
 }
 
 export function optionalStateConfig(
@@ -321,13 +339,12 @@ function validateStateReferences(config: { states?: Record<string, ActivityBlock
  * Built-in adapters that need a review normalizer. They can produce prose
  * review output, but not the structured payload the host accepts directly.
  */
-const NON_REVIEWER_BUILTIN_AGENTS = new Set<string>(["gemini", "kiro"]);
-const REASONING_EFFORT_BUILTIN_AGENTS = new Set<string>(["claude", "codex"]);
+const NON_REVIEWER_BUILTIN_AGENTS = new Set<string>(["kiro"]);
 
 /**
  * When `agent` is set on an adapter-capable activity type, restrict it
  * to the built-in adapter names. Misspelt names (`claud`,
- * `geminii`, ...) are caught at config validation time so they never
+ * `kiroo`, ...) are caught at config validation time so they never
  * reach the runtime command-resolution chain — which would otherwise
  * fall through and surface as a `CommandMissing` failure mid-run.
  */
@@ -362,10 +379,9 @@ function validateSingleExecutionSelector(block: ActivityBlock, ctx: z.Refinement
 }
 
 /**
- * `gemini` and `kiro` review states must name a built-in
- * normalizer (`claude` or `codex`). Direct structured reviewers (`claude`,
- * `codex`) must not set a normalizer because they already emit the semantic
- * review payload the host normalizes.
+ * `kiro` review states must name a built-in normalizer (`claude` or `codex`).
+ * Direct structured reviewers (`claude`, `codex`) must not set a normalizer
+ * because they already emit the semantic review payload the host normalizes.
  */
 function validateReviewerCapableAgent(block: ActivityBlock, ctx: z.RefinementCtx): void {
   if (block.type !== "review") return;
@@ -394,7 +410,7 @@ function validateReviewerCapableAgent(block: ActivityBlock, ctx: z.RefinementCtx
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message:
-        "states.<name>.normalizer is only valid when the review agent is gemini or kiro",
+        "states.<name>.normalizer is only valid when the review agent is kiro",
       path: ["normalizer"]
     });
   }
@@ -406,19 +422,6 @@ function validateAgentSettings(block: ActivityBlock, ctx: z.RefinementCtx): void
   }
   if (block.reasoning_effort !== undefined) {
     validatePrimaryAgentSetting(block, ctx, "reasoning_effort");
-    if (
-      block.agent !== undefined &&
-      isBuiltInAgentName(block.agent) &&
-      !REASONING_EFFORT_BUILTIN_AGENTS.has(block.agent)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          `agent ${block.agent} does not support states.<name>.reasoning_effort; ` +
-          "supported agents are claude and codex",
-        path: ["reasoning_effort"]
-      });
-    }
   }
 }
 
@@ -463,4 +466,46 @@ function activityBlockFieldNames(): ActivityBlockField[] {
     "permission_mode",
     "trust_all_tools"
   ];
+}
+
+function unsupportedAdapterOptionWarnings(stateName: string, block: ActivityBlock): ConfigWarning[] {
+  const agent = block.agent;
+  if (!isBuiltInAgentName(agent)) return [];
+  const warnings: ConfigWarning[] = [];
+  const unsupported = unsupportedAdapterOptions(block);
+  for (const option of unsupported) {
+    warnings.push({
+      code: "unsupported_config_option",
+      stateName,
+      agent,
+      option,
+      path: `states.${stateName}.${option}`,
+      message: `states.${stateName}.${option} is configured for agent ${agent}, but this adapter does not support that option; it will be ignored.`
+    });
+  }
+  return warnings;
+}
+
+function unsupportedAdapterOptions(block: ActivityBlock): ActivityBlockField[] {
+  switch (block.agent) {
+    case "claude": {
+      return presentUnsupported(block, ["sandbox", "approval", "trust_all_tools"]);
+    }
+    case "codex": {
+      const unsupported: ActivityBlockField[] = [];
+      if (block.sandbox !== undefined && block.sandbox !== "danger-full-access") {
+        unsupported.push("sandbox");
+      }
+      unsupported.push(...presentUnsupported(block, ["approval", "permission_mode", "trust_all_tools"]));
+      return unsupported;
+    }
+    case "kiro":
+      return presentUnsupported(block, ["sandbox", "approval", "permission_mode"]);
+    default:
+      return [];
+  }
+}
+
+function presentUnsupported(block: ActivityBlock, fields: ActivityBlockField[]): ActivityBlockField[] {
+  return fields.filter((field) => block[field] !== undefined);
 }

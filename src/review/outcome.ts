@@ -20,6 +20,7 @@ export type ReviewActivityOutcome =
       kind: "command_failed";
       status: "failed" | "timed_out";
       exitCode?: number;
+      reason?: string;
       reviewerSessionId?: string;
       artifacts: ArtifactRecord[];
       agentSessions: AgentSessionRecord[];

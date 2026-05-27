@@ -53,45 +53,41 @@ export const reviewContractChecks: readonly ContractCheck[] = [
   },
   {
     area: "review",
-    name: "built-in parser rejects codex agent_message JSON without terminal last message",
+    name: "built-in parser rejects codex assistant JSON without terminal result",
     run() {
       const stream = [
-        `{"type":"item.completed","item":{"type":"agent_message","text":${JSON.stringify(semanticPass)}}}`,
-        `{"type":"turn.completed"}`
+        openpStreamingAnswerLine("t", semanticPass)
       ].join("\n");
-      if (parseBuiltInReviewOutput(stream, "codex") !== undefined) {
+      if (parseBuiltInReviewOutput(stream) !== undefined) {
         throw new Error("codex agent_message JSON was accepted as a review verdict");
       }
     }
   },
   {
     area: "review",
-    name: "codex parser rejects claude result event without terminal last message",
+    name: "codex parser accepts OpenP terminal result record",
     run() {
       const stream = [
-        `{"type":"thread.started","thread_id":"t"}`,
-        `{"type":"result","result":${JSON.stringify(semanticPass)}}`,
-        `{"type":"turn.completed"}`
+        openpResultLine("t", semanticPass)
       ].join("\n");
-      if (parseBuiltInReviewOutput(stream, "codex") !== undefined) {
-        throw new Error("codex parser accepted a claude-style result event");
+      const parsed = parseBuiltInReviewOutput(stream);
+      if (parsed?.schema_version !== "tychonic.review.v1" || parsed.status !== "pass") {
+        throw new Error("codex parser did not accept an OpenP terminal result event");
       }
     }
   },
   {
     area: "review",
-    name: "built-in parser treats codex appended last message as terminal",
+    name: "built-in parser treats codex OpenP result as terminal",
     run() {
       const earlyProgress = `{"status":"fail","summary":"starting","findings":[{"severity":"low","title":"draft","detail":"not final"}]}`;
       const stream = [
-        `{"type":"thread.started","thread_id":"t"}`,
-        `{"type":"item.completed","item":{"type":"agent_message","text":${JSON.stringify(earlyProgress)}}}`,
-        `{"type":"turn.completed"}`,
-        semanticPass
+        openpStreamingAnswerLine("t", earlyProgress),
+        openpResultLine("t", semanticPass)
       ].join("\n");
-      const parsed = parseBuiltInReviewOutput(stream, "codex");
+      const parsed = parseBuiltInReviewOutput(stream);
       if (parsed?.status !== "pass" || parsed.summary !== "ok") {
-        throw new Error("codex appended last message was not treated as the terminal review");
+        throw new Error("codex OpenP result was not treated as the terminal review");
       }
     }
   },
@@ -100,10 +96,10 @@ export const reviewContractChecks: readonly ContractCheck[] = [
     name: "built-in parser unwraps claude terminal result",
     run() {
       const stream = [
-        `{"type":"assistant","message":{"content":[{"type":"text","text":${JSON.stringify(semanticPass)}}]}}`,
-        `{"type":"result","result":${JSON.stringify(semanticPass)}}`
+        openpStreamingAnswerLine("t", semanticPass),
+        openpResultLine("t", semanticPass)
       ].join("\n");
-      const parsed = parseBuiltInReviewOutput(stream, "claude");
+      const parsed = parseBuiltInReviewOutput(stream);
       if (parsed?.schema_version !== "tychonic.review.v1" || parsed.status !== "pass") {
         throw new Error("claude terminal result was not normalized");
       }
@@ -111,16 +107,14 @@ export const reviewContractChecks: readonly ContractCheck[] = [
   },
   {
     area: "review",
-    name: "built-in parser does not fall back after invalid codex appended last message",
+    name: "built-in parser does not fall back after invalid codex OpenP result",
     run() {
       const stream = [
-        `{"type":"thread.started","thread_id":"t"}`,
-        `{"type":"item.completed","item":{"type":"agent_message","text":${JSON.stringify(semanticPass)}}}`,
-        `{"type":"turn.completed"}`,
-        `{"status":"fail","summary":"invalid terminal review","findings":[]}`
+        openpStreamingAnswerLine("t", semanticPass),
+        openpResultLine("t", undefined, { status: "fail", summary: "invalid terminal review", findings: [] })
       ].join("\n");
-      if (parseBuiltInReviewOutput(stream, "codex") !== undefined) {
-        throw new Error("earlier adapter envelope was accepted after an invalid terminal last message");
+      if (parseBuiltInReviewOutput(stream) !== undefined) {
+        throw new Error("earlier adapter envelope was accepted after an invalid terminal result");
       }
     }
   },
@@ -133,9 +127,42 @@ export const reviewContractChecks: readonly ContractCheck[] = [
         `{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"unterminated`,
         semanticPass
       ].join("\n");
-      if (parseBuiltInReviewOutput(stream, "codex") !== undefined) {
+      if (parseBuiltInReviewOutput(stream) !== undefined) {
         throw new Error("bare semantic review JSON outside documented envelopes was accepted");
       }
     }
   }
 ] as const;
+
+function openpResultLine(sessionId: string, answer?: string, structuredOutput?: unknown): string {
+  return JSON.stringify({
+    openp: {
+      version: 1,
+      form: "result",
+      scope: "active",
+      sessionId,
+      output: {
+        answer: answer && answer.length > 0 ? [answer] : [],
+        reasoning: [],
+        toolCall: [],
+        toolResult: []
+      },
+      structuredOutput: structuredOutput ?? null,
+      metadata: {}
+    }
+  });
+}
+
+function openpStreamingAnswerLine(sessionId: string, answer: string): string {
+  return JSON.stringify({
+    openp: {
+      version: 1,
+      form: "streaming",
+      scope: "active",
+      sessionId,
+      output: { answer },
+      structuredOutput: null,
+      metadata: {}
+    }
+  });
+}

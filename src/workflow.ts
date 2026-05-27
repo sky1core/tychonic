@@ -1,4 +1,5 @@
-import { defineQuery, setHandler, workflowInfo } from "@temporalio/workflow";
+import { ActivityFailure, ApplicationFailure, defineQuery, isCancellation, setHandler, workflowInfo } from "@temporalio/workflow";
+import { AGENT_EXECUTABLE_MISSING_FAILURE_TYPE } from "./adapters/failureTypes.js";
 import type { TychonicConfig } from "./catalog/types.js";
 import type {
   DecisionInboxItemRecord,
@@ -185,6 +186,8 @@ export interface TychonicWorkflowContext {
   review(stateName: string, prompt: string): Promise<TychonicStateRunResult>;
   latestState(stateName: string): WorkflowStateRecord | undefined;
   addInboxItem(item: DecisionInboxItemRecord): WorkflowRunRecord;
+  hasRun(): boolean;
+  cancel(summary?: string): Promise<TychonicWorkflowResult>;
   finish(summary?: string): Promise<TychonicWorkflowResult>;
   finishWaitingUser(summary: string, item: DecisionInboxItemRecord): Promise<TychonicWorkflowResult>;
 }
@@ -299,6 +302,21 @@ export function createTychonicWorkflowContext(options: {
           prompt
         });
       } catch (error) {
+        if (isCancellation(error)) {
+          throw error;
+        }
+        if (isTerminalActivityFailure(error)) {
+          result = terminalActivityFailureResult({
+            run: requireRun(),
+            stateName,
+            kind,
+            cwd: currentWorktreePath ?? input.cwd,
+            error
+          });
+          lastActivityResult = result;
+          update(applyActivityResult(requireRun(), result));
+          return stateResult(stateName, true, errorMessage(error), result);
+        }
         result = recoverableActivityFailureResult({
           run: requireRun(),
           stateName,
@@ -446,6 +464,14 @@ export function createTychonicWorkflowContext(options: {
       ...(summary !== undefined ? { summary } : {})
     });
     const finalizedRun = applyActivityResult(requireRun(), result);
+    await publishRunWithWorktreePatch(finalizedRun);
+    return runState.result(requireRun(), {
+      artifactRoot: artifactRootForRun(requireRun()),
+      ...(currentWorktreePath ? { worktreePath: currentWorktreePath } : {})
+    });
+  }
+
+  async function publishRunWithWorktreePatch(run: WorkflowRunRecord): Promise<void> {
     const extractWorktreePath = currentWorktreePath;
     if (extractWorktreePath) {
       if (!activities.extractWorktreePatchActivity) {
@@ -459,15 +485,35 @@ export function createTychonicWorkflowContext(options: {
       }
       const extractWorktreeParentDir = currentWorktreeParentDir;
       const extractActivityResult = await activities.extractWorktreePatchActivity({
-        run: finalizedRun,
+        run,
         cwd: input.cwd,
         worktreePath: extractWorktreePath,
         worktreeParentDir: extractWorktreeParentDir,
         baseHead: currentWorktreeBaseHead
       });
-      update(applyActivityResult(finalizedRun, extractActivityResult));
+      update(applyActivityResult(run, extractActivityResult));
     } else {
-      update(finalizedRun);
+      update(run);
+    }
+  }
+
+  async function cancel(summary = "workflow cancelled"): Promise<TychonicWorkflowResult> {
+    const current = requireRun();
+    const run = {
+      ...current,
+      status: "cancelled" as const,
+      summary,
+      updated_at: nowIso()
+    };
+    update(run);
+    try {
+      await publishRunWithWorktreePatch(run);
+    } catch (error) {
+      update({
+        ...run,
+        summary: `${summary}; worktree patch capture failed: ${errorMessage(error)}`,
+        updated_at: nowIso()
+      });
     }
     return runState.result(requireRun(), {
       artifactRoot: artifactRootForRun(requireRun()),
@@ -536,6 +582,20 @@ export function createTychonicWorkflowContext(options: {
             ...(currentWorktreePath ? { worktreePath: currentWorktreePath } : {})
           });
         } catch (error) {
+          if (isCancellation(error)) {
+            throw error;
+          }
+          if (isTerminalActivityFailure(error)) {
+            result = terminalActivityFailureResult({
+              run: requireRun(),
+              stateName,
+              kind: "verify",
+              cwd: currentWorktreePath ?? input.cwd,
+              error
+            });
+            update(applyActivityResult(requireRun(), result));
+            return stateResult(stateName, true, errorMessage(error), result);
+          }
           result = recoverableActivityFailureResult({
             run: requireRun(),
             stateName,
@@ -573,6 +633,10 @@ export function createTychonicWorkflowContext(options: {
     addInboxItem(item) {
       return update(addRunInboxItem(requireRun(), item));
     },
+    hasRun() {
+      return currentRun !== undefined;
+    },
+    cancel,
     finish,
     finishWaitingUser
   };
@@ -664,6 +728,51 @@ export function recoverableActivityFailureResult(options: {
   };
 }
 
+export function terminalActivityFailureResult(options: {
+  run: WorkflowRunRecord;
+  stateName: string;
+  kind: "work" | "verify" | "review";
+  cwd: string;
+  error: unknown;
+}): ActivityResult {
+  const { run, stateName, kind, cwd, error } = options;
+  const status = classifyActivityFailureStatus(error);
+  const stateId = nextRunLocalId(run, "state");
+  const attemptId = nextRunLocalId(run, "attempt");
+  const timestamp = nowIso();
+  const reason = `activity '${stateName}' failed before returning a Tychonic result; this failure is not rerunnable`;
+  return {
+    delta: {
+      states: [
+        {
+          id: stateId,
+          name: stateName,
+          status,
+          reason,
+          activity_attempt_ids: [attemptId],
+          artifact_ids: [],
+          finding_ids: [],
+          started_at: timestamp,
+          finished_at: timestamp
+        }
+      ],
+      activityAttempts: [
+        {
+          id: attemptId,
+          state_id: stateId,
+          kind: attemptKindForRecoverableFailure(kind),
+          status,
+          reason,
+          cwd,
+          error: errorMessage(error),
+          started_at: timestamp,
+          finished_at: timestamp
+        }
+      ]
+    }
+  };
+}
+
 function attemptKindForRecoverableFailure(kind: "work" | "verify" | "review"): AttemptKind {
   if (kind === "verify") return "deterministic_command";
   if (kind === "review") return "semantic_review";
@@ -678,7 +787,19 @@ function classifyActivityFailureStatus(error: unknown): WorkflowStateStatus {
   return "failed";
 }
 
+function isTerminalActivityFailure(error: unknown): boolean {
+  const cause = error instanceof ActivityFailure ? error.cause : error;
+  return (
+    cause instanceof ApplicationFailure &&
+    cause.nonRetryable === true &&
+    cause.type === AGENT_EXECUTABLE_MISSING_FAILURE_TYPE
+  );
+}
+
 function errorMessage(error: unknown): string {
+  if (error instanceof ActivityFailure && error.cause) {
+    return errorMessage(error.cause);
+  }
   if (error instanceof Error) {
     return error.message;
   }

@@ -5,6 +5,7 @@ import {
   TychonicConfigSchema,
   activityTypeContracts,
   activityTimeoutMs,
+  collectConfigWarnings,
   defaultActivityTimeoutMs,
   optionalStateConfig
 } from "../src/catalog/types.js";
@@ -194,7 +195,7 @@ describe("activity-centric config schema", () => {
           agent: "claude",
           sandbox: "workspace-write",
           approval: "never",
-          permission_mode: "plan",
+          permission_mode: "bypassPermissions",
           trust_all_tools: false
         }
       }
@@ -202,7 +203,7 @@ describe("activity-centric config schema", () => {
     expect(config.states?.work).toMatchObject({
       sandbox: "workspace-write",
       approval: "never",
-      permission_mode: "plan",
+      permission_mode: "bypassPermissions",
       trust_all_tools: false
     });
   });
@@ -241,7 +242,7 @@ describe("activity-centric config schema", () => {
       ["reasoning_effort", "whatever"],
       ["sandbox", "workspace-write"],
       ["approval", "never"],
-      ["permission_mode", "plan"],
+      ["permission_mode", "bypassPermissions"],
       ["trust_all_tools", true]
     ];
     for (const [field, value] of invalidCommandAgentSettings) {
@@ -260,21 +261,57 @@ describe("activity-centric config schema", () => {
     }
   });
 
-  it("rejects reasoning effort on agents that do not expose a reasoning effort surface", () => {
-    for (const agent of ["gemini", "kiro"]) {
-      expect(() =>
-        TychonicConfigSchema.parse({
-          version: "tychonic.config.v1",
-          states: {
-            work: {
-              type: "work",
-              agent,
-              reasoning_effort: "high"
-            }
-          }
-        })
-      ).toThrow(new RegExp(`agent ${agent} does not support states\\.<name>\\.reasoning_effort`));
-    }
+  it("does not warn when reasoning effort is configured on kiro through OpenP", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        work: {
+          type: "work",
+          agent: "kiro",
+          reasoning_effort: "high"
+        }
+      }
+    });
+    expect(collectConfigWarnings(config)).toEqual([]);
+  });
+
+  it("warns for adapter options that the selected built-in agent ignores", () => {
+    const config = TychonicConfigSchema.parse({
+      version: "tychonic.config.v1",
+      states: {
+        claudeWork: {
+          type: "work",
+          agent: "claude",
+          sandbox: "workspace-write",
+          approval: "never",
+          trust_all_tools: true
+        },
+        codexWork: {
+          type: "work",
+          agent: "codex",
+          approval: "never",
+          permission_mode: "bypassPermissions",
+          trust_all_tools: true
+        },
+        kiroWork: {
+          type: "work",
+          agent: "kiro",
+          approval: "never",
+          permission_mode: "bypassPermissions"
+        }
+      }
+    });
+
+    expect(collectConfigWarnings(config).map((warning) => warning.path)).toEqual([
+      "states.claudeWork.sandbox",
+      "states.claudeWork.approval",
+      "states.claudeWork.trust_all_tools",
+      "states.codexWork.approval",
+      "states.codexWork.permission_mode",
+      "states.codexWork.trust_all_tools",
+      "states.kiroWork.approval",
+      "states.kiroWork.permission_mode"
+    ]);
   });
 
   it("rejects pass-through vendor fields in state config blocks", () => {
@@ -338,7 +375,7 @@ describe("schema tighten", () => {
           }
         }
       })
-    ).toThrow(/'fakebot' is not a built-in adapter; must be one of: claude, codex, gemini, kiro/);
+    ).toThrow(/'fakebot' is not a built-in adapter; must be one of: claude, codex, kiro/);
   });
 
   it("rejects an unknown agent name on a review state", () => {
@@ -356,7 +393,7 @@ describe("schema tighten", () => {
   });
 
   it("accepts each built-in adapter name", () => {
-    for (const name of ["claude", "codex", "gemini", "kiro"]) {
+    for (const name of ["claude", "codex", "kiro"]) {
       const config = TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {
@@ -556,23 +593,9 @@ describe("schema tighten", () => {
 
 });
 
-// Reviewer role coverage. `gemini` and `kiro` can be primary
-// prose reviewers only when a structured-output normalizer is declared.
+// Reviewer role coverage. `kiro` can be a primary
+// prose reviewer only when a structured-output normalizer is declared.
 describe("review-state agent restrictions", () => {
-  it("rejects agent: \"gemini\" on a review state without normalizer", () => {
-    expect(() =>
-      TychonicConfigSchema.parse({
-        version: "tychonic.config.v1",
-        states: {
-          review: {
-            type: "review",
-            agent: "gemini"
-          }
-        }
-      })
-    ).toThrow(/agent gemini requires states\.<name>\.normalizer/);
-  });
-
   it("rejects agent: \"kiro\" on a review state without normalizer", () => {
     expect(() =>
       TychonicConfigSchema.parse({
@@ -588,7 +611,7 @@ describe("review-state agent restrictions", () => {
   });
 
   it("accepts partial review agents when normalizer is claude or codex", () => {
-    for (const agent of ["gemini", "kiro"]) {
+    for (const agent of ["kiro"]) {
       for (const normalizer of ["claude", "codex"]) {
         const config = TychonicConfigSchema.parse({
           version: "tychonic.config.v1",
@@ -620,7 +643,7 @@ describe("review-state agent restrictions", () => {
           }
         }
       })
-    ).toThrow(/normalizer is only valid when the review agent is gemini or kiro/);
+    ).toThrow(/normalizer is only valid when the review agent is kiro/);
   });
 
   it("rejects normalizer on command review states", () => {
@@ -669,7 +692,7 @@ describe("review-state agent restrictions", () => {
   });
 
   it("still accepts partial adapters on work states", () => {
-    for (const name of ["gemini", "kiro"]) {
+    for (const name of ["kiro"]) {
       const config = TychonicConfigSchema.parse({
         version: "tychonic.config.v1",
         states: {

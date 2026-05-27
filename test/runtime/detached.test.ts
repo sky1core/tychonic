@@ -228,6 +228,29 @@ describe("claimRuntimeStartLock", () => {
     }
   });
 
+  it("refuses a start claim while an active service install owner holds the shared operational lock", async () => {
+    const dir = await makeTempDir();
+    const lockFile = join(dir, "runtime.start.lock");
+    const { child, cliPath } = await spawnRuntimeLikeProcess(dir, ["service", "install"]);
+    try {
+      await symlink(
+        JSON.stringify({
+          kind: "tychonic.runtime.startLock",
+          pid: child.pid!,
+          cliPath,
+          processStartStamp: await processStartStamp(child.pid!)
+        }),
+        lockFile
+      );
+
+      await expect(claimRuntimeStartLock(lockFile)).rejects.toThrow(
+        /runtime start is already in progress/
+      );
+    } finally {
+      await stopChild(child);
+    }
+  });
+
   it("reclaims a start lock owned by a dead process", async () => {
     const dir = await makeTempDir();
     const lockFile = join(dir, "runtime.start.lock");
@@ -255,13 +278,13 @@ describe("claimRuntimeStartLock", () => {
   it("reclaims a start lock owned by an unrelated live process", async () => {
     const dir = await makeTempDir();
     const lockFile = join(dir, "runtime.start.lock");
-    const { child, cliPath } = await spawnRuntimeLikeProcess(dir, ["not-runtime"]);
+    const { child } = await spawnRuntimeLikeProcess(dir, ["not-runtime"]);
     try {
       await symlink(
         JSON.stringify({
           kind: "tychonic.runtime.startLock",
           pid: child.pid!,
-          cliPath,
+          cliPath: join(dir, "not-the-child-cli.mjs"),
           processStartStamp: await processStartStamp(child.pid!)
         }),
         lockFile

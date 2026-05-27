@@ -44,23 +44,22 @@ and type system.
   `states.<name>` blocks and workflow-owned `policies.<name>` values.
 - Each state block is self-contained. Do not force one global model or one
   model per agent.
-- Agent CLI-owned settings such as model, reasoning effort, and thinking budget
-  stay optional; omission means omit the downstream CLI flag.
+- OpenP/backend-owned settings such as model, reasoning effort, and thinking
+  budget stay optional; omission means omit the downstream CLI flag.
 - A `--config <file>` override or signal payload replaces the bundle
   `defaultProfile` as one whole object for that invocation. No deep merge,
   array merge, implicit inheritance, or preset fill-in.
 
 ## Agent Contract
 
-- Built-in adapters are `claude`, `codex`, `gemini`, and `kiro`.
+- Built-in adapters are `claude`, `codex`, and `kiro`.
 - Normal user selection is `agent: "<name>"`; `command` is an escape hatch.
 - Reviewer command selection belongs to review state config, not per-run task
   input.
-- Built-in adapters preserve resumability where the external CLI supports it.
-- `gemini` has no stable automatic resume id. `kiro` resumes through ACP
-  `sessionId` and `session/load`.
-- For review states, `gemini` and `kiro` are prose-review primary agents only
-  and require `normalizer: claude` or `normalizer: codex`.
+- Built-in adapters dispatch through `openp <backend>` and preserve
+  resumability through `openp <backend> --resume`.
+- For review states, `kiro` is a prose-review primary agent only
+  and requires `normalizer: claude` or `normalizer: codex`.
 - Structured reviewers must emit the documented review contract.
 - Do not use raw agent CLI calls as the product path for structured review
   verdicts, structural issue discovery, or commit-readiness review. Use a
@@ -85,7 +84,7 @@ and type system.
 - Configuration is data; orchestration is code.
 - Replace across config sources; never merge across sources.
 - Pass through downstream-owned values. Tychonic must not invent defaults for
-  external agent CLI settings.
+  external OpenP/backend settings.
 - Do not invent abstractions unless existing concepts cannot express the
   requirement.
 - If two concepts differ by only one field, collapse them unless they have

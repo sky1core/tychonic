@@ -24,9 +24,8 @@ tychonic workflows install ./examples/workflows/simpleWorkflow
 tychonic config show --workflow-name simpleWorkflow --format yaml
 ```
 
-This example profile sets `work` to Claude and `review` to Codex `gpt-5.5` with
-`reasoning_effort: xhigh`. Its
-`verify` state runs:
+This example profile uses Claude for `work`, Codex for `review`, and pinned
+agent settings in `workflow.yaml`. Its `verify` state runs:
 
 ```sh
 npm run typecheck

@@ -71,10 +71,11 @@ rejected before the Temporal workflow starts.
 
 ## Default Profile
 
-The default profile is Claude-focused:
+The default profile is Claude-focused and keeps exact agent settings in
+`workflow.yaml`:
 
-- `workflow_review`, `adapter_review`, `docs_review`, and `finding_audit` use
-  `agent: claude`, `model: claude-opus-4-7`, and `reasoning_effort: max`
+- `workflow_review`, `adapter_review`, `docs_review`, and `finding_audit` are
+  Claude review states
 - `contract_checks` runs:
 
 ```sh

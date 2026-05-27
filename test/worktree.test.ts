@@ -46,6 +46,32 @@ describe("createIsolatedWorktree", () => {
     expect(sourceWorktrees.stdout).toContain(isolated.path);
   });
 
+  it("uses the runtime PATH for internal worktree git calls", async () => {
+    const { stdout: gitPathOutput } = await execFileAsync("/bin/sh", ["-lc", "command -v git"], {
+      encoding: "utf8"
+    });
+    const gitPath = gitPathOutput.trim();
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-git-path-"));
+    const worktreeParentDir = await makeWorktreeParentDir();
+    await execFileAsync(gitPath, ["init"], { cwd });
+    await execFileAsync(gitPath, ["config", "user.name", "Tychonic Test"], { cwd });
+    await execFileAsync(gitPath, ["config", "user.email", "tychonic@example.invalid"], { cwd });
+    await writeFile(join(cwd, "tracked.txt"), "committed\n", "utf8");
+    await execFileAsync(gitPath, ["add", "tracked.txt"], { cwd });
+    await execFileAsync(gitPath, ["commit", "-m", "initial"], { cwd });
+    const originalPath = process.env.PATH;
+    process.env.PATH = dirname(gitPath);
+
+    try {
+      const isolated = await createIsolatedWorktree({ cwd, runId: "run_git_path", worktreeParentDir });
+
+      expect(isolated.mode).toBe("git_worktree");
+      await expect(readFile(join(isolated.path, "tracked.txt"), "utf8")).resolves.toBe("committed\n");
+    } finally {
+      restoreEnv("PATH", originalPath);
+    }
+  });
+
   it("uses standard git ignore rules when copying a repository with no HEAD", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-no-head-"));
     const worktreeParentDir = await makeWorktreeParentDir();
@@ -224,4 +250,12 @@ describe("createIsolatedWorktree", () => {
 
 async function makeWorktreeParentDir(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "tychonic-state-worktrees-"));
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
 }

@@ -7,8 +7,8 @@ Tychonic은 macOS 로컬에서 위임형 AI 작업을 workflow로 실행하는 �
 있도록 실행 이력과 evidence를 남깁니다.
 
 Tychonic은 coding agent, chat wrapper, dashboard, team service가 아닙니다.
-Codex, Claude Code, Gemini CLI, Kiro CLI, shell check, review gate를 묶는
-로컬 orchestration layer입니다.
+Codex, Claude Code, Kiro CLI, shell check, review gate를 묶는 로컬
+orchestration layer입니다.
 
 ## 왜 쓰는가
 
@@ -34,6 +34,7 @@ organization policy가 operator마다 다르므로 Tychonic은 그대로 재사�
 - macOS
 - Node.js 22+
 - `PATH`에서 실행 가능한 Temporal CLI
+- OpenP CLI 설치: `https://github.com/sky1core/open-p`
 - workflow가 사용할 agent CLI 설치 및 인증
 
 Tychonic은 public web UI/API surface를 제공하지 않습니다. CLI가 기본 machine
@@ -98,9 +99,14 @@ tychonic runtime stop
 개발/디버깅용으로 현재 terminal에 worker를 붙여 두려면
 `tychonic runtime up --foreground`를 사용하고 `Ctrl-C`로 종료합니다.
 
-지속 실행되는 macOS service 경로에서는 LaunchAgent 세트를 설치합니다.
-`tychonic service install`이 Temporal, worker, web status UI를 함께 관리하고,
-`tychonic service status`가 같은 세트를 보고합니다.
+지속 실행되는 macOS service 경로에서는 LaunchAgent 세트를 설치합니다. 운영
+runtime은 수동 daemon(`tychonic runtime up`) 또는 service 경로 중 하나만
+선택합니다. `tychonic service install`이 LaunchAgent를 로드한 뒤에는
+`tychonic runtime up`이 두 번째 운영 runtime 시작을 거부합니다. 반대로
+검증된 수동 운영 runtime이 이미 실행 중이면 `tychonic service install`도
+거부됩니다. `tychonic service install`이 Temporal, worker, web status UI를
+함께 관리하고, `tychonic service status`가 같은 세트를 보고합니다.
+`tychonic runtime up --instance <name>`은 분리된 개발 runtime에만 사용합니다.
 
 다른 terminal에서 run을 시작합니다.
 
@@ -276,13 +282,10 @@ states:
   architect:
     type: work
     agent: claude
-    permission_mode: plan
   builder:
     type: work
     agent: kiro
     trust_all_tools: true
-    sandbox: workspace-write
-    approval: never
   verify:
     type: verify
     command: |
@@ -293,20 +296,19 @@ states:
     type: review
     on_fail_return_to: builder
     agent: codex
-    approval: never
 ```
 
 workflow author는 target 계정, model availability, plan/tier, 쿼터, 가격,
 region/country access, organization policy를 확인한 뒤에만 state별 `model`과
 지원되는 `reasoning_effort`를 명시적으로 선택할 수 있습니다. 생략하면 선택된
-CLI의 default 또는 auto-selection 동작에 맡깁니다. Claude exact versioned model
-이름은 CLI가 보고한 model과 설정 문자열이 다르면 activity를 실패 처리합니다.
-`opus` 같은 alias는 CLI가 내부에서 concrete model로 해석하므로 exact-match 검사
-대상이 아닙니다.
-Kiro model id는 Kiro CLI의 id이며 account, tier, region에 따라 availability가
-달라질 수 있습니다. `kiro-cli chat --list-models` 결과는 현재 계정에서 실행
-가능한 목록이지, 문서화된 모든 Kiro model id의 전역 존재 여부를 판단하는
-목록이 아닙니다.
+OpenP backend의 default 또는 auto-selection 동작에 맡깁니다. Claude exact
+versioned model 이름은 OpenP가 보고한 model과 설정 문자열이 다르면 activity를
+실패 처리합니다. `opus` 같은 alias는 backend가 내부에서 concrete model로
+해석하므로 exact-match 검사 대상이 아닙니다.
+Kiro model id는 OpenP Kiro backend id이며 account, tier, region에 따라
+availability가 달라질 수 있습니다. target 계정에서 성공한 OpenP Kiro smoke가
+그 계정의 실행 가능성 증거이지, 문서화된 모든 Kiro model id의 전역 존재
+여부를 판단하는 근거는 아닙니다.
 `resume`, permission, sandbox, timeout, trust, policy 같은
 orchestration knob는 workflow 동작에 실제로 필요할 때만 사용합니다.
 
@@ -321,17 +323,20 @@ built-in adapter는 `agent: "<name>"`으로 선택합니다. `command`는 custom
 | `claude` | yes | yes | yes |
 | `codex` | yes | yes | yes |
 | `kiro` | yes | with normalizer | yes |
-| `gemini` | yes | with normalizer | no |
 
-`gemini`와 `kiro`를 review state의 primary agent로 쓰려면
+`kiro`를 review state의 primary agent로 쓰려면
 `normalizer: claude` 또는 `normalizer: codex`가 필요합니다. primary agent가
 review 판단을 하고, normalizer는 그 출력을 Tychonic review result로 구조화만
 합니다.
 
-Kiro는 ACP session API로 session capture와 resume을 처리합니다. Kiro review
-state는 파일을 읽고 check를 실행할 수 있지만 code를 수정하면 안 됩니다.
-adapter는 direct file write를 거부하고, review turn 동안 tracked file이 바뀌면
+Kiro는 `openp kiro`로 session capture와 resume을 처리합니다. Kiro review
+state는 prose를 만들고, structured Tychonic review contract에는 normalizer가
+필요합니다. review state는 파일을 읽고 check를 실행할 수 있지만 code를
+수정하면 안 됩니다. review activity는 review turn 동안 tracked file이 바뀌면
 실패시킵니다.
+
+Codex는 Tychonic built-in `codex` adapter로 실행됩니다. 다른 실행 계약이 필요한
+workflow는 `command` escape hatch로 직접 Codex 호출을 소유해야 합니다.
 
 ## Example Workflows
 

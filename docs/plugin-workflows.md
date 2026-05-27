@@ -110,8 +110,7 @@ contract; NAME is the workflow-defined instance:
 Activity call inputs carry runtime data only: prompt text, worktree path,
 session id, run record, and similar values. They must not choose which command
 or agent runs. Execution selection belongs to `profile.states.<name>.agent` or
-`profile.states.<name>.command`. Review states that use `gemini` or `kiro` as
-the primary reviewer must also declare
+`profile.states.<name>.command`. Review states that use `kiro` as the primary reviewer must also declare
 `profile.states.<name>.normalizer` as `claude` or `codex`.
 
 Workflow run input must stay task-shaped. Public top-level input fields are
@@ -133,15 +132,15 @@ those values through activity runtime inputs. When a CLI reports the concrete
 selected model, Tychonic fails the activity if that report differs from an exact
 versioned model string in state config. Do not add separate normalizer model
 fields; Tychonic owns the lightweight model flag for the normalizer. Kiro model
-ids are Kiro CLI ids and their availability can be account-, tier-, or
-region-scoped; `kiro-cli chat --list-models` reports what that account can run,
-not the global validity of every documented Kiro model id. Target account,
-model availability, plan/tier, quota, pricing, region/country access, and
-organization policy differ by operator, so reference examples are starting
-points to adapt, not default profiles to reuse unchanged.
-Kiro states may set `model`, but not
-`reasoning_effort`; the installed Kiro CLI ACP surface exposes no stable
-reasoning/effort/thinking option.
+ids are OpenP Kiro backend ids and their availability can be account-, tier-,
+or region-scoped; a successful `openp kiro --model <id>` smoke reports what
+that account can run, not the global validity of every documented Kiro model
+id. Target account, model availability, plan/tier, quota, pricing,
+region/country access, and organization policy differ by operator, so
+reference examples are starting points to adapt, not default profiles to reuse
+unchanged.
+Kiro states may set `model` and `reasoning_effort`; Tychonic passes them to
+OpenP as `--model` and `--effort`.
 
 QA/review states may inspect files and run checks. They must not modify source
 code or silently repair findings. Review activities compare the git worktree

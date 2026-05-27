@@ -15,7 +15,7 @@ describe("status UI state evidence display decisions", () => {
     expect(
       stateCommandForDisplay({
         attemptAgentSessionId: "session_1",
-        attemptCommand: "claude -p ..."
+        attemptCommand: "openp claude ..."
       })
     ).toBeUndefined();
   });

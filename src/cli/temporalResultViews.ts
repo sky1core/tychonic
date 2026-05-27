@@ -4,6 +4,7 @@ import type {
   ArtifactRecord,
   DecisionInboxItemRecord,
   FindingRecord,
+  WorkflowWarningRecord,
   WorkflowRunRecord,
   WorkflowStateRecord,
   WorkflowRunStatus
@@ -98,6 +99,7 @@ export interface WorkflowEvidenceView {
   logs: WorkflowLogEvidenceView[];
   sessions: AgentSessionRecord[];
   findings: FindingRecord[];
+  warnings: WorkflowWarningRecord[];
   timing: WorkflowTimingView;
 }
 
@@ -150,6 +152,7 @@ export function workflowEvidenceView(
     logs: logs.map((attempt) => liveOutputAttemptView(attempt, stateNameById, workflowId, runId)),
     sessions: result.run.agent_sessions,
     findings: result.run.findings,
+    warnings: result.run.warnings ?? [],
     timing: workflowTimingView(result)
   };
 }

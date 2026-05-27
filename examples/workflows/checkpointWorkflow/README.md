@@ -22,12 +22,10 @@ This workflow is one-pass, so it does not auto-retry failed reviews. The review
 states still declare `on_fail_return_to` because the review-state contract
 requires an explicit failure destination in the effective profile.
 
-This example profile sets `semantic_review` to Claude `claude-opus-4-7` with
-`reasoning_effort: max` and `test_review` to Codex `gpt-5.5` with
-`reasoning_effort: xhigh`.
-These values are examples; adapt them after checking the target account,
-model availability, plan/tier, quota, pricing, region/country access, and
-organization policy.
+This example profile uses Claude and Codex review states with pinned agent
+settings in `workflow.yaml`. Adapt those values after checking the target
+account, model availability, plan/tier, quota, pricing, region/country access,
+and organization policy.
 This bundle has no Kiro state.
 
 ## Input

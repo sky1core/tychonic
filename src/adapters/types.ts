@@ -12,11 +12,9 @@
  * artifact write, and timeout enforcement remain the responsibility of
  * `bootstrap/workerActivityBody.ts` and `bootstrap/commandRunner.ts`.
  *
- * Role mapping ("work" / "review") drives permission flag
- * selection inside each adapter. The role is supplied per call and is the
- * sole source of permission policy unless the caller explicitly overrides
- * via `model` / `reasoning_effort` / `sandbox` / `approval` /
- * `permission_mode` / `trust_all_tools`.
+ * The role is supplied per call for backend behavior that needs work/review
+ * context. Agent settings and explicitly supported execution settings are
+ * sourced from the validated state config block.
  */
 
 import type {
@@ -26,21 +24,15 @@ import type {
 /**
  * Built-in adapter names accepted by validated `states.<name>.agent` blocks.
  */
-export type BuiltInAgentName = "claude" | "codex" | "gemini" | "kiro";
+export type BuiltInAgentName = "claude" | "codex" | "kiro";
 
 /**
- * Roles that the host knows how to map to permission flags. Maps directly
+ * Roles that the host knows how to map to execution trust flags. Maps directly
  * to the relevant subset of `ActivityType`.
  */
 export type AdapterRole = Extract<ActivityType, "work" | "review">;
 
-export type AdapterSandbox = "read-only" | "workspace-write" | "danger-full-access";
-export type AdapterApproval = "never" | "on-request" | "on-failure" | "untrusted";
-export type AdapterPermissionMode =
-  | "plan"
-  | "default"
-  | "acceptEdits"
-  | "bypassPermissions";
+export type AdapterPermissionMode = "bypassPermissions";
 
 /**
  * Inputs every `runNew` / `runResume` call shares.
@@ -54,20 +46,18 @@ export type AdapterPermissionMode =
  * `worktreeCwd` is informational. The host already chdirs the spawn into
  * the worktree before invoking the command; adapters do not insert `cd`.
  *
- * Orchestration overrides (`sandbox` / `approval` / `permission_mode` /
- * `trust_all_tools`) are applied verbatim and replace the role-derived
- * default. Agent settings (`model` / `reasoning_effort`) are passed through
- * only when the selected adapter supports the corresponding CLI surface.
- * They are sourced from the validated state config block.
+ * Agent settings (`model` / `reasoning_effort`) are passed through only when
+ * the selected adapter supports the corresponding CLI surface. Execution
+ * settings are included only when this adapter contract has an explicit OpenP
+ * mapping for them.
  */
 export interface AdapterRunInput {
   prompt: string;
   worktreeCwd: string;
   role: AdapterRole;
+  executablePaths?: Readonly<Record<string, string>>;
   model?: string;
   reasoningEffort?: string;
-  sandbox?: AdapterSandbox;
-  approval?: AdapterApproval;
   permissionMode?: AdapterPermissionMode;
   trustAllTools?: boolean;
 }
@@ -105,10 +95,8 @@ export interface AdapterRunResult {
 /**
  * Error class adapters throw when the requested operation is not
  * supported by the underlying CLI. Examples:
- * - gemini `runResume`: gemini's `--resume` takes a project-relative
- *   index, not a stable UUID, so it cannot be safely scripted.
- * - gemini `review`: gemini does not currently emit a non-interactive
- *   structured-review surface.
+ * - kiro `review`: kiro does not currently emit a non-interactive
+ *   structured-review surface and requires a normalizer.
  *
  * Activity dispatch catches this and surfaces it as a workflow-level error.
  */
@@ -132,7 +120,7 @@ export class AdapterUnsupported extends Error {
  * Adapter contract.
  *
  * - `runNew(input)`: produce the argv for a fresh session. Must respect
- *   `input.role` for permission flag selection and apply explicit
+ *   `input.role` for execution trust flag selection and apply explicit
  *   orchestration overrides.
  * - `runResume(input)`: produce the argv that resumes
  *   `input.sessionId`. Throw `AdapterUnsupported` if the CLI has
@@ -144,6 +132,7 @@ export class AdapterUnsupported extends Error {
  */
 export interface AgentAdapter {
   readonly name: BuiltInAgentName;
+  readonly executables: readonly string[];
   runNew(input: AdapterRunInput): AdapterCommand;
   runResume(input: AdapterResumeInput): AdapterCommand;
   parseResult(stdout: string, stderr: string, exitCode: number): AdapterRunResult;

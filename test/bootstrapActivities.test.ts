@@ -98,6 +98,36 @@ describe("bootstrap activities", () => {
       expect(content).toContain("command: npm run verify:worker");
       await expect(access(join(cwd, ".tychonic"))).rejects.toThrow();
     });
+
+    it("records config warnings when a profile declares adapter options the agent ignores", async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "tychonic-profile-warning-"));
+      const run = await startRunActivity({
+        template: "warning_workflow",
+        cwd,
+        runId: "warning_workflow_profile_warning",
+        profile: {
+          version: "tychonic.config.v1",
+          states: {
+            work: {
+              type: "work",
+              agent: "kiro",
+              sandbox: "workspace-write"
+            }
+          }
+        }
+      });
+
+      expect(run.warnings).toEqual([
+        expect.objectContaining({
+          source: "config",
+          code: "unsupported_config_option",
+          path: "states.work.sandbox",
+          state_name: "work",
+          agent: "kiro",
+          option: "sandbox"
+        })
+      ]);
+    });
   });
 
   describe("collectGitFactsActivity", () => {
@@ -119,6 +149,33 @@ describe("bootstrap activities", () => {
       expect(result.delta.facts?.changed_files).toHaveLength(1);
       expect(result.delta.facts?.changed_files?.[0]?.path).toBe("base.ts");
       expect(result.delta.states).toBeUndefined();
+    });
+
+    it("uses the runtime PATH when collecting git facts", async () => {
+      const { stdout: gitPathOutput } = await execFileAsync("/bin/sh", ["-lc", "command -v git"], {
+        encoding: "utf8"
+      });
+      const gitPath = gitPathOutput.trim();
+      const cwd = await mkdtemp(join(tmpdir(), "tychonic-git-facts-git-path-"));
+      await execFileAsync(gitPath, ["init"], { cwd });
+      await writeFile(join(cwd, "base.ts"), "export const x = 1;\n", "utf8");
+      await execFileAsync(gitPath, ["add", "base.ts"], { cwd });
+      await execFileAsync(
+        gitPath,
+        ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "init"],
+        { cwd }
+      );
+      await writeFile(join(cwd, "base.ts"), "export const x = 2;\n", "utf8");
+      const originalPath = process.env.PATH;
+      process.env.PATH = dirname(gitPath);
+
+      try {
+        const result = await collectGitFactsActivity({ run: baseRun("run_facts_git_path"), cwd });
+        expect(result.delta.facts?.has_changes).toBe(true);
+        expect(result.delta.facts?.changed_files?.[0]?.path).toBe("base.ts");
+      } finally {
+        restoreEnv("PATH", originalPath);
+      }
     });
   });
 
@@ -447,5 +504,13 @@ async function withTychonicStateHome<T>(run: (stateHome: string) => Promise<T>):
     } else {
       process.env.HOME = originalHome;
     }
+  }
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
   }
 }

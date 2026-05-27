@@ -19,6 +19,11 @@ export interface InstalledWorkflowModule {
   workflowPath: string;
 }
 
+export interface InstalledWorkflowModuleRefreshResult {
+  directory: string;
+  refreshed: InstalledWorkflowModule[];
+}
+
 export interface WorkflowBundleInspection {
   exportNames: string[];
   workflowFunctionNames: string[];
@@ -139,6 +144,78 @@ export async function installRuntimeWorkflowModule(options: {
   };
 }
 
+export async function refreshInstalledRuntimeWorkflowModules(): Promise<InstalledWorkflowModuleRefreshResult> {
+  const targetRoot = runtimeWorkflowModulesDir();
+  const installedBundles = await listInstalledWorkflowBundleSources();
+  if (installedBundles.length === 0) {
+    return { directory: targetRoot, refreshed: [] };
+  }
+
+  const inspections = [];
+  for (const bundle of installedBundles) {
+    const inspection = await inspectInstalledWorkflowBundleSource({
+      name: bundle.name,
+      sourcePath: bundle.path
+    });
+    assertBundleExportsWorkflowFunctionNamed(bundle.name, inspection.workflowFunctionNames);
+    inspections.push({ bundle, inspection });
+  }
+
+  const nonce = `${process.pid}-${Date.now()}`;
+  const staged: Array<{
+    bundle: InstalledWorkflowModule;
+    stagingDir: string;
+    backupDir: string;
+    inspection: WorkflowBundleSourceInspection;
+  }> = [];
+  const swapped: Array<{
+    bundle: InstalledWorkflowModule;
+    backupDir: string;
+  }> = [];
+
+  try {
+    for (const entry of inspections) {
+      const stagingDir = join(targetRoot, `${entry.bundle.name}.refresh-${nonce}.incoming`);
+      const backupDir = join(targetRoot, `${entry.bundle.name}.backup-${nonce}.incoming`);
+      await rm(stagingDir, { recursive: true, force: true });
+      await rm(backupDir, { recursive: true, force: true });
+      await cp(entry.bundle.path, stagingDir, { recursive: true });
+      await writeFile(join(stagingDir, BUNDLE_WORKFLOW_FILE), entry.inspection.generatedWorkflowSource, "utf8");
+      await writeFile(join(stagingDir, BUNDLE_GENERATED_MERMAID_FILE), entry.inspection.generatedMermaid, "utf8");
+      staged.push({ ...entry, stagingDir, backupDir });
+    }
+
+    for (const entry of staged) {
+      await rename(entry.bundle.path, entry.backupDir);
+      swapped.push({ bundle: entry.bundle, backupDir: entry.backupDir });
+      await rename(entry.stagingDir, entry.bundle.path);
+    }
+
+    for (const entry of swapped) {
+      await rm(entry.backupDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  } catch (error) {
+    for (const entry of [...swapped].reverse()) {
+      await rm(entry.bundle.path, { recursive: true, force: true }).catch(() => undefined);
+      await rename(entry.backupDir, entry.bundle.path).catch(() => undefined);
+    }
+    for (const entry of staged) {
+      await rm(entry.stagingDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(entry.backupDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw error;
+  }
+
+  return {
+    directory: targetRoot,
+    refreshed: installedBundles.map((bundle) => ({
+      name: bundle.name,
+      path: bundle.path,
+      workflowPath: bundle.workflowPath
+    }))
+  };
+}
+
 export async function listRuntimeWorkflowModules(): Promise<InstalledWorkflowModule[]> {
   const dir = runtimeWorkflowModulesDir();
   let entries;
@@ -169,6 +246,44 @@ export async function listRuntimeWorkflowModules(): Promise<InstalledWorkflowMod
       continue;
     }
     bundles.push({ name: entry.name, path: bundleDir, workflowPath });
+  }
+  return bundles.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function listInstalledWorkflowBundleSources(): Promise<InstalledWorkflowModule[]> {
+  const dir = runtimeWorkflowModulesDir();
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return [];
+    }
+    throw error;
+  }
+  const bundles: InstalledWorkflowModule[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.endsWith(".incoming")) continue;
+    let safeName: string;
+    try {
+      safeName = safeWorkflowModuleName(entry.name);
+    } catch {
+      continue;
+    }
+    if (safeName !== entry.name) continue;
+    const bundleDir = join(dir, entry.name);
+    const specPath = join(bundleDir, BUNDLE_WORKFLOW_SPEC_FILE);
+    try {
+      await access(specPath, fsConstants.R_OK);
+    } catch {
+      continue;
+    }
+    bundles.push({
+      name: entry.name,
+      path: bundleDir,
+      workflowPath: join(bundleDir, BUNDLE_WORKFLOW_FILE)
+    });
   }
   return bundles.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -222,6 +337,20 @@ async function inspectWorkflowBundleSource(input: {
 }): Promise<WorkflowBundleSourceInspection> {
   const entries = await readdir(input.sourcePath);
   validateBundleFileShape(entries);
+  return inspectWorkflowYamlSource(input);
+}
+
+async function inspectInstalledWorkflowBundleSource(input: {
+  name: string;
+  sourcePath: string;
+}): Promise<WorkflowBundleSourceInspection> {
+  return inspectWorkflowYamlSource(input);
+}
+
+async function inspectWorkflowYamlSource(input: {
+  name: string;
+  sourcePath: string;
+}): Promise<WorkflowBundleSourceInspection> {
   const specPath = join(input.sourcePath, BUNDLE_WORKFLOW_SPEC_FILE);
   const spec = parseDeclarativeWorkflowSpecYaml({
     source: await readFile(specPath, "utf8"),

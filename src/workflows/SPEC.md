@@ -195,8 +195,7 @@ agent session across iterations: `runWorkerActivity` accepts an explicit
 own resume invocation. A workflow that wants same-session continuity calls
 `runWorkerActivity` with the prior session id; a workflow that wants a fresh
 session omits `sessionId`. When a given agent CLI cannot expose a durable
-session reference (for example the partial gemini adapter), the activity records
-the session as non-resumable evidence.
+session reference, the activity records the session as non-resumable evidence.
 
 `states.<name>.resume` (non-negative integer, default `0`) is the optional
 budget for that explicit continuation path. Omitted or `0` means no
