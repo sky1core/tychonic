@@ -2,9 +2,10 @@
 
 [English README](README.md)
 
-Tychonic은 macOS 로컬에서 위임형 AI 작업을 workflow로 실행하는 도구입니다.
-기존 agent CLI와 결정적 검증 명령을 Temporal 위에서 실행하고, 나중에 추적할 수
-있도록 실행 이력과 evidence를 남깁니다.
+Tychonic은 여러 agent CLI와 model의 사용량, 비용, 강점을 작업 단계별로 분산
+배치하는 macOS 로컬 AI workflow router/runtime입니다. 기존 agent CLI와 결정적
+검증 명령을 Temporal 위에서 실행하고, 나중에 추적할 수 있도록 실행 이력과
+evidence를 남깁니다.
 
 Tychonic은 coding agent, chat wrapper, dashboard, team service가 아닙니다.
 Codex, Claude Code, Kiro CLI, shell check, review gate를 묶는 로컬
@@ -19,7 +20,8 @@ orchestration layer입니다.
   초기화됩니다.
 - prompt, output, session, artifact, finding, inbox item을 evidence로 남깁니다.
 - state마다 agent, model, reasoning effort를 다르게 지정할 수 있습니다.
-- 품질, 비용, token 사용량에 맞춰 agent CLI와 model 계정을 나눠 쓸 수 있습니다.
+- 품질, 비용, token 사용량, quota 사용량, backend 강점에 맞춰 workflow state를
+  agent CLI와 model 계정에 나눠 배치할 수 있습니다.
 
 Tychonic core에는 workflow module이 없습니다. workflow는 설치형 bundle입니다.
 참고용 예제는 `examples/workflows/` 아래에 있으며, package에 포함돼 있어도

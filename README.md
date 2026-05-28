@@ -2,9 +2,10 @@
 
 [한국어 README](README.ko.md)
 
-Tychonic is a macOS-local workflow runner for delegated AI work. It runs
-existing agent CLIs and deterministic checks through Temporal, keeps durable
-run history, and records the evidence needed to inspect what happened.
+Tychonic is a macOS-local AI workflow router/runtime for delegated work. It
+routes workflow stages across existing agent CLIs, models, and deterministic
+checks through Temporal so operators can distribute usage, cost, and backend
+strengths by step while keeping durable run history and inspectable evidence.
 
 It is not a coding agent, chat wrapper, dashboard, or team service. Tychonic is
 the orchestration layer around Codex, Claude Code, Kiro CLI, shell checks, and
@@ -21,7 +22,7 @@ review gates.
 - Select the right agent, model, and reasoning effort per state instead of
   forcing one global model.
 - Spread work across agent CLIs and model accounts when that is useful for
-  quality, cost, or token usage.
+  quality, cost, token usage, quota usage, or backend strengths.
 
 Tychonic core contains no workflow modules. Workflows are installed bundles.
 Reference examples live under `examples/workflows/`; packaged examples are
