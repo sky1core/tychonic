@@ -7,7 +7,7 @@ states:
   architect:
     type: work
     agent: claude
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     reasoning_effort: max
     prompt: |
       You are the architect stage.
@@ -28,7 +28,8 @@ states:
   builder:
     type: work
     agent: kiro
-    model: claude-opus-4.6
+    model: claude-opus-4.7
+    reasoning_effort: high
     trust_all_tools: true
     prompt: |
       You are the builder stage. Implement the architect output for this run.

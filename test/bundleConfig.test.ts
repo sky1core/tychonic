@@ -67,7 +67,7 @@ export const defaultProfile = {
       type: "review",
       on_fail_return_to: "work",
       agent: "claude",
-      model: "opus",
+      model: "claude-opus-4-8",
       reasoning_effort: "max"
     }
   }
@@ -80,7 +80,7 @@ export async function bundle() { return "ok"; }
 `);
     const profile = await loadBundleDefaultProfile(bundleDir);
     expect(profile.states?.review).toMatchObject({
-      model: "opus",
+      model: "claude-opus-4-8",
       reasoning_effort: "max"
     });
   });

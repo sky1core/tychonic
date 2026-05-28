@@ -7,7 +7,8 @@ states:
   work:
     type: work
     agent: kiro
-    model: claude-opus-4.6
+    model: claude-opus-4.7
+    reasoning_effort: high
     trust_all_tools: true
     prompt: |
       Complete the requested work in the target project.
@@ -40,7 +41,7 @@ states:
     type: review
     on_fail_return_to: work
     agent: claude
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     reasoning_effort: max
     prompt: |
       Review work stages 1-3 for correctness, regressions, missing tests, and risky assumptions.

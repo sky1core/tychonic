@@ -131,7 +131,459 @@ describe("Temporal result views", () => {
       status: "running"
     });
   });
+
+  it("projects active and historical findings separately without dropping evidence", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-findings-"));
+    const result = fakeResult(cwd);
+    result.run.states = [
+      {
+        id: "state_final_qa_1",
+        name: "final_qa",
+        status: "failed",
+        reason: "review failed",
+        activity_attempt_ids: [],
+        artifact_ids: [],
+        finding_ids: ["finding_new", "finding_resolved"],
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:01.000Z"
+      }
+    ];
+    result.run.findings = [
+      {
+        id: "finding_new",
+        status: "new",
+        severity: "high",
+        title: "Active finding",
+        detail: "Still actionable.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "finding_resolved",
+        status: "resolved",
+        severity: "medium",
+        title: "Resolved finding",
+        detail: "Closed by the latest pass.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "finding_superseded",
+        status: "superseded",
+        severity: "low",
+        title: "Superseded finding",
+        detail: "Replaced by a later fail result.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      }
+    ];
+
+    const view = workflowEvidenceView(result, "wf_1", "run_1");
+
+    expect(view.counts).toMatchObject({
+      findings: 3,
+      active_findings: 1,
+      historical_findings: 2
+    });
+    expect(view.findings.map((finding) => finding.id)).toEqual([
+      "finding_new",
+      "finding_resolved",
+      "finding_superseded"
+    ]);
+    expect(view.active_findings.map((finding) => finding.id)).toEqual(["finding_new"]);
+    expect(view.historical_findings.map((finding) => finding.id)).toEqual([
+      "finding_resolved",
+      "finding_superseded"
+    ]);
+  });
+
+  it("projects stale active findings from an older same-gate pass as resolved", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-findings-pass-"));
+    const result = fakeResult(cwd);
+    result.run.status = "succeeded";
+    result.run.states = [
+      {
+        id: "state_final_qa_1",
+        name: "final_qa",
+        status: "failed",
+        reason: "review failed",
+        activity_attempt_ids: ["attempt_final_qa_1"],
+        artifact_ids: ["artifact_final_qa_1_parsed"],
+        finding_ids: ["finding_1", "finding_2"],
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "state_builder_1",
+        name: "builder",
+        status: "succeeded",
+        reason: "builder fixed review findings",
+        activity_attempt_ids: ["attempt_builder_1"],
+        artifact_ids: ["artifact_builder_1"],
+        finding_ids: [],
+        started_at: "2026-04-19T00:00:02.000Z",
+        finished_at: "2026-04-19T00:00:03.000Z"
+      },
+      {
+        id: "state_final_qa_2",
+        name: "final_qa",
+        status: "succeeded",
+        reason: "final QA passed",
+        activity_attempt_ids: ["attempt_final_qa_2"],
+        artifact_ids: ["artifact_final_qa_2_parsed"],
+        finding_ids: [],
+        started_at: "2026-04-19T00:00:04.000Z",
+        finished_at: "2026-04-19T00:00:05.000Z"
+      }
+    ];
+    result.run.artifacts = [
+      parsedReviewArtifact("artifact_final_qa_1_parsed", "state_final_qa_1", "final_qa"),
+      parsedReviewArtifact("artifact_final_qa_2_parsed", "state_final_qa_2", "final_qa")
+    ];
+    result.run.findings = [
+      {
+        id: "finding_1",
+        status: "new",
+        severity: "high",
+        title: "First stale finding",
+        detail: "Closed by final pass.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "finding_2",
+        status: "new",
+        severity: "medium",
+        title: "Second stale finding",
+        detail: "Closed by final pass.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      }
+    ];
+
+    const view = workflowEvidenceView(result, "wf_1", "run_1");
+
+    expect(view.counts).toMatchObject({
+      findings: 2,
+      active_findings: 0,
+      historical_findings: 2
+    });
+    expect(view.findings.map((finding) => [finding.id, finding.status])).toEqual([
+      ["finding_1", "resolved"],
+      ["finding_2", "resolved"]
+    ]);
+    expect(view.warnings).toEqual([]);
+  });
+
+  it("projects stale active findings from an older same-gate fail as superseded", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-findings-fail-"));
+    const result = fakeResult(cwd);
+    result.run.states = [
+      {
+        id: "state_final_qa_1",
+        name: "final_qa",
+        status: "failed",
+        reason: "first review failed",
+        activity_attempt_ids: ["attempt_final_qa_1"],
+        artifact_ids: ["artifact_final_qa_1_parsed"],
+        finding_ids: ["finding_old"],
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "state_builder_1",
+        name: "builder",
+        status: "succeeded",
+        reason: "builder attempted fix",
+        activity_attempt_ids: ["attempt_builder_1"],
+        artifact_ids: ["artifact_builder_1"],
+        finding_ids: [],
+        started_at: "2026-04-19T00:00:02.000Z",
+        finished_at: "2026-04-19T00:00:03.000Z"
+      },
+      {
+        id: "state_final_qa_2",
+        name: "final_qa",
+        status: "failed",
+        reason: "second review failed",
+        activity_attempt_ids: ["attempt_final_qa_2"],
+        artifact_ids: ["artifact_final_qa_2_parsed"],
+        finding_ids: ["finding_new"],
+        started_at: "2026-04-19T00:00:04.000Z",
+        finished_at: "2026-04-19T00:00:05.000Z"
+      }
+    ];
+    result.run.artifacts = [
+      parsedReviewArtifact("artifact_final_qa_1_parsed", "state_final_qa_1", "final_qa"),
+      parsedReviewArtifact("artifact_final_qa_2_parsed", "state_final_qa_2", "final_qa")
+    ];
+    result.run.findings = [
+      {
+        id: "finding_old",
+        status: "new",
+        severity: "high",
+        title: "Old finding",
+        detail: "Replaced by later final QA.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "finding_new",
+        status: "new",
+        severity: "medium",
+        title: "Current finding",
+        detail: "Still active.",
+        source_state_id: "state_final_qa_2",
+        created_at: "2026-04-19T00:00:05.000Z"
+      }
+    ];
+
+    const view = workflowEvidenceView(result, "wf_1", "run_1");
+
+    expect(view.counts).toMatchObject({
+      findings: 2,
+      active_findings: 1,
+      historical_findings: 1
+    });
+    expect(view.findings.map((finding) => [finding.id, finding.status])).toEqual([
+      ["finding_old", "superseded"],
+      ["finding_new", "new"]
+    ]);
+    expect(view.active_findings.map((finding) => finding.id)).toEqual(["finding_new"]);
+  });
+
+  it("warns when a succeeded workflow still has active findings after projection", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-findings-warning-"));
+    const result = fakeResult(cwd);
+    result.run.status = "succeeded";
+    result.run.states = [
+      {
+        id: "state_first_review_1",
+        name: "first_review",
+        status: "failed",
+        reason: "first review failed",
+        activity_attempt_ids: ["attempt_first_review_1"],
+        artifact_ids: ["artifact_first_review_1_parsed"],
+        finding_ids: ["finding_first_review"],
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "state_final_qa_1",
+        name: "final_qa",
+        status: "succeeded",
+        reason: "final QA passed",
+        activity_attempt_ids: ["attempt_final_qa_1"],
+        artifact_ids: ["artifact_final_qa_1_parsed"],
+        finding_ids: [],
+        started_at: "2026-04-19T00:00:02.000Z",
+        finished_at: "2026-04-19T00:00:03.000Z"
+      }
+    ];
+    result.run.artifacts = [
+      parsedReviewArtifact("artifact_first_review_1_parsed", "state_first_review_1", "first_review"),
+      parsedReviewArtifact("artifact_final_qa_1_parsed", "state_final_qa_1", "final_qa")
+    ];
+    result.run.findings = [
+      {
+        id: "finding_first_review",
+        status: "new",
+        severity: "high",
+        title: "Unclosed first review finding",
+        detail: "No later first_review pass closed this finding.",
+        source_state_id: "state_first_review_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      }
+    ];
+
+    const view = workflowEvidenceView(result, "wf_1", "run_1");
+
+    expect(view.counts.active_findings).toBe(1);
+    expect(view.warnings).toContainEqual(
+      expect.objectContaining({
+        source: "projection",
+        code: "succeeded_with_active_findings"
+      })
+    );
+  });
+
+  it("does not close same-name findings without parsed review result evidence", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-findings-manual-"));
+    const result = fakeResult(cwd);
+    result.run.status = "succeeded";
+    result.run.states = [
+      {
+        id: "state_manual_gate_1",
+        name: "manual_gate",
+        status: "failed",
+        reason: "manual patch added a finding",
+        activity_attempt_ids: [],
+        artifact_ids: [],
+        finding_ids: ["finding_manual"],
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "state_manual_gate_2",
+        name: "manual_gate",
+        status: "succeeded",
+        reason: "same-name state later succeeded without parsed review evidence",
+        activity_attempt_ids: [],
+        artifact_ids: [],
+        finding_ids: [],
+        started_at: "2026-04-19T00:00:02.000Z",
+        finished_at: "2026-04-19T00:00:03.000Z"
+      }
+    ];
+    result.run.artifacts = [];
+    result.run.findings = [
+      {
+        id: "finding_manual",
+        status: "new",
+        severity: "high",
+        title: "Manual finding",
+        detail: "No parsed review verdict closed this finding.",
+        source_state_id: "state_manual_gate_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      }
+    ];
+
+    const view = workflowEvidenceView(result, "wf_1", "run_1");
+
+    expect(view.counts).toMatchObject({
+      findings: 1,
+      active_findings: 1,
+      historical_findings: 0
+    });
+    expect(view.findings.map((finding) => [finding.id, finding.status])).toEqual([
+      ["finding_manual", "new"]
+    ]);
+    expect(view.warnings).toContainEqual(
+      expect.objectContaining({
+        source: "projection",
+        code: "succeeded_with_active_findings"
+      })
+    );
+  });
+
+  it("does not close same-name findings when the source state lacks parsed review evidence", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-findings-source-unparsed-"));
+    const result = fakeResult(cwd);
+    result.run.status = "succeeded";
+    result.run.states = [
+      {
+        id: "state_final_qa_1",
+        name: "final_qa",
+        status: "failed",
+        reason: "finding was appended without parsed review evidence",
+        activity_attempt_ids: [],
+        artifact_ids: [],
+        finding_ids: ["finding_unparsed_source"],
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "state_final_qa_2",
+        name: "final_qa",
+        status: "succeeded",
+        reason: "later parsed final QA passed",
+        activity_attempt_ids: [],
+        artifact_ids: ["artifact_final_qa_2_parsed"],
+        finding_ids: [],
+        started_at: "2026-04-19T00:00:02.000Z",
+        finished_at: "2026-04-19T00:00:03.000Z"
+      }
+    ];
+    result.run.artifacts = [
+      parsedReviewArtifact("artifact_final_qa_2_parsed", "state_final_qa_2", "final_qa")
+    ];
+    result.run.findings = [
+      {
+        id: "finding_unparsed_source",
+        status: "new",
+        severity: "high",
+        title: "Unparsed source finding",
+        detail: "Source state has no parsed review artifact.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      }
+    ];
+
+    const view = workflowEvidenceView(result, "wf_1", "run_1");
+
+    expect(view.findings.map((finding) => [finding.id, finding.status])).toEqual([
+      ["finding_unparsed_source", "new"]
+    ]);
+    expect(view.counts).toMatchObject({
+      active_findings: 1,
+      historical_findings: 0
+    });
+  });
+
+  it("does not close same-name findings when the later state lacks parsed review evidence", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tychonic-result-view-findings-later-unparsed-"));
+    const result = fakeResult(cwd);
+    result.run.status = "succeeded";
+    result.run.states = [
+      {
+        id: "state_final_qa_1",
+        name: "final_qa",
+        status: "failed",
+        reason: "parsed final QA failed",
+        activity_attempt_ids: [],
+        artifact_ids: ["artifact_final_qa_1_parsed"],
+        finding_ids: ["finding_unparsed_later"],
+        started_at: "2026-04-19T00:00:00.000Z",
+        finished_at: "2026-04-19T00:00:01.000Z"
+      },
+      {
+        id: "state_final_qa_2",
+        name: "final_qa",
+        status: "succeeded",
+        reason: "later state was patched without parsed review evidence",
+        activity_attempt_ids: [],
+        artifact_ids: [],
+        finding_ids: [],
+        started_at: "2026-04-19T00:00:02.000Z",
+        finished_at: "2026-04-19T00:00:03.000Z"
+      }
+    ];
+    result.run.artifacts = [
+      parsedReviewArtifact("artifact_final_qa_1_parsed", "state_final_qa_1", "final_qa")
+    ];
+    result.run.findings = [
+      {
+        id: "finding_unparsed_later",
+        status: "new",
+        severity: "high",
+        title: "Unparsed later finding",
+        detail: "Later state has no parsed review artifact.",
+        source_state_id: "state_final_qa_1",
+        created_at: "2026-04-19T00:00:01.000Z"
+      }
+    ];
+
+    const view = workflowEvidenceView(result, "wf_1", "run_1");
+
+    expect(view.findings.map((finding) => [finding.id, finding.status])).toEqual([
+      ["finding_unparsed_later", "new"]
+    ]);
+    expect(view.counts).toMatchObject({
+      active_findings: 1,
+      historical_findings: 0
+    });
+  });
 });
+
+function parsedReviewArtifact(id: string, stateId: string, stateName: string) {
+  return {
+    id,
+    kind: `${stateName}_parsed`,
+    path: `artifacts/${id}.json`,
+    state_id: stateId,
+    created_at: "2026-04-19T00:00:01.000Z"
+  };
+}
 
 function fakeResult(cwd: string): TychonicWorkflowResult {
   return {

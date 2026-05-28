@@ -5,6 +5,7 @@ import {
 } from "../domain/types.js";
 import type {
   DecisionInboxItemRecord,
+  FindingStatus,
   WorkflowRunRecord,
   WorkflowStateRecord
 } from "../domain/types.js";
@@ -24,9 +25,11 @@ import type { ActivityResult, StateRecordPatch } from "../temporal/types.js";
  *   body never pushes into `input.run` itself (src/activities/SPEC.md §Activity Result And
  *   Evidence Invariants).
  *
- * `applyActivityResult` applies both halves in one step. Parsed failed review
- * findings are promoted into `run.findings` and linked back to the review
- * state record; workflow-specific inbox routing still belongs to the workflow.
+ * `applyActivityResult` applies both halves in one step. Parsed review verdicts
+ * are the authority for the same review gate's finding lifecycle: a new fail
+ * supersedes prior active findings for that gate before adding new findings,
+ * and a new pass resolves prior active findings. Workflow-specific inbox
+ * routing still belongs to the workflow.
  */
 export function applyActivityResult(
   run: WorkflowRunRecord,
@@ -56,6 +59,7 @@ export function applyActivityResult(
         artifacts: [...next.artifacts, ...outcome.artifacts],
         agent_sessions: [...next.agent_sessions, ...outcome.agentSessions]
       };
+      next = closePriorActiveReviewFindings(next, result);
       next = appendParsedReviewFindings(next, result);
     }
   }
@@ -100,6 +104,39 @@ export function nextRunLocalId(run: WorkflowRunRecord, prefix: string): string {
     run.inbox.length +
     run.agent_sessions.length;
   return `${prefix}_${counter + 1}`;
+}
+
+function closePriorActiveReviewFindings(
+  run: WorkflowRunRecord,
+  result: ActivityResult
+): WorkflowRunRecord {
+  const outcome = result.reviewOutcome;
+  if (!outcome || outcome.kind !== "parsed") {
+    return run;
+  }
+  const sourceState = result.delta.states?.[0];
+  if (!sourceState) {
+    return run;
+  }
+
+  const nextStatus: FindingStatus = outcome.result.status === "pass" ? "resolved" : "superseded";
+  const stateNameById = new Map(run.states.map((state) => [state.id, state.name]));
+  let changed = false;
+  const findings = run.findings.map((finding) => {
+    if (finding.status !== "new") {
+      return finding;
+    }
+    if (finding.source_state_id === sourceState.id) {
+      return finding;
+    }
+    if (stateNameById.get(finding.source_state_id) !== sourceState.name) {
+      return finding;
+    }
+    changed = true;
+    return { ...finding, status: nextStatus };
+  });
+
+  return changed ? { ...run, findings } : run;
 }
 
 function appendParsedReviewFindings(

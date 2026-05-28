@@ -153,6 +153,107 @@ describe("applyActivityResult", () => {
     expect(next.states[0]?.finding_ids).toEqual(["finding_2"]);
   });
 
+  it("closes prior active findings mechanically by review gate verdict", () => {
+    const firstFail = applyActivityResult(
+      baseRun("run_review_lifecycle"),
+      parsedReviewActivityResult({
+        stateId: "state_final_qa_1",
+        stateName: "final_qa",
+        status: "fail",
+        summary: "first final QA failed",
+        findings: [{ title: "First QA finding", detail: "First failure detail." }]
+      })
+    );
+    expect(firstFail.findings.map((finding) => [finding.title, finding.status])).toEqual([
+      ["First QA finding", "new"]
+    ]);
+
+    const afterBuilderOne = applyActivityResult(firstFail, workActivityResult("state_builder_1", "builder"));
+    const secondFail = applyActivityResult(
+      afterBuilderOne,
+      parsedReviewActivityResult({
+        stateId: "state_final_qa_2",
+        stateName: "final_qa",
+        status: "fail",
+        summary: "second final QA failed",
+        findings: [{ title: "Second QA finding", detail: "Second failure detail." }]
+      })
+    );
+    expect(secondFail.findings.map((finding) => [finding.title, finding.status])).toEqual([
+      ["First QA finding", "superseded"],
+      ["Second QA finding", "new"]
+    ]);
+
+    const afterBuilderTwo = applyActivityResult(secondFail, workActivityResult("state_builder_2", "builder"));
+    const finalPass = applyActivityResult(
+      afterBuilderTwo,
+      parsedReviewActivityResult({
+        stateId: "state_final_qa_3",
+        stateName: "final_qa",
+        status: "pass",
+        summary: "final QA passed",
+        findings: []
+      })
+    );
+
+    expect(finalPass.findings.map((finding) => [finding.title, finding.status])).toEqual([
+      ["First QA finding", "superseded"],
+      ["Second QA finding", "resolved"]
+    ]);
+    expect(finalPass.findings.filter((finding) => finding.status === "new")).toHaveLength(0);
+    expect(finalPass.findings.filter((finding) => finding.status !== "new")).toHaveLength(2);
+  });
+
+  it("does not close active findings on review infrastructure failures", () => {
+    const failedReview = applyActivityResult(
+      baseRun("run_review_infra_failure"),
+      parsedReviewActivityResult({
+        stateId: "state_final_qa_1",
+        stateName: "final_qa",
+        status: "fail",
+        summary: "final QA failed",
+        findings: [{ title: "QA finding", detail: "Failure detail." }]
+      })
+    );
+
+    const unparseableReview = applyActivityResult(
+      failedReview,
+      unparseableReviewActivityResult("state_final_qa_2", "final_qa")
+    );
+
+    expect(unparseableReview.findings.map((finding) => [finding.title, finding.status])).toEqual([
+      ["QA finding", "new"]
+    ]);
+  });
+
+  it("does not close findings from a different review gate", () => {
+    const firstReviewFail = applyActivityResult(
+      baseRun("run_review_gate_boundary"),
+      parsedReviewActivityResult({
+        stateId: "state_first_review_1",
+        stateName: "first_review",
+        status: "fail",
+        summary: "first review failed",
+        findings: [{ title: "First review finding", detail: "Failure detail." }]
+      })
+    );
+
+    const finalQaPass = applyActivityResult(
+      firstReviewFail,
+      parsedReviewActivityResult({
+        stateId: "state_final_qa_1",
+        stateName: "final_qa",
+        status: "pass",
+        summary: "final QA passed",
+        findings: []
+      })
+    );
+
+    expect(finalQaPass.findings.map((finding) => [finding.title, finding.status])).toEqual([
+      ["First review finding", "new"]
+    ]);
+  });
+
   it("appends reviewOutcome artifacts and sessions for command failures", () => {
     const run = baseRun("run_rev_failed_out");
     const result: ActivityResult = {
@@ -306,6 +407,101 @@ function terminalState(
     finding_ids: [],
     started_at: startedAt,
     finished_at: startedAt
+  };
+}
+
+function parsedReviewActivityResult(input: {
+  stateId: string;
+  stateName: string;
+  status: "pass" | "fail";
+  summary: string;
+  findings: Array<{ title: string; detail: string }>;
+}): ActivityResult {
+  const now = "2026-01-01T00:00:00Z";
+  return {
+    delta: {
+      states: [
+        {
+          id: input.stateId,
+          name: input.stateName,
+          status: input.status === "pass" ? "succeeded" : "failed",
+          reason: input.summary,
+          activity_attempt_ids: [],
+          artifact_ids: [],
+          finding_ids: [],
+          started_at: now,
+          finished_at: now
+        }
+      ],
+      activityAttempts: []
+    },
+    reviewOutcome: {
+      kind: "parsed",
+      result: {
+        schema_version: "tychonic.review.v1",
+        status: input.status,
+        summary: input.summary,
+        findings: input.findings.map((finding) => ({
+          severity: "high",
+          title: finding.title,
+          detail: finding.detail
+        }))
+      },
+      reviewerSessionId: `${input.stateId}_session`,
+      artifacts: [],
+      agentSessions: []
+    }
+  };
+}
+
+function unparseableReviewActivityResult(stateId: string, stateName: string): ActivityResult {
+  const now = "2026-01-01T00:00:00Z";
+  return {
+    delta: {
+      states: [
+        {
+          id: stateId,
+          name: stateName,
+          status: "failed",
+          reason: "structured output was not valid JSON",
+          activity_attempt_ids: [],
+          artifact_ids: [],
+          finding_ids: [],
+          started_at: now,
+          finished_at: now
+        }
+      ],
+      activityAttempts: []
+    },
+    reviewOutcome: {
+      kind: "unparseable",
+      detail: "structured output was not valid JSON",
+      reviewerSessionId: `${stateId}_session`,
+      artifacts: [],
+      agentSessions: []
+    }
+  };
+}
+
+function workActivityResult(stateId: string, stateName: string): ActivityResult {
+  const now = "2026-01-01T00:00:00Z";
+  return {
+    delta: {
+      states: [
+        {
+          id: stateId,
+          name: stateName,
+          status: "succeeded",
+          reason: "worker succeeded",
+          activity_attempt_ids: [],
+          artifact_ids: [],
+          finding_ids: [],
+          started_at: now,
+          finished_at: now
+        }
+      ],
+      activityAttempts: []
+    }
   };
 }
 

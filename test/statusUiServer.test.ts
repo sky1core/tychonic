@@ -319,6 +319,84 @@ describe("status UI server", () => {
     });
   });
 
+  it("returns explicit truncated previews for large inline artifact content", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-artifacts-"));
+    tempDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>Tychonic</title>");
+    const artifactRoot = join(staticDir, "runs", "run_large_artifact");
+    await mkdir(join(artifactRoot, "artifacts"), { recursive: true });
+    const rawOutput = "x".repeat(70 * 1024);
+    await writeFile(join(artifactRoot, "artifacts", "final_qa_output-attempt_1.txt"), rawOutput);
+
+    const now = "2026-05-12T00:00:00.000Z";
+    const deps: StatusUiServerDeps = {
+      listWorkflows: async () => ({
+        address: "127.0.0.1:7233",
+        namespace: "default",
+        taskQueue: "tychonic",
+        workflows: []
+      }),
+      describeWorkflow: async () => ({
+        workflowId: "tychonic_largeArtifactWorkflow",
+        runId: "temporal_run_large_artifact",
+        type: "simpleWorkflow",
+        taskQueue: "tychonic",
+        status: "COMPLETED",
+        startTime: now,
+        closeTime: now,
+        pendingActivities: [],
+        result: {
+          runId: "run_large_artifact",
+          status: "succeeded",
+          run: {
+            schema_version: "tychonic.run.v1",
+            id: "run_large_artifact",
+            template: "simpleWorkflow",
+            status: "succeeded",
+            cwd: staticDir,
+            artifact_root: artifactRoot,
+            created_at: now,
+            updated_at: now,
+            states: [
+              {
+                id: "state_final_qa",
+                name: "final_qa",
+                status: "succeeded",
+                reason: "review passed",
+                activity_attempt_ids: [],
+                artifact_ids: ["artifact_raw"],
+                finding_ids: [],
+                started_at: now,
+                finished_at: now
+              }
+            ],
+            activity_attempts: [],
+            agent_sessions: [],
+            artifacts: [
+              {
+                id: "artifact_raw",
+                kind: "final_qa_output",
+                path: "artifacts/final_qa_output-attempt_1.txt",
+                created_at: now,
+                state_id: "state_final_qa"
+              }
+            ],
+            findings: [],
+            inbox: []
+          }
+        }
+      })
+    };
+
+    const detail = JSON.parse((await statusUiRequest(staticDir, "/api/workflows/tychonic_largeArtifactWorkflow", deps)).body);
+
+    expect(detail.artifactContents.artifact_raw).toMatchObject({
+      size: rawOutput.length,
+      truncated: true
+    });
+    expect(detail.artifactContents.artifact_raw.content).toHaveLength(64 * 1024);
+  });
+
   it("keeps cancelled workflow evidence when the workflow returns a cancelled run result", async () => {
     const staticDir = await mkdtemp(join(tmpdir(), "tychonic-status-ui-cancelled-"));
     tempDirs.push(staticDir);

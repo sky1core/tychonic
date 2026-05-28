@@ -1,13 +1,15 @@
-import type {
-  ActivityAttemptRecord,
-  AgentSessionRecord,
-  ArtifactRecord,
-  DecisionInboxItemRecord,
-  FindingRecord,
-  WorkflowWarningRecord,
-  WorkflowRunRecord,
-  WorkflowStateRecord,
-  WorkflowRunStatus
+import {
+  ACTIVE_FINDING_STATUSES,
+  type ActivityAttemptRecord,
+  type AgentSessionRecord,
+  type ArtifactRecord,
+  type DecisionInboxItemRecord,
+  type FindingStatus,
+  type FindingRecord,
+  type WorkflowWarningRecord,
+  type WorkflowRunRecord,
+  type WorkflowStateRecord,
+  type WorkflowRunStatus
 } from "../domain/types.js";
 import { RunArtifactStore, runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 
@@ -92,6 +94,8 @@ export interface WorkflowEvidenceView {
     inbox: number;
     sessions: number;
     findings: number;
+    active_findings: number;
+    historical_findings: number;
   };
   commands: WorkflowEvidenceCommandView;
   inbox: DecisionInboxItemRecord[];
@@ -99,6 +103,8 @@ export interface WorkflowEvidenceView {
   logs: WorkflowLogEvidenceView[];
   sessions: AgentSessionRecord[];
   findings: FindingRecord[];
+  active_findings: FindingRecord[];
+  historical_findings: FindingRecord[];
   warnings: WorkflowWarningRecord[];
   timing: WorkflowTimingView;
 }
@@ -128,6 +134,13 @@ export function workflowEvidenceView(
   const states = result.run.states;
   const latestState = result.activeState ?? (states.length > 0 ? states[states.length - 1] : undefined);
   const stateNameById = stateNameMap(result.run);
+  const findings = projectReviewFindingLifecycle(result.run);
+  const activeFindings = findings.filter((finding) => isActiveFindingStatus(finding.status));
+  const historicalFindings = findings.filter((finding) => !isActiveFindingStatus(finding.status));
+  const warnings = [
+    ...(result.run.warnings ?? []),
+    ...projectionWarnings(result.run, activeFindings)
+  ];
   return {
     runId: result.run.id,
     template: result.run.template,
@@ -141,7 +154,9 @@ export function workflowEvidenceView(
       logs: logs.length,
       inbox: result.run.inbox.length,
       sessions: result.run.agent_sessions.length,
-      findings: result.run.findings.length
+      findings: result.run.findings.length,
+      active_findings: activeFindings.length,
+      historical_findings: historicalFindings.length
     },
     commands: evidenceCommands(workflowId, runId),
     inbox: result.run.inbox,
@@ -151,10 +166,70 @@ export function workflowEvidenceView(
     })),
     logs: logs.map((attempt) => liveOutputAttemptView(attempt, stateNameById, workflowId, runId)),
     sessions: result.run.agent_sessions,
-    findings: result.run.findings,
-    warnings: result.run.warnings ?? [],
+    findings,
+    active_findings: activeFindings,
+    historical_findings: historicalFindings,
+    warnings,
     timing: workflowTimingView(result)
   };
+}
+
+function isActiveFindingStatus(status: FindingStatus): boolean {
+  return ACTIVE_FINDING_STATUSES.some((activeStatus) => activeStatus === status);
+}
+
+function projectReviewFindingLifecycle(run: WorkflowRunRecord): FindingRecord[] {
+  if (run.findings.length === 0 || run.states.length === 0) return run.findings;
+
+  const stateById = new Map(run.states.map((state) => [state.id, state]));
+  const stateIndexById = new Map(run.states.map((state, index) => [state.id, index]));
+  const artifactById = new Map(run.artifacts.map((artifact) => [artifact.id, artifact]));
+
+  return run.findings.map((finding) => {
+    if (!isActiveFindingStatus(finding.status)) return finding;
+
+    const sourceState = stateById.get(finding.source_state_id);
+    const sourceIndex = stateIndexById.get(finding.source_state_id);
+    if (!sourceState || sourceIndex === undefined) return finding;
+    if (!hasParsedReviewResult(sourceState, artifactById)) return finding;
+
+    for (const laterState of run.states.slice(sourceIndex + 1)) {
+      if (laterState.name !== sourceState.name) continue;
+      if (!hasParsedReviewResult(laterState, artifactById)) continue;
+      if (laterState.status === "succeeded") {
+        return { ...finding, status: "resolved" };
+      }
+      if (laterState.status === "failed" && laterState.finding_ids.length > 0) {
+        return { ...finding, status: "superseded" };
+      }
+    }
+
+    return finding;
+  });
+}
+
+function hasParsedReviewResult(
+  state: WorkflowStateRecord,
+  artifactById: ReadonlyMap<string, ArtifactRecord>
+): boolean {
+  const parsedKind = `${state.name}_parsed`;
+  return state.artifact_ids.some((artifactId) => artifactById.get(artifactId)?.kind === parsedKind);
+}
+
+function projectionWarnings(
+  run: WorkflowRunRecord,
+  activeFindings: FindingRecord[]
+): WorkflowWarningRecord[] {
+  if (run.status !== "succeeded" || activeFindings.length === 0) return [];
+  return [
+    {
+      id: "warning_projection_succeeded_active_findings",
+      source: "projection",
+      code: "succeeded_with_active_findings",
+      message: `Workflow is marked succeeded but ${activeFindings.length} active finding(s) remain in the operator projection.`,
+      created_at: run.updated_at
+    }
+  ];
 }
 
 export function listArtifacts(result: TychonicWorkflowResult): ArtifactRecord[] {

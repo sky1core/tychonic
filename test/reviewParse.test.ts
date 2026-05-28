@@ -268,7 +268,7 @@ describe("parseBuiltInReviewOutput — OpenP codex stream-json envelope", () => 
 describe("parseBuiltInReviewOutput — OpenP claude stream-json envelope", () => {
   it("unwraps the final result field containing raw review JSON", () => {
     const stream = [
-      openpStreamingAnswerLine({ sessionId: "s1", metadata: { model: "claude-opus-4-7" } }),
+      openpStreamingAnswerLine({ sessionId: "s1", metadata: { model: "claude-opus-4-8" } }),
       openpStreamingAnswerLine({ sessionId: "s1", answer: "let me check" }),
       openpStreamingAnswerLine({ sessionId: "s1", answer: "found nothing" }),
       openpResultLine({ sessionId: "s1", answer: passReview })
@@ -284,7 +284,7 @@ describe("parseBuiltInReviewOutput — OpenP claude stream-json envelope", () =>
       findings: [{ severity: "high", title: "t", detail: "d" }]
     };
     const stream = [
-      openpStreamingAnswerLine({ sessionId: "s1", metadata: { model: "claude-opus-4-7" } }),
+      openpStreamingAnswerLine({ sessionId: "s1", metadata: { model: "claude-opus-4-8" } }),
       openpResultLine({
         sessionId: "s1",
         answer: "Reviewed the change and produced structured output.",

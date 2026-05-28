@@ -24,7 +24,7 @@ states:
     type: review
     on_fail_return_to: integration
     agent: claude
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     reasoning_effort: max
     timeout: 20m
     prompt: |

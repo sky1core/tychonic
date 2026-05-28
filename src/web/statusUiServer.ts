@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -45,6 +45,13 @@ export interface StatusUiServerDeps {
 }
 
 export const DEFAULT_STATUS_UI_PORT = 19733;
+const MAX_INLINE_ARTIFACT_BYTES = 64 * 1024;
+
+type InlineArtifactContent = {
+  content: string;
+  size: number;
+  truncated?: boolean;
+};
 
 type PendingActiveStateView = {
   state: {
@@ -936,20 +943,40 @@ function isLoopbackRequestHost(host: string): boolean {
 
 async function loadArtifactContents(
   result: TychonicWorkflowResult
-): Promise<Record<string, { content: string }>> {
-  const out: Record<string, { content: string }> = {};
+): Promise<Record<string, InlineArtifactContent>> {
+  const out: Record<string, InlineArtifactContent> = {};
   try {
     const store = runArtifactStoreForRun(result.run);
     await Promise.all(
       result.run.artifacts.map(async (artifact) => {
         try {
           const filePath = store.artifactPath(result.run, artifact.id);
-          out[artifact.id] = { content: await readFile(filePath, "utf8") };
+          out[artifact.id] = await readInlineArtifactContent(filePath);
         } catch { /* skip unreadable */ }
       })
     );
   } catch { /* no artifact root */ }
   return out;
+}
+
+async function readInlineArtifactContent(filePath: string): Promise<InlineArtifactContent> {
+  const fileStat = await stat(filePath);
+  if (fileStat.size <= MAX_INLINE_ARTIFACT_BYTES) {
+    return { content: await readFile(filePath, "utf8"), size: fileStat.size };
+  }
+
+  const handle = await open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(MAX_INLINE_ARTIFACT_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return {
+      content: buffer.subarray(0, bytesRead).toString("utf8"),
+      size: fileStat.size,
+      truncated: true
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
 async function loadActiveStateEvidence(

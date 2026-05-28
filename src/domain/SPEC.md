@@ -31,6 +31,13 @@ must not create a second source of truth outside the workflow run record.
 iterations or explicit state reruns. Those records are ordered evidence, not
 competing definitions of the state config.
 
+Finding records are append-preserved evidence with a lifecycle. `new` is the
+only active operator-issue status. A later parsed verdict from the same review
+gate may transition earlier active findings for that gate to `resolved` after a
+pass verdict or to `superseded` after a later fail verdict. Unparseable,
+command-failed, skipped, or otherwise non-verdict review outcomes must not
+close active findings.
+
 ## Deltas
 
 `WorkflowRunDelta` is the handoff shape for activity-produced record changes.

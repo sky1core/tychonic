@@ -21,20 +21,20 @@ describe("openp shared adapter behavior", () => {
   it("runNew passes explicit model and effort settings", () => {
     const { command } = claudeAdapter.runNew({
       ...BASE,
-      model: "opus",
+      model: "claude-opus-4-8",
       reasoningEffort: "max"
     });
-    expect(command).toContain("--model 'opus' --effort 'max'");
+    expect(command).toContain("--model 'claude-opus-4-8' --effort 'max'");
   });
 
   it("runResume keeps explicit model and effort settings", () => {
     const { command } = claudeAdapter.runResume({
       ...BASE,
-      model: "opus",
+      model: "claude-opus-4-8",
       reasoningEffort: "max",
       sessionId: "sess-1"
     });
-    expect(command).toContain("--model 'opus' --effort 'max'");
+    expect(command).toContain("--model 'claude-opus-4-8' --effort 'max'");
     expect(command).toContain("--resume 'sess-1'");
   });
 
@@ -95,12 +95,12 @@ describe("openp shared parseResult", () => {
       openpResultLine(
         "11111111-2222-3333-4444-555555555555",
         ["done"],
-        { model: "claude-opus-4-7" }
+        { model: "claude-opus-4-8" }
       )
     ].join("\n");
     expect(claudeAdapter.parseResult(stdout, "", 0)).toEqual({
       sessionId: "11111111-2222-3333-4444-555555555555",
-      reportedModel: "claude-opus-4-7"
+      reportedModel: "claude-opus-4-8"
     });
   });
 

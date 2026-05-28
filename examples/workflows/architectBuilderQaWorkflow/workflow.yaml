@@ -7,7 +7,7 @@ states:
   architect:
     type: work
     agent: claude
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     reasoning_effort: max
     timeout: 30m
     prompt: |
@@ -30,7 +30,8 @@ states:
   builder:
     type: work
     agent: kiro
-    model: claude-opus-4.6
+    model: claude-opus-4.7
+    reasoning_effort: high
     resume: 2
     timeout: 60m
     trust_all_tools: true

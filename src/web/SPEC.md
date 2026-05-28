@@ -21,10 +21,15 @@ state store.
 
 The UI may expose summaries of workflows, states, inbox items, findings,
 artifacts, logs, sessions, timing, and run-level warnings. Config warnings
-recorded at workflow start must be visible on the selected workflow detail view.
+recorded at workflow start and projection warnings derived by the evidence view
+must be visible on the selected workflow detail view.
 For a selected state, the UI may also show focused evidence content that answers
 the operator's primary question: the prompt sent to the agent, the terminal
 agent response or structured review result, and small related artifact excerpts.
+When a parsed structured review artifact exists, it is the primary selected
+state response; raw adapter output is debug evidence, not the default review
+result. Active findings and historical feedback must be visually separated in
+the operator view.
 Large raw artifacts, full logs, and complete run-record dumps must stay behind
 the focused CLI commands already carried by the evidence view. Any truncation in
 the UI must be explicit.

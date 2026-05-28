@@ -132,16 +132,16 @@ describe("runWorkerActivity adapter dispatch", () => {
       cwd,
       profile: workProfile({
         agent: "claude",
-        model: "claude-opus-4-7"
+        model: "claude-opus-4-8"
       }),
       worktreePath,
       prompt: "do work"
     });
 
-    expect(result.delta.activityAttempts?.[0]?.command).toContain("--model 'claude-opus-4-7'");
+    expect(result.delta.activityAttempts?.[0]?.command).toContain("--model 'claude-opus-4-8'");
     expect(result.delta.states?.[0]?.status).toBe("failed");
     expect(result.delta.states?.[0]?.reason).toContain(
-      "reported model 'claude-opus-4-5' but state config requested model 'claude-opus-4-7'"
+      "reported model 'claude-opus-4-5' but state config requested model 'claude-opus-4-8'"
     );
     if (result.workerOutcome?.kind !== "executed") throw new Error("expected executed outcome");
     expect(result.workerOutcome.status).toBe("failed");
@@ -150,7 +150,7 @@ describe("runWorkerActivity adapter dispatch", () => {
   });
 
   it("does not reject Claude alias model names when the CLI reports a concrete version", async () => {
-    await writeClaudeModelReportingStubBinary(join(stubBinDir, "openp"), "claude-opus-4-7");
+    await writeClaudeModelReportingStubBinary(join(stubBinDir, "openp"), "claude-opus-4-8");
     const cwd = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-alias-"));
     const worktreePath = await mkdtemp(join(tmpdir(), "tychonic-disp-worker-model-alias-wt-"));
 
@@ -391,15 +391,15 @@ describe("runReviewActivity adapter dispatch", () => {
       cwd,
       profile: reviewProfile({
         agent: "claude",
-        model: "claude-opus-4-7"
+        model: "claude-opus-4-8"
       }),
       prompt: "review please"
     });
 
-    expect(result.delta.activityAttempts?.[0]?.command).toContain("--model 'claude-opus-4-7'");
+    expect(result.delta.activityAttempts?.[0]?.command).toContain("--model 'claude-opus-4-8'");
     expect(result.delta.states?.[0]?.status).toBe("failed");
     expect(result.delta.states?.[0]?.reason).toContain(
-      "reported model 'claude-opus-4-5' but state config requested model 'claude-opus-4-7'"
+      "reported model 'claude-opus-4-5' but state config requested model 'claude-opus-4-8'"
     );
     expect(result.reviewOutcome?.kind).toBe("command_failed");
     if (result.reviewOutcome?.kind !== "command_failed") throw new Error("expected command_failed outcome");

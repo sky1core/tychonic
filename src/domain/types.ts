@@ -35,10 +35,14 @@ export const FINDING_STATUSES = [
   "deferred",
   "accepted",
   "rejected",
-  "fixed"
+  "fixed",
+  "resolved",
+  "superseded"
 ] as const;
 
 export type FindingStatus = (typeof FINDING_STATUSES)[number];
+
+export const ACTIVE_FINDING_STATUSES = ["new"] as const satisfies readonly FindingStatus[];
 
 export const FINDING_SEVERITIES = [
   "critical",
@@ -140,7 +144,7 @@ export interface DecisionInboxItemRecord {
 
 export interface WorkflowWarningRecord {
   id: string;
-  source: "config";
+  source: "config" | "projection";
   code: string;
   message: string;
   path?: string;

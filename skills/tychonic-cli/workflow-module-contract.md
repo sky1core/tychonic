@@ -88,12 +88,12 @@ default or auto-selection behavior.
 For `agent: claude`, use Claude CLI model values. Versionless aliases such as
 `opus` let the installed Claude CLI resolve the current model.
 Exact versioned names are valid only after verifying that this installed Claude
-CLI accepts that exact string; `claude-opus-4-7` is an example after a
-successful smoke in this environment. For example, a Claude state may set
-`model: opus` for a versionless alias or `model: claude-opus-4-7` for an
-exact versioned name. Do not reuse Kiro model ids or stale versioned strings
-for Claude states. Before pinning or documenting a Claude exact versioned
-name, verify it with a small `claude -p --model <name>` smoke; Tychonic only
+CLI accepts that exact string; `claude-opus-4-8` is an example after a
+successful smoke in this environment. For pinned Claude Opus states, use
+`model: claude-opus-4-8`; reserve versionless aliases for intentionally
+unpinned configs. Do not reuse Kiro model ids or stale versioned strings for
+Claude states. Before pinning or documenting a Claude exact versioned name,
+verify it with a small `claude -p --model <name>` smoke; Tychonic only
 passes the string through. During execution, if a CLI reports the concrete
 selected model and it differs from an exact versioned model string in state
 config, Tychonic fails the activity instead of accepting a silent model
@@ -101,7 +101,7 @@ change. Claude aliases such as `opus` are not exact-match asserted because the
 CLI resolves them to concrete model names internally.
 
 The bundled reference examples currently declare `model: gpt-5.5` for `codex`
-and `model: claude-opus-4.6` for `kiro` where those exact strings fit the
+and `model: claude-opus-4.7` for `kiro` where those exact strings fit the
 author's environment. Some examples also declare `reasoning_effort: max` for
 `claude` and `reasoning_effort: xhigh` for `codex`. These values do not define
 a universal model or effort choice. Target account, model availability,
@@ -114,7 +114,7 @@ OpenP as `--model` and `--effort`. Kiro model ids are OpenP Kiro backend ids.
 Kiro model availability may be account-, tier-, or region-scoped: a successful
 `openp kiro --model <id>` smoke proves what that account can run, not whether
 every documented Kiro model id exists globally. Do not rewrite a documented
-dot-form Kiro id such as `claude-opus-4.6` solely because it is not available in
+dot-form Kiro id such as `claude-opus-4.7` solely because it is not available in
 the current account. Do not add normalizer model fields; Tychonic supplies the
 lightweight normalizer model flag internally (`claude` gets `haiku`; `codex`
 gets `gpt-5.3-codex-spark`).

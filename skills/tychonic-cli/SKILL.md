@@ -290,21 +290,11 @@ For `agent: claude`, model values are Claude CLI model values, not Kiro model
 ids. Use one of two forms:
 
 - Versionless alias: use the installed Claude CLI's alias, such as `opus`,
-  when you want that CLI to select the current model behind the alias.
+  only when you intentionally want that CLI to select the current model behind
+  the alias.
 - Exact versioned name: use a full model name only after verifying this
   installed Claude CLI accepts that exact string, for example
-  `claude-opus-4-7` after a successful smoke in this environment.
-
-Example Claude state using a versionless alias:
-
-```yaml
-review:
-  type: review
-  on_fail_return_to: work
-  agent: claude
-  model: opus
-  reasoning_effort: max
-```
+  `claude-opus-4-8` after a successful smoke in this environment.
 
 Example Claude state using an exact versioned name:
 
@@ -313,7 +303,7 @@ review:
   type: review
   on_fail_return_to: work
   agent: claude
-  model: claude-opus-4-7
+  model: claude-opus-4-8
   reasoning_effort: max
 ```
 
@@ -341,7 +331,7 @@ codex_build:
 kiro_work:
   type: work
   agent: kiro
-  model: claude-opus-4.6
+  model: claude-opus-4.7
   trust_all_tools: true
 ```
 
@@ -350,7 +340,7 @@ OpenP as `--model` and `--effort`. Kiro model ids are OpenP Kiro backend ids.
 Availability may be account-, tier-, or region-scoped: a successful
 `openp kiro --model <id>` smoke proves what that account can run, not whether
 every documented Kiro model id exists globally. Do not rewrite a documented
-dot-form Kiro id such as `claude-opus-4.6` solely because it is not available in
+dot-form Kiro id such as `claude-opus-4.7` solely because it is not available in
 the current account.
 Do not add normalizer model fields; Tychonic supplies the lightweight
 normalizer model flag internally (`claude` gets `haiku`; `codex` gets

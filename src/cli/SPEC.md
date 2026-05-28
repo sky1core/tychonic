@@ -42,6 +42,20 @@ condition.
 workflow. Its default output includes workflow metadata, evidence counts,
 focused read commands, inbox/artifact/log/session/finding summaries, and a
 timing summary computed from the run timestamps and activity attempt timestamps.
+Finding summaries distinguish active issues (`status: "new"`) from historical
+feedback (`resolved` or `superseded`) while preserving the full finding list as
+evidence.
+The evidence view is an operator projection: if an older run record still has
+active findings from an earlier review gate attempt, but a later same-gate
+terminal review state proves that gate passed or produced newer findings, the
+view must project those older findings as `resolved` or `superseded` without
+modifying worktree artifacts or target files. If a `succeeded` workflow still
+projects active findings after that lifecycle pass, the evidence view must
+surface an operator warning instead of presenting the state as clean.
+This projection must be based on parsed review-result evidence, not on a
+same-name state status or manual state patch alone: both the source state that
+created the active finding and the later same-gate state that closes it must
+link a `<NAME>_parsed` artifact for their own state NAME.
 It must not dump the full raw run record by default, because raw adapter
 commands and large result payloads make the operator surface harder to read.
 Focused commands such as `tychonic artifacts --artifact <id>` and

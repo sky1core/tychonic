@@ -25,6 +25,23 @@ export function extractAgentResult(raw: string): string {
     : raw
 }
 
+export function primaryAgentResult(input: {
+  parsedArtifactContent?: string
+  resultArtifactContent?: string
+  liveOutput?: string
+}): string | undefined {
+  if (input.parsedArtifactContent?.trim()) {
+    return extractAgentResult(input.parsedArtifactContent)
+  }
+  if (input.resultArtifactContent !== undefined) {
+    return extractAgentResult(input.resultArtifactContent)
+  }
+  if (input.liveOutput !== undefined) {
+    return extractAgentResult(input.liveOutput)
+  }
+  return undefined
+}
+
 function parseJsonObjectLines(value: string): JsonObject[] {
   return value
     .split(/\r?\n/)

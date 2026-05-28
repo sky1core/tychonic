@@ -58,7 +58,7 @@ import {
 } from "@/components/ui/tooltip"
 import { uiLabAccent } from "@/lib/ui-lab/style-contract"
 import { cn } from "@/lib/utils"
-import { extractAgentResult } from "./agentResult"
+import { extractAgentResult, primaryAgentResult } from "./agentResult"
 import { responseTextForDisplay, stateCommandForDisplay } from "./stateEvidence"
 
 type WorkflowSummary = {
@@ -102,7 +102,10 @@ type WorkflowEvidence = {
     command?: string
     agent_session_id?: string
   }>
-  counts: Record<"states" | "attempts" | "artifacts" | "logs" | "inbox" | "sessions" | "findings", number>
+  counts: Record<"states" | "attempts" | "artifacts" | "logs" | "inbox" | "sessions" | "findings", number> & {
+    active_findings?: number
+    historical_findings?: number
+  }
   inbox: Array<{
     id: string
     status: string
@@ -139,15 +142,9 @@ type WorkflowEvidence = {
     started_at: string
     finished_at?: string
   }>
-  findings: Array<{
-    id: string
-    status: string
-    severity: string
-    title: string
-    detail: string
-    target?: string
-    created_at: string
-  }>
+  findings: WorkflowFinding[]
+  active_findings?: WorkflowFinding[]
+  historical_findings?: WorkflowFinding[]
   warnings: Array<{
     id: string
     source: string
@@ -173,6 +170,16 @@ type WorkflowEvidence = {
       duration_ms: number
     }>
   }
+}
+
+type WorkflowFinding = {
+  id: string
+  status: string
+  severity: string
+  title: string
+  detail: string
+  target?: string
+  created_at: string
 }
 
 type WorkflowDetail = {
@@ -201,7 +208,7 @@ type WorkflowDetail = {
   evidence?: WorkflowEvidence
   evidenceError?: string
   pendingActiveState?: WorkflowStateRecord
-  artifactContents?: Record<string, { content: string }>
+  artifactContents?: Record<string, { content: string; size?: number; truncated?: boolean }>
   activeStateEvidence?: { promptContent?: string; liveOutput?: string }
   stateConfigs?: Record<string, { type?: string; command?: string; agent?: string; model?: string; timeout?: string }>
   workflowGraph?: {
@@ -281,6 +288,39 @@ function SmallStreamdown({ children }: { children: string }) {
       <Streamdown className="tychonic-markdown-sm" linkSafety={streamdownLinkSafety} mode="static">
         {children}
       </Streamdown>
+    </div>
+  )
+}
+
+function FindingCard({ finding, compact = false, showStatus = true }: {
+  finding: WorkflowFinding
+  compact?: boolean
+  showStatus?: boolean
+}) {
+  return (
+    <div className={cn("rounded-md border", compact ? "px-2 py-1 text-xs" : "px-3 py-2")}>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <Badge
+          variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"}
+          className={cn("shrink-0", compact && "text-[10px]")}
+        >
+          {compact ? finding.severity : `Severity: ${finding.severity}`}
+        </Badge>
+        {showStatus ? (
+          <Badge variant="outline" className={cn("shrink-0", compact && "text-[10px]")}>
+            {finding.status}
+          </Badge>
+        ) : null}
+        <span className="min-w-0 truncate font-medium">{finding.title}</span>
+      </div>
+      {finding.detail ? (
+        <div className="mt-0.5 min-w-0 overflow-hidden text-muted-foreground break-words">
+          <SmallStreamdown>{finding.detail}</SmallStreamdown>
+        </div>
+      ) : null}
+      {finding.target !== undefined ? (
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{"->"} {finding.target}</span>
+      ) : null}
     </div>
   )
 }
@@ -591,7 +631,7 @@ function App() {
   )
   const hasWorkflowDefinition = workflowDetail?.workflowGraph !== undefined
   const showStateFlow = executionSteps.length > 0 || hasWorkflowDefinition
-  const configWarnings = workflowDetail?.evidence?.warnings ?? []
+  const workflowWarnings = workflowDetail?.evidence?.warnings ?? []
   useEffect(() => {
     if (previousExecutionRunKeyRef.current === executionRunKey) return
     previousExecutionRunKeyRef.current = executionRunKey
@@ -660,7 +700,9 @@ function App() {
     const responseArtifactRecord = session?.result_artifact_id
       ? detail.evidence.artifacts.find((artifact) => artifact.id === session.result_artifact_id)
       : undefined
-    const responseArtifact = responseArtifactRecord ? detail.artifactContents?.[responseArtifactRecord.id] : undefined
+    const responseArtifactContent = responseArtifactRecord
+      ? artifactDisplayContent(detail.artifactContents?.[responseArtifactRecord.id])
+      : undefined
     const parsedResponseArtifact = stateArtifacts.find((artifact) => artifact.kind === `${state.name}_parsed`)
     const parsedResponseContent = parsedResponseArtifact
       ? artifactDisplayContent(detail.artifactContents?.[parsedResponseArtifact.id])
@@ -668,12 +710,12 @@ function App() {
     const liveResponseContent = activeEvidence?.liveOutput
       ? extractAgentResult(activeEvidence.liveOutput)
       : undefined
-    const responseContent =
-      responseArtifact
-        ? extractAgentResult(responseArtifact.content)
-        : parsedResponseContent
-          ? extractAgentResult(parsedResponseContent)
-          : liveResponseContent
+    const responseContent = primaryAgentResult({
+      parsedArtifactContent: parsedResponseContent,
+      resultArtifactContent: responseArtifactContent,
+      liveOutput: activeEvidence?.liveOutput,
+    })
+    const hasParsedResponseContent = Boolean(parsedResponseContent?.trim())
     const hasResponseContent = Boolean(responseContent?.trim())
     const shouldShowPromptAsAgentMessage =
       Boolean(promptContent) && (session?.agent !== "custom" || hasResponseContent || state.status !== "succeeded")
@@ -681,7 +723,8 @@ function App() {
       (artifact) =>
         artifact.id !== promptArtifactRecord?.id &&
         (isOutputArtifactKind(artifact.kind) || artifact.id === responseArtifactRecord?.id) &&
-        (artifact.id !== responseArtifactRecord?.id || responseContent === undefined),
+        (artifact.id !== responseArtifactRecord?.id || responseContent === undefined) &&
+        (!hasParsedResponseContent || !isOutputArtifactKind(artifact.kind)),
     )
     const outputItems = [
       ...(promptArtifactRecord && promptContent === undefined
@@ -987,13 +1030,13 @@ function App() {
                   ) : null}
                   </div>
 
-                  {configWarnings.length > 0 ? (
+                  {workflowWarnings.length > 0 ? (
                     <Alert>
                       <AlertCircleIcon className="h-4 w-4 text-amber-500" />
-                      <AlertTitle>Configuration warnings</AlertTitle>
+                      <AlertTitle>Warnings</AlertTitle>
                       <AlertDescription>
                         <div className="mt-1 space-y-1">
-                          {configWarnings.map((warning) => (
+                          {workflowWarnings.map((warning) => (
                             <p key={warning.id} className="text-sm leading-snug">
                               {warning.message}
                             </p>
@@ -1189,9 +1232,12 @@ function App() {
                                 {selectedExecutionDetail?.outputItems.map(({ artifact, content }) => (
                                   <div key={artifact.id} className="rounded-md border bg-muted/20">
                                     <div className="flex min-w-0 items-center gap-2 border-b px-3 py-1.5">
-                                      <Badge variant="outline">{artifact.kind}</Badge>
+                                      <Badge variant="outline">{artifactDisplayTitle(artifact.kind)}</Badge>
                                       <span className="min-w-0 truncate text-xs text-muted-foreground">{artifact.path}</span>
                                     </div>
+                                    {artifactDisplayDescription(artifact.kind) ? (
+                                      <p className="border-b px-3 py-1 text-xs text-muted-foreground">{artifactDisplayDescription(artifact.kind)}</p>
+                                    ) : null}
                                     {content !== undefined ? (
                                       content && isDiffContent(content)
                                         ? <DiffView content={content} className="max-h-56 py-1" />
@@ -1215,17 +1261,7 @@ function App() {
                                   <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">State Findings ({selectedExecutionDetail.findings.length})</div>
                                   <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-2">
                                     {selectedExecutionDetail.findings.map((finding) => (
-                                      <div key={finding.id} className="rounded-md border px-2 py-1 text-xs">
-                                        <div className="flex items-center gap-1.5">
-                                          <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"} className="shrink-0 text-[10px]">{finding.severity}</Badge>
-                                          <span className="min-w-0 truncate font-medium">{finding.title}</span>
-                                        </div>
-                                        {finding.detail ? (
-                                          <div className="mt-0.5 min-w-0 overflow-hidden text-muted-foreground break-words">
-                                            <SmallStreamdown>{finding.detail}</SmallStreamdown>
-                                          </div>
-                                        ) : null}
-                                      </div>
+                                      <FindingCard key={finding.id} finding={finding} compact />
                                     ))}
                                   </div>
                                 </div>
@@ -1255,68 +1291,77 @@ function App() {
                       </Alert>
                     ) : workflowDetail?.evidence ? (
                       <div className="space-y-3">
-                        {workflowDetail.evidence.findings.length > 0 ? (() => {
-                          const allFindings = workflowDetail.evidence.findings
+                        {(() => {
+                          const activeFindings = workflowActiveFindings(workflowDetail.evidence)
+                          const historicalFindings = workflowHistoricalFindings(workflowDetail.evidence)
                           const severityCounts = new Map<string, number>()
-                          for (const f of allFindings) {
+                          for (const f of activeFindings) {
                             const sev = f.severity.toLowerCase()
                             severityCounts.set(sev, (severityCounts.get(sev) ?? 0) + 1)
                           }
                           const severityOrder = ["blocker", "critical", "high", "medium", "low", "info"]
                           const presentSeverities = severityOrder.filter(s => severityCounts.has(s))
                           const filtered = findingSeverityFilter.size > 0
-                            ? allFindings.filter(f => findingSeverityFilter.has(f.severity.toLowerCase()))
-                            : allFindings
+                            ? activeFindings.filter(f => findingSeverityFilter.has(f.severity.toLowerCase()))
+                            : activeFindings
                           return (
-                            <section>
-                              <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                                <h3 className="text-xs font-medium text-muted-foreground">All Findings ({filtered.length}{findingSeverityFilter.size > 0 ? `/${allFindings.length}` : ""})</h3>
-                                {presentSeverities.length > 1 ? (
-                                  <div className="flex flex-wrap gap-1">
-                                    {presentSeverities.map(sev => {
-                                      const active = findingSeverityFilter.has(sev)
-                                      return (
-                                        <button
-                                          key={sev}
-                                          type="button"
-                                          onClick={() => {
-                                            setFindingSeverityFilter(prev => {
-                                              const next = new Set(prev)
-                                              if (next.has(sev)) next.delete(sev)
-                                              else next.add(sev)
-                                              return next
-                                            })
-                                          }}
-                                          className={cn("transition-opacity", !active && findingSeverityFilter.size > 0 && "opacity-40")}
-                                        >
-                                          <Badge variant={findingSeverityTone[sev] ?? "outline"} className="cursor-pointer text-[10px]">
-                                            {sev} ({severityCounts.get(sev)})
-                                          </Badge>
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                ) : null}
-                              </div>
-                              <div className="space-y-1.5">
-                                {filtered.map((finding) => (
-                                  <div key={finding.id} className="rounded-md border px-3 py-2">
-                                    <div className="flex items-center gap-2">
-                                      <Badge variant={findingSeverityTone[finding.severity.toLowerCase()] ?? "outline"} className="shrink-0">Severity: {finding.severity}</Badge>
-                                      <span className="min-w-0 truncate text-sm font-medium">{finding.title}</span>
-                                    </div>
-                                    {finding.detail ? (
-                                      <div className="mt-0.5 min-w-0 overflow-hidden text-muted-foreground break-words">
-                                        <SmallStreamdown>{finding.detail}</SmallStreamdown>
+                            <>
+                              {activeFindings.length > 0 ? (
+                                <section>
+                                  <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                                    <h3 className="text-xs font-medium text-muted-foreground">Active Issues ({filtered.length}{findingSeverityFilter.size > 0 ? `/${activeFindings.length}` : ""})</h3>
+                                    {presentSeverities.length > 1 ? (
+                                      <div className="flex flex-wrap gap-1">
+                                        {presentSeverities.map(sev => {
+                                          const active = findingSeverityFilter.has(sev)
+                                          return (
+                                            <button
+                                              key={sev}
+                                              type="button"
+                                              onClick={() => {
+                                                setFindingSeverityFilter(prev => {
+                                                  const next = new Set(prev)
+                                                  if (next.has(sev)) next.delete(sev)
+                                                  else next.add(sev)
+                                                  return next
+                                                })
+                                              }}
+                                              className={cn("transition-opacity", !active && findingSeverityFilter.size > 0 && "opacity-40")}
+                                            >
+                                              <Badge variant={findingSeverityTone[sev] ?? "outline"} className="cursor-pointer text-[10px]">
+                                                {sev} ({severityCounts.get(sev)})
+                                              </Badge>
+                                            </button>
+                                          )
+                                        })}
                                       </div>
                                     ) : null}
-                                    {finding.target !== undefined ? <span className="mt-0.5 block truncate text-xs text-muted-foreground">{"→"} {finding.target}</span> : null}
                                   </div>
-                                ))}
-                              </div>
-                            </section>
+                                  <div className="space-y-1.5">
+                                    {filtered.map((finding) => (
+                                      <FindingCard key={finding.id} finding={finding} showStatus={false} />
+                                    ))}
+                                  </div>
+                                </section>
+                              ) : null}
+
+                              {historicalFindings.length > 0 ? (
+                                <section>
+                                  <details className="rounded-md border">
+                                    <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground">
+                                      Historical Feedback ({historicalFindings.length})
+                                    </summary>
+                                    <div className="space-y-1.5 border-t px-3 py-2">
+                                      {historicalFindings.map((finding) => (
+                                        <FindingCard key={finding.id} finding={finding} />
+                                      ))}
+                                    </div>
+                                  </details>
+                                </section>
+                              ) : null}
+                            </>
                           )
-                        })() : null}
+                        })()}
 
                         {(() => {
                           const stateArtifactIds = new Set(workflowDetail.evidence.states.flatMap(s => s.artifact_ids))
@@ -1452,6 +1497,14 @@ function isProblemStatus(status: string) {
   return status === "failed" || status === "blocked" || status === "timed_out"
 }
 
+function workflowActiveFindings(evidence: WorkflowEvidence): WorkflowFinding[] {
+  return evidence.active_findings ?? evidence.findings.filter((finding) => finding.status === "new")
+}
+
+function workflowHistoricalFindings(evidence: WorkflowEvidence): WorkflowFinding[] {
+  return evidence.historical_findings ?? evidence.findings.filter((finding) => finding.status !== "new")
+}
+
 function stateDurationMs(state: WorkflowStateRecord): number | undefined {
   if (!state.started_at || !state.finished_at) return undefined
   const startedAt = Date.parse(state.started_at)
@@ -1465,20 +1518,34 @@ function isOutputArtifactKind(kind: string) {
 }
 
 function artifactDisplayContent(
-  artifact: { content: string } | undefined,
+  artifact: { content: string; size?: number; truncated?: boolean } | undefined,
 ): string | undefined {
   if (!artifact) return undefined
-  return artifact.content
+  if (!artifact.truncated) return artifact.content
+  const sizeText = artifact.size === undefined ? "unknown size" : `${artifact.size} bytes`
+  return [
+    artifact.content,
+    "",
+    `[truncated inline preview: showing ${artifact.content.length} characters from ${sizeText}; use the artifact read command for full content]`,
+  ].join("\n")
 }
 
 function artifactDisplayTitle(kind: string) {
   if (kind === "worktree_patch") return "Final diff"
+  if (kind.endsWith("_parsed")) return "Structured review result"
+  if (kind.endsWith("_output")) return "Raw adapter event stream"
   return kind
 }
 
 function artifactDisplayDescription(kind: string) {
   if (kind === "worktree_patch") {
     return "Patch captured from the isolated worktree after the workflow stopped."
+  }
+  if (kind.endsWith("_parsed")) {
+    return "Parsed review verdict used for the current workflow result."
+  }
+  if (kind.endsWith("_output")) {
+    return "Debug adapter stream; inspect the parsed review result first."
   }
   return undefined
 }

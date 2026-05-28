@@ -14,7 +14,7 @@ export const configContractChecks: readonly ContractCheck[] = [
             work: {
               type: "work",
               agent: "claude",
-              model: "opus",
+              model: "claude-opus-4-8",
               resume: 2,
               permission_mode: "bypassPermissions",
               timeout: "30m"

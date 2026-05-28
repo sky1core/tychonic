@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractAgentResult } from "../web-client/src/agentResult";
+import { extractAgentResult, primaryAgentResult } from "../web-client/src/agentResult";
 
 describe("status UI agent result extraction", () => {
   it("extracts Claude work result text from stream-json output", () => {
@@ -259,6 +259,26 @@ describe("status UI agent result extraction", () => {
         "- Severity: **medium** - Missing validation: The review could not identify a specific file."
       ].join("\n")
     );
+  });
+
+  it("uses parsed review artifacts ahead of raw adapter event streams for the primary response", () => {
+    const rawOutput = [
+      openpResultLine({
+        sessionId: "thread_1",
+        answer: "raw adapter stream summary"
+      })
+    ].join("\n");
+    const parsedOutput = JSON.stringify({
+      schema_version: "tychonic.review.v1",
+      status: "pass",
+      summary: "parsed artifact summary",
+      findings: []
+    });
+
+    expect(primaryAgentResult({
+      parsedArtifactContent: parsedOutput,
+      resultArtifactContent: rawOutput
+    })).toBe("**Status:** pass\n\nparsed artifact summary\n\n**Findings:** none");
   });
 });
 
