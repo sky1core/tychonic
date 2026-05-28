@@ -36,14 +36,14 @@ describe("codexAdapter", () => {
     );
   });
 
-  it("runResume(review) includes --json-schema and --resume", () => {
+  it("runResume(review) omits --json-schema because OpenP Codex supports schema only on fresh turns", () => {
     const { command } = codexAdapter.runResume({
       ...BASE,
       role: "review",
       sessionId: "abc"
     });
     expect(command).not.toContain("--permission-mode");
-    expect(command).toContain("--json-schema");
+    expect(command).not.toContain("--json-schema");
     expect(command).toContain("--resume 'abc'");
   });
 });

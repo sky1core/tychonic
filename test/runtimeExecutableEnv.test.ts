@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { checkAgentExecutables } from "../src/adapters/executablePreflight.js";
@@ -26,7 +26,7 @@ describe("runtime executable env", () => {
     const root = await mkdtemp(join(tmpdir(), "tychonic-runtime-executable-env-"));
     const binDir = join(root, "bin");
     const openpPath = join(binDir, "openp");
-    await writeExecutable(openpPath);
+    await writeOpenPBackendExecutables(binDir, ["claude", "codex"]);
     const gitPath = await currentGitPath();
 
     const runtimeEnv = await resolveRuntimeExecutableEnv({
@@ -53,11 +53,49 @@ describe("runtime executable env", () => {
     expect(check.resolved[0]?.path).toBe(openpPath);
   });
 
+  it("captures OpenP backend executable directories required by installed profiles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tychonic-runtime-executable-openp-backends-"));
+    const openpBin = join(root, "openp-bin");
+    const claudeBin = join(root, "claude-bin");
+    const codexBin = join(root, "codex-bin");
+    await writeExecutable(join(openpBin, "openp"));
+    await writeExecutable(join(claudeBin, "claude"));
+    await writeExecutable(join(claudeBin, "openp"));
+    await writeExecutable(join(codexBin, "codex"));
+    const gitPath = await currentGitPath();
+
+    const runtimeEnv = await resolveRuntimeExecutableEnv({
+      env: {
+        HOME: root,
+        PATH: `${openpBin}:${claudeBin}:${codexBin}:${dirname(gitPath)}:/usr/bin:/bin`
+      },
+      requiredProfiles: [{ name: "uses-claude-and-codex", profile: profileWithAgents(["claude", "codex"]) }]
+    });
+
+    const pathEntries = runtimeEnv.PATH.split(delimiter);
+    expect(pathEntries).toEqual(
+      expect.arrayContaining([openpBin, claudeBin, codexBin, dirname(gitPath)])
+    );
+    expect(pathEntries.indexOf(openpBin)).toBeLessThan(pathEntries.indexOf(claudeBin));
+    expect(pathEntries.indexOf(openpBin)).toBeLessThan(pathEntries.indexOf(codexBin));
+    const claudeCheck = await checkAgentExecutables(profileWithAgent("claude"), {
+      env: { HOME: root, PATH: "/definitely/missing", ...runtimeEnv }
+    });
+    const codexCheck = await checkAgentExecutables(profileWithAgent("codex"), {
+      env: { HOME: root, PATH: "/definitely/missing", ...runtimeEnv }
+    });
+    expect(claudeCheck.missing).toEqual([]);
+    expect(codexCheck.missing).toEqual([]);
+    expect(claudeCheck.resolved.find((entry) => entry.executable === "openp")?.path).toBe(
+      join(openpBin, "openp")
+    );
+  });
+
   it("ignores legacy per-executable env vars for adapters not required by installed profiles", async () => {
     const root = await mkdtemp(join(tmpdir(), "tychonic-runtime-executable-unused-stale-"));
     const binDir = join(root, "bin");
     const openpPath = join(binDir, "openp");
-    await writeExecutable(openpPath);
+    await writeOpenPBackendExecutables(binDir, ["claude"]);
     const gitPath = await currentGitPath();
 
     const runtimeEnv = await resolveRuntimeExecutableEnv({
@@ -77,10 +115,14 @@ describe("runtime executable env", () => {
     const binDir = join(root, "bin");
     const targetDir = join(root, "targets");
     const targetOpenp = join(targetDir, "openp");
+    const targetClaude = join(targetDir, "claude");
     const linkedOpenp = join(binDir, "openp");
+    const linkedClaude = join(binDir, "claude");
     await writeExecutable(targetOpenp);
+    await writeExecutable(targetClaude);
     await mkdir(binDir, { recursive: true });
     await symlink(targetOpenp, linkedOpenp);
+    await symlink(targetClaude, linkedClaude);
     const gitPath = await currentGitPath();
 
     const runtimeEnv = await resolveRuntimeExecutableEnv({
@@ -119,7 +161,7 @@ describe("runtime executable env", () => {
     const root = await mkdtemp(join(tmpdir(), "tychonic-runtime-executable-persist-"));
     const binDir = join(root, "bin");
     const openpPath = join(binDir, "openp");
-    await writeExecutable(openpPath);
+    await writeOpenPBackendExecutables(binDir, ["claude"]);
     const gitPath = await currentGitPath();
     const originalStateHome = process.env.TYCHONIC_STATE_HOME;
     const originalPath = process.env.PATH;
@@ -222,6 +264,21 @@ function profileWithAgent(agent: "claude" | "codex"): TychonicConfig {
   };
 }
 
+function profileWithAgents(agents: Array<"claude" | "codex">): TychonicConfig {
+  return {
+    version: "tychonic.config.v1",
+    states: Object.fromEntries(
+      agents.map((agent, index) => [
+        `work_${index}`,
+        {
+          type: "work",
+          agent
+        }
+      ])
+    )
+  } as TychonicConfig;
+}
+
 async function currentGitPath(): Promise<string> {
   const { stdout } = await execFileAsync("/bin/sh", ["-lc", "command -v git"], { encoding: "utf8" });
   return await realpath(stdout.trim());
@@ -231,6 +288,13 @@ async function writeExecutable(path: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, "#!/bin/sh\nexit 0\n", "utf8");
   await chmod(path, 0o755);
+}
+
+async function writeOpenPBackendExecutables(binDir: string, backends: string[]): Promise<void> {
+  await writeExecutable(join(binDir, "openp"));
+  for (const backend of backends) {
+    await writeExecutable(join(binDir, backend));
+  }
 }
 
 function minimalAgentWorkflowYaml(name: string): string {

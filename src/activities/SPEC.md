@@ -172,8 +172,10 @@ Workflows that need an isolated worktree use exactly two activities:
 
 - **`createWorktreeActivity`** — creates the isolated worktree under the
   Tychonic-owned parent directory and returns `worktreePath`,
-  `worktreeParentDir`, `baseHead`. Called once per workflow from
-  `ctx.createWorktree()`.
+  `worktreeParentDir`, `baseHead`. `baseHead` is the isolated worktree
+  baseline after the target repository's initial working snapshot has been
+  copied; it is not required to equal the target repository's original HEAD.
+  Called once per workflow from `ctx.createWorktree()`.
 - **`extractWorktreePatchActivity`** — captures a `worktree_patch` artifact
   (cumulative diff `baseHead..HEAD` including staged and unstaged changes)
   from the worktree without removing the worktree directory. Called once per

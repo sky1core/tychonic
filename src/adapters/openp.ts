@@ -34,6 +34,15 @@ import { shellQuote } from "./shell.js";
 
 const BIN = "openp";
 
+// OpenP remains the only command Tychonic invokes. The backend executable
+// names are declared so service/worker preflight can build a runtime PATH
+// where OpenP's selected backend can start its own child process.
+const BACKEND_EXECUTABLES: Record<BuiltInAgentName, string> = {
+  claude: "claude",
+  codex: "codex",
+  kiro: "kiro-cli"
+};
+
 const REVIEW_FINDING_JSON_SCHEMA = {
   type: "object",
   description: "One actionable problem. Do not use findings for evidence, confirmations, or passing notes.",
@@ -75,11 +84,11 @@ const TYCHONIC_REVIEW_JSON_SCHEMA = {
 function createOpenPAdapter(backend: BuiltInAgentName): AgentAdapter {
   return {
     name: backend,
-    executables: [BIN],
+    executables: [BIN, BACKEND_EXECUTABLES[backend]],
 
     runNew(input: AdapterRunInput): AdapterCommand {
       const args = buildArgs(backend, input);
-      if (supportsJsonSchemaReview(backend) && input.role === "review") {
+      if (shouldAttachReviewJsonSchema(backend, "runNew", input.role)) {
         args.push("--json-schema", shellQuote(JSON.stringify(TYCHONIC_REVIEW_JSON_SCHEMA)));
       }
       return { command: args.join(" ") };
@@ -87,7 +96,7 @@ function createOpenPAdapter(backend: BuiltInAgentName): AgentAdapter {
 
     runResume(input: AdapterResumeInput): AdapterCommand {
       const args = buildArgs(backend, input);
-      if (supportsJsonSchemaReview(backend) && input.role === "review") {
+      if (shouldAttachReviewJsonSchema(backend, "runResume", input.role)) {
         args.push("--json-schema", shellQuote(JSON.stringify(TYCHONIC_REVIEW_JSON_SCHEMA)));
       }
       args.push("--resume", shellQuote(input.sessionId));
@@ -131,8 +140,14 @@ function resolvePermissionArgs(backend: BuiltInAgentName, input: AdapterRunInput
   }
 }
 
-function supportsJsonSchemaReview(backend: BuiltInAgentName): boolean {
+function shouldAttachReviewJsonSchema(
+  backend: BuiltInAgentName,
+  operation: "runNew" | "runResume",
+  role: AdapterRunInput["role"]
+): boolean {
+  if (role !== "review") return false;
   if (backend === "kiro") return false;
+  if (backend === "codex" && operation === "runResume") return false;
   return true;
 }
 

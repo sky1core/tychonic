@@ -281,6 +281,52 @@ describe("bootstrap activities", () => {
       });
     });
 
+    it("does not capture source dirty and untracked inputs as workflow patch output", async () => {
+      await withTychonicStateHome(async () => {
+        const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-extract-dirty-input-"));
+        await execFileAsync("git", ["init"], { cwd });
+        await writeFile(join(cwd, "seed.txt"), "seed\n", "utf8");
+        await execFileAsync("git", ["add", "seed.txt"], { cwd });
+        await execFileAsync(
+          "git",
+          ["-c", "user.name=Tychonic Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+          { cwd }
+        );
+        await writeFile(join(cwd, "seed.txt"), "dirty before run\n", "utf8");
+        await writeFile(join(cwd, "operator-input.json"), "{\"goal\":\"preexisting\"}\n", "utf8");
+
+        const run = baseRun("run_wt_extract_dirty_input");
+        run.artifact_root = join(process.env.HOME!, ".tychonic", "runs", "operational", run.id);
+        const created = await createWorktreeActivity({ run, cwd });
+        const noOpExtract = await extractWorktreePatchActivity({
+          run,
+          cwd,
+          worktreePath: created.worktreePath,
+          worktreeParentDir: created.worktreeParentDir,
+          baseHead: created.baseHead
+        });
+
+        expect(noOpExtract.cleanupOutcome.artifacts).toHaveLength(0);
+        await writeFile(join(created.worktreePath, "seed.txt"), "worker changed seed\n", "utf8");
+        await writeFile(join(created.worktreePath, "worker-output.txt"), "worker output\n", "utf8");
+        const extract = await extractWorktreePatchActivity({
+          run,
+          cwd,
+          worktreePath: created.worktreePath,
+          worktreeParentDir: created.worktreeParentDir,
+          baseHead: created.baseHead
+        });
+
+        expect(extract.cleanupOutcome.artifacts).toHaveLength(1);
+        const patchPath = join(run.artifact_root, extract.cleanupOutcome.artifacts[0]?.path ?? "");
+        const patch = await readFile(patchPath, "utf8");
+        expect(patch).toContain("+worker changed seed");
+        expect(patch).toContain("worker-output.txt");
+        expect(patch).not.toContain("operator-input.json");
+        expect(patch).not.toContain("preexisting");
+      });
+    });
+
     it("uses the recorded worktree parent when the active state dir changes before extract", async () => {
       await withTychonicStateHome(async (stateHome) => {
         const cwd = await mkdtemp(join(tmpdir(), "tychonic-worktree-extract-state-change-"));

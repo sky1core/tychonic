@@ -63,8 +63,11 @@ Rules:
   role, TYPE, NAME, agent label, or profile shape.
 - `--dangerously-skip-permissions` is emitted according to the backend-specific
   Tychonic execution contract listed below.
-- `--json-schema <json>` is emitted for review runs only on built-in backends
-  that provide direct structured review output.
+- `--json-schema <json>` is emitted for review runs only where the selected
+  built-in backend and turn type provide direct structured review output.
+  Claude supports it on fresh and resume turns. Codex supports it on fresh
+  turns only; Codex resume turns must not receive `--json-schema`. Kiro does
+  not support it.
 
 OpenP stdout is parsed for two adapter facts:
 
@@ -84,7 +87,7 @@ capabilities.
 | Agent label | Backend command | Review output | Resume | Model | Reasoning effort |
 | --- | --- | --- | --- | --- | --- |
 | `claude` | `openp claude` | `--json-schema` | `--resume` | `--model` | `--effort` |
-| `codex` | `openp codex` | `--json-schema` | `--resume` | `--model` | `--effort` |
+| `codex` | `openp codex` | `--json-schema` on fresh turns only | `--resume` | `--model` | `--effort` |
 | `kiro` | `openp kiro` | prose primary review plus normalizer | `--resume` | `--model` | `--effort` |
 
 Execution-policy mapping is backend-specific and constrained to OpenP public

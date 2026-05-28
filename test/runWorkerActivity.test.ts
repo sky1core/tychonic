@@ -365,6 +365,8 @@ async function installFakeOpenP(): Promise<{ binPath: string; restorePath: () =>
     "utf8"
   );
   await chmod(binPath, 0o755);
+  await writeFile(join(binDir, "codex"), "#!/bin/sh\nexit 0\n", "utf8");
+  await chmod(join(binDir, "codex"), 0o755);
   const previousPath = process.env.PATH;
   process.env.PATH = `${binDir}:${previousPath ?? ""}`;
   return {

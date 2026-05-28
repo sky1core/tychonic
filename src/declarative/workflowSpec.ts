@@ -280,6 +280,36 @@ export function generateDeclarativeWorkflowModule(input: {
     "  return lines.join(\"\\n\");",
     "}",
     "",
+    "function isDeclarativeReviewInfrastructureFailure(result) {",
+    "  const kind = result.activityResult?.reviewOutcome?.kind;",
+    "  return kind === \"command_failed\" || kind === \"unparseable\" || kind === \"skipped\";",
+    "}",
+    "",
+    "function declarativeReviewInfrastructureSummary(stateName, result) {",
+    "  if (result.summary) return `${stateName} review infrastructure failed: ${result.summary}`;",
+    "  if (result.reason) return `${stateName} review infrastructure failed: ${result.reason}`;",
+    "  const outcome = result.activityResult?.reviewOutcome;",
+    "  if (outcome?.kind === \"command_failed\") return `${stateName} review infrastructure failed: reviewer command ${outcome.status}`;",
+    "  if (outcome?.kind === \"unparseable\") return `${stateName} review infrastructure failed: reviewer output was unparseable`;",
+    "  if (outcome?.kind === \"skipped\") return `${stateName} review infrastructure failed: reviewer was skipped`;",
+    "  return `${stateName} review infrastructure failed`;",
+    "}",
+    "",
+    "function declarativeReviewInfrastructureInboxItem(stateName, result) {",
+    "  const outcome = result.activityResult?.reviewOutcome;",
+    "  return {",
+    "    id: `inbox_${stateName}_review_infrastructure_failure`,",
+    "    status: \"open\",",
+    "    title: `${stateName} review infrastructure failure`,",
+    "    detail: declarativeReviewFeedback(stateName, result),",
+    "    action: {",
+    "      kind: \"triage\",",
+    "      reason: outcome?.kind ? `review outcome ${outcome.kind}` : \"review did not produce a parsed verdict\"",
+    "    },",
+    "    created_at: new Date().toISOString()",
+    "  };",
+    "}",
+    "",
     `export { generatedWorkflow as ${JSON.stringify(input.bundleName)} };`,
     ""
   ].join("\n");
@@ -308,10 +338,22 @@ function generatedStateCase(
   return [
     `      case ${JSON.stringify(name)}: {`,
     `        const result = await ${stateCallExpression(name, state)};`,
+    ...(state.type === "review" ? generatedReviewInfrastructureFailureLines(name) : []),
     `        if (result.halted) return ctx.finish(result.summary ?? ${JSON.stringify(`${name} halted`)});`,
     ...generatedTransitionLines(state.on_pass, true),
     ...generatedTransitionLines(state.on_fail, false, state.type === "review" ? name : undefined),
     "      }"
+  ];
+}
+
+function generatedReviewInfrastructureFailureLines(name: string): string[] {
+  return [
+    "        if (!result.passed && isDeclarativeReviewInfrastructureFailure(result)) {",
+    "          return ctx.finishWaitingUser(",
+    `            declarativeReviewInfrastructureSummary(${JSON.stringify(name)}, result),`,
+    `            declarativeReviewInfrastructureInboxItem(${JSON.stringify(name)}, result)`,
+    "          );",
+    "        }"
   ];
 }
 

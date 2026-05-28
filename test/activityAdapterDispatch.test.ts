@@ -35,6 +35,9 @@ beforeEach(async () => {
   originalAgentPath = process.env[TYCHONIC_AGENT_PATH_ENV];
   stubBinDir = await mkdtemp(join(tmpdir(), "tychonic-adapter-dispatch-bin-"));
   await writeStubBinary(join(stubBinDir, "openp"));
+  await writeStubBinary(join(stubBinDir, "claude"));
+  await writeStubBinary(join(stubBinDir, "codex"));
+  await writeStubBinary(join(stubBinDir, "kiro-cli"));
   process.env[TYCHONIC_AGENT_PATH_ENV] = stubBinDir;
 });
 

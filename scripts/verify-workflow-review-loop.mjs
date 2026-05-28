@@ -45,11 +45,13 @@ try {
   await writeFile(firstConfig, firstReviewAndFinalQaLoopConfig(), "utf8");
   await writeFile(capConfig, finalQaCapConfig(), "utf8");
   const yamlReviewFeedbackBundle = await makeYamlReviewFeedbackWorkflowBundle();
+  const yamlReviewInfrastructureFailureBundle = await makeYamlReviewInfrastructureFailureWorkflowBundle();
 
   await installWorkflow("architectBuilderQaWorkflow");
   await installWorkflow("architectBuilderFinalQaWorkflow");
   await installWorkflow("architectBuilderFirstReviewQaWorkflow");
   await installWorkflowSource(yamlReviewFeedbackBundle);
+  await installWorkflowSource(yamlReviewInfrastructureFailureBundle);
   await runCli(["runtime", "up", "--detach", "--web-port", String(webPort)], { timeout: 60_000 });
   runtimeStarted = true;
   await waitForRuntime();
@@ -159,6 +161,23 @@ try {
     "YAML generated workflow should pass structured review findings back to work prompt"
   );
 
+  const infraRun = await runWorkflow("yamlReviewInfrastructureFailureWorkflow", finalInput, undefined, "waiting_user");
+  const infraStatus = await status(infraRun.workflowId);
+  assertEqual(
+    infraStatus.evidence?.summary,
+    "review review infrastructure failed: reviewer command did not succeed",
+    "review infrastructure failure summary mismatch"
+  );
+  assertCount(infraStatus, "states", 2);
+  assertCount(infraStatus, "attempts", 2);
+  assertCount(infraStatus, "findings", 0);
+  assertCount(infraStatus, "inbox", 1);
+  assertEqual(
+    artifactsByKind(infraStatus, "work_prompt").length,
+    1,
+    "review infrastructure failure must not rerun the work state as semantic remediation"
+  );
+
   const capWorkflowName = "architectBuilderFinalQaWorkflow";
   const capMaxSteps = await loadExampleWorkflowMaxSteps(capWorkflowName);
   const capRun = await runWorkflow(capWorkflowName, finalInput, capConfig, "waiting_user");
@@ -183,6 +202,7 @@ try {
           architectBuilderFinalQaWorkflow: finalRun.workflowId,
           architectBuilderFirstReviewQaWorkflow: firstRun.workflowId,
           yamlReviewFeedbackWorkflow: yamlRun.workflowId,
+          yamlReviewInfrastructureFailureWorkflow: infraRun.workflowId,
           reviewCap: capRun.workflowId
         }
       },
@@ -400,6 +420,48 @@ states:
       fi
     prompt: |
       Review whether generated-marker.txt exists.
+    on_pass:
+      finish: true
+    on_fail:
+      goto: work
+`,
+    "utf8"
+  );
+  return bundleDir;
+}
+
+async function makeYamlReviewInfrastructureFailureWorkflowBundle() {
+  const bundleDir = join(root, "yamlReviewInfrastructureFailureWorkflow");
+  await mkdir(bundleDir, { recursive: true });
+  await writeFile(join(bundleDir, "README.md"), "# yamlReviewInfrastructureFailureWorkflow\n", "utf8");
+  await writeFile(
+    join(bundleDir, "workflow.yaml"),
+    `version: tychonic.workflow.v1
+name: yamlReviewInfrastructureFailureWorkflow
+worktree: true
+max_steps: 4
+start: work
+states:
+  work:
+    type: work
+    command: |
+      n=$(cat work-attempts.txt 2>/dev/null || echo 0)
+      n=$((n + 1))
+      printf '%s\\n' "$n" > work-attempts.txt
+    prompt: |
+      Do work once.
+    on_pass:
+      goto: review
+    on_fail:
+      finish: work failed
+  review:
+    type: review
+    on_fail_return_to: work
+    command: |
+      printf 'not json\\n'
+      exit 40
+    prompt: |
+      Review should fail as infrastructure.
     on_pass:
       finish: true
     on_fail:

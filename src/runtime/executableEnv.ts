@@ -5,6 +5,7 @@ import { assertAgentExecutablesAvailable } from "../adapters/executablePreflight
 import type { TychonicConfig } from "../catalog/types.js";
 import {
   buildExecutablePathValue,
+  buildExecutableSearchPath,
   findExecutable,
   resolveGitExecutable,
   TYCHONIC_AGENT_PATH_ENV,
@@ -181,7 +182,7 @@ function runtimePathValue(
   gitPath: string
 ): string {
   const executableDirs = [
-    ...Object.values(executablePaths).map((value) => dirname(value)),
+    ...discoveredExecutableDirsInSearchOrder(baseEnv, executablePaths),
     dirname(gitPath),
     "/usr/bin",
     "/bin"
@@ -191,6 +192,20 @@ function runtimePathValue(
     ...(baseEnv[TYCHONIC_AGENT_PATH_ENV] ? { [TYCHONIC_AGENT_PATH_ENV]: baseEnv[TYCHONIC_AGENT_PATH_ENV] } : {}),
     PATH: executableDirs.join(delimiter)
   });
+}
+
+function discoveredExecutableDirsInSearchOrder(
+  baseEnv: NodeJS.ProcessEnv,
+  executablePaths: Record<string, string>
+): string[] {
+  const requiredDirs = new Set(Object.values(executablePaths).map((value) => dirname(value)));
+  const orderedDirs: string[] = [];
+  for (const entry of buildExecutableSearchPath(baseEnv)) {
+    if (requiredDirs.delete(entry)) {
+      orderedDirs.push(entry);
+    }
+  }
+  return [...orderedDirs, ...requiredDirs];
 }
 
 function withoutLegacyExecutablePathEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

@@ -35,18 +35,19 @@ export async function createIsolatedWorktree(input: {
       });
       await initializeSubmodules(target);
       await copyWorkingTreeSnapshot(input.cwd, target);
+      const isolatedBaseHead = await createIsolatedBaselineCommit(target, baseHead);
       return {
         path: target,
         worktreeParentDir: input.worktreeParentDir,
         mode: "git_worktree",
-        reason: "created detached git worktree from HEAD with working tree snapshot",
-        baseHead
+        reason: "created detached git worktree from HEAD with isolated working tree snapshot baseline",
+        baseHead: isolatedBaseHead
       };
     }
 
     await mkdir(target, { recursive: true });
     await copyNoHeadWorkingTreeSnapshot(input.cwd, target);
-    await initializeIsolatedBaseline(target);
+    await initializeNoHeadIsolatedBaseline(target);
     const baseHead = (await gitOutput(target, ["rev-parse", "--verify", "HEAD"])).trim();
     return {
       path: target,
@@ -105,29 +106,46 @@ async function initializeSubmodules(target: string): Promise<void> {
   }
 }
 
-async function initializeIsolatedBaseline(target: string): Promise<void> {
+async function initializeNoHeadIsolatedBaseline(target: string): Promise<void> {
   const git = await resolveGitExecutable();
-  const env = {
+  const env = isolatedBaselineGitEnv(git);
+  await execFileAsync(git, ["init"], { cwd: target, env });
+  await execFileAsync(git, ["symbolic-ref", "HEAD", "refs/heads/tychonic-baseline"], { cwd: target, env });
+  await createIsolatedBaselineCommit(target);
+}
+
+async function createIsolatedBaselineCommit(target: string, parentHead?: string): Promise<string> {
+  const git = await resolveGitExecutable();
+  const env = isolatedBaselineGitEnv(git);
+  await execFileAsync(git, ["add", "--all"], { cwd: target, env });
+  try {
+    const { stdout: tree } = await execFileAsync(git, ["write-tree"], { cwd: target, env, encoding: "utf8" });
+    const commitArgs = ["commit-tree", tree.trim()];
+    if (parentHead !== undefined) {
+      commitArgs.push("-p", parentHead);
+    }
+    commitArgs.push("-m", "tychonic isolated baseline");
+    const { stdout: commit } = await execFileAsync(git, commitArgs, {
+      cwd: target,
+      env,
+      encoding: "utf8"
+    });
+    const baselineHead = commit.trim();
+    await execFileAsync(git, ["update-ref", "HEAD", baselineHead], { cwd: target, env });
+    return baselineHead;
+  } catch (error) {
+    throw new Error(`failed to create isolated baseline commit: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function isolatedBaselineGitEnv(git: string): NodeJS.ProcessEnv {
+  return {
     ...gitChildEnv(process.env, git),
     GIT_AUTHOR_NAME: "Tychonic",
     GIT_AUTHOR_EMAIL: "tychonic@example.invalid",
     GIT_COMMITTER_NAME: "Tychonic",
     GIT_COMMITTER_EMAIL: "tychonic@example.invalid"
   };
-  await execFileAsync(git, ["init"], { cwd: target, env });
-  await execFileAsync(git, ["symbolic-ref", "HEAD", "refs/heads/tychonic-baseline"], { cwd: target, env });
-  await execFileAsync(git, ["add", "."], { cwd: target, env });
-  try {
-    const { stdout: tree } = await execFileAsync(git, ["write-tree"], { cwd: target, env, encoding: "utf8" });
-    const { stdout: commit } = await execFileAsync(git, ["commit-tree", tree.trim(), "-m", "tychonic isolated baseline"], {
-      cwd: target,
-      env,
-      encoding: "utf8"
-    });
-    await execFileAsync(git, ["update-ref", "HEAD", commit.trim()], { cwd: target, env });
-  } catch (error) {
-    throw new Error(`failed to create isolated baseline commit: ${error instanceof Error ? error.message : String(error)}`);
-  }
 }
 
 async function cleanupFailedWorktree(input: {

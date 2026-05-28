@@ -1,12 +1,24 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TYCHONIC_AGENT_PATH_ENV } from "../src/bootstrap/executables.js";
 import type { TychonicConfig } from "../src/catalog/types.js";
 import type { WorkflowRunRecord } from "../src/domain/types.js";
 
+let originalAgentPath: string | undefined;
+
 describe("activity heartbeat wiring", () => {
+  beforeEach(() => {
+    originalAgentPath = process.env[TYCHONIC_AGENT_PATH_ENV];
+  });
+
   afterEach(() => {
+    if (originalAgentPath === undefined) {
+      delete process.env[TYCHONIC_AGENT_PATH_ENV];
+    } else {
+      process.env[TYCHONIC_AGENT_PATH_ENV] = originalAgentPath;
+    }
     vi.resetModules();
     vi.clearAllMocks();
     vi.doUnmock("../src/bootstrap/workerActivityBody.js");
@@ -43,6 +55,7 @@ describe("activity heartbeat wiring", () => {
     }));
 
     const { runWorkerActivity } = await import("../src/activities/runWorkerActivity.js");
+    process.env[TYCHONIC_AGENT_PATH_ENV] = await stubAgentPath(["openp", "codex"]);
     await runWorkerActivity({
       stateName: "resume_alt",
       run: baseRun("run_resume_heartbeat", {
@@ -126,6 +139,17 @@ function baseRun(
     findings: [],
     inbox: []
   };
+}
+
+async function stubAgentPath(executables: string[]): Promise<string> {
+  const binDir = await mkdtemp(join(tmpdir(), "tychonic-heartbeat-bin-"));
+  await Promise.all(executables.map((name) => writeExecutable(join(binDir, name))));
+  return binDir;
+}
+
+async function writeExecutable(path: string): Promise<void> {
+  await writeFile(path, "#!/bin/sh\nexit 0\n", "utf8");
+  await chmod(path, 0o755);
 }
 
 function executedResult() {

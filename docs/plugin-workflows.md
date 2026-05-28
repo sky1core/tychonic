@@ -92,6 +92,10 @@ Every `review` state declares `on_fail_return_to`; the target must be a
 non-review state, and workflow code must route failed review feedback to that
 declared state when it implements a review loop. Generated wrappers append
 prompt feedback for prompt-bearing return states.
+Only a parsed review verdict with `status: "fail"` is failed review feedback.
+If a reviewer command fails, produces unparseable output, or is skipped, the
+generated wrapper surfaces the run as `waiting_user` instead of treating that
+condition as builder-remediation feedback.
 
 The generated wrapper calls activities by state NAME. TYPE selects the activity
 contract; NAME is the workflow-defined instance:

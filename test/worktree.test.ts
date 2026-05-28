@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { createIsolatedWorktree } from "../src/bootstrap/worktree.js";
+import { createIsolatedWorktree, worktreePatch } from "../src/bootstrap/worktree.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +18,10 @@ describe("createIsolatedWorktree", () => {
     await writeFile(join(cwd, "tracked.txt"), "committed\n", "utf8");
     await execFileAsync("git", ["add", "tracked.txt"], { cwd });
     await execFileAsync("git", ["commit", "-m", "initial"], { cwd });
+    const { stdout: sourceHead } = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+      cwd,
+      encoding: "utf8"
+    });
 
     await writeFile(join(cwd, "tracked.txt"), "dirty tracked\n", "utf8");
     await writeFile(join(cwd, "untracked.txt"), "untracked\n", "utf8");
@@ -25,6 +29,8 @@ describe("createIsolatedWorktree", () => {
     const isolated = await createIsolatedWorktree({ cwd, runId: "run_with_head", worktreeParentDir });
 
     expect(isolated.mode).toBe("git_worktree");
+    expect(isolated.baseHead).toMatch(/^[0-9a-f]{40}$/);
+    expect(isolated.baseHead).not.toBe(sourceHead.trim());
     expect(isolated.worktreeParentDir).toBe(worktreeParentDir);
     expect(isolated.path).toMatch(/tychonic-worktree-run_with_head-.+[\\/]worktree$/);
     expect((await realpath(isolated.path)).startsWith(`${await realpath(worktreeParentDir)}/`)).toBe(true);
@@ -36,8 +42,25 @@ describe("createIsolatedWorktree", () => {
       cwd: isolated.path,
       encoding: "utf8"
     });
-    expect(stdout).toContain("M tracked.txt");
-    expect(stdout).toContain("?? untracked.txt");
+    expect(stdout).toBe("");
+    await expect(
+      worktreePatch({
+        worktreePath: isolated.path,
+        baseHead: isolated.baseHead,
+        worktreeParentDir
+      })
+    ).resolves.toBe("");
+
+    await writeFile(join(isolated.path, "tracked.txt"), "changed by worker\n", "utf8");
+    await writeFile(join(isolated.path, "worker-output.txt"), "new worker file\n", "utf8");
+    const patch = await worktreePatch({
+      worktreePath: isolated.path,
+      baseHead: isolated.baseHead,
+      worktreeParentDir
+    });
+    expect(patch).toContain("+changed by worker");
+    expect(patch).toContain("worker-output.txt");
+    expect(patch).not.toContain("untracked.txt");
 
     const sourceWorktrees = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
       cwd,
@@ -117,7 +140,8 @@ describe("createIsolatedWorktree", () => {
       cwd: isolated.path,
       encoding: "utf8"
     });
-    expect(stdout).toContain("?? new.txt");
+    expect(stdout).toBe("");
+    await expect(readFile(join(isolated.path, "new.txt"), "utf8")).resolves.toBe("new\n");
   });
 
   it("copies tracked files even when .gitattributes marks them export-ignore", async () => {

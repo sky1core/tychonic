@@ -300,6 +300,12 @@ export const declarativeWorkflowContractChecks: readonly ContractCheck[] = [
         if (!source.includes("addDeclarativeReviewFeedback(feedbacksByState, returnTo, declarativeReviewFeedback(\"review\", result));")) {
           throw new Error("generated review fail transition does not attach feedback to asserted on_fail_return_to target");
         }
+        if (!source.includes("if (!result.passed && isDeclarativeReviewInfrastructureFailure(result))")) {
+          throw new Error("generated review state does not split infrastructure failures from semantic review failures");
+        }
+        if (!source.includes("declarativeReviewInfrastructureInboxItem(\"review\", result)")) {
+          throw new Error("generated review infrastructure failure does not create an operator triage inbox item");
+        }
         if (!source.includes("ctx.work(\"work\", appendDeclarativeReviewFeedback(renderDeclarativePrompt(\"do work\", input), feedbacksByState.get(\"work\") ?? []))")) {
           throw new Error("generated work state prompt does not include returned review feedback");
         }
