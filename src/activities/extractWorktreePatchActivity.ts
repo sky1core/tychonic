@@ -6,7 +6,7 @@ import { withPeriodicProgress } from "../bootstrap/commandRunner.js";
 import type { ArtifactRecord, WorkflowRunRecord } from "../domain/types.js";
 import { runArtifactStoreForRun } from "../storage/runArtifactStore.js";
 import type { ActivityResult } from "../temporal/types.js";
-import { heartbeatActivity } from "./heartbeat.js";
+import { heartbeatActivity, throwIfCancelled } from "./heartbeat.js";
 
 export interface ExtractWorktreePatchActivityInput {
   run: WorkflowRunRecord;
@@ -44,21 +44,25 @@ export async function extractWorktreePatchActivity(
   if (!(await pathExists(input.worktreePath))) {
     return extractResult(undefined);
   }
-  const patchArtifact = await withPeriodicProgress(progress, async () => {
-    const patch = await worktreePatch({
-      worktreePath: input.worktreePath,
-      baseHead: input.baseHead,
-      worktreeParentDir
-    });
-    return patch.trim()
-      ? await writePatchArtifact({
-          run: input.run,
-          cwd: input.cwd,
-          patch,
-          createdAt
-        })
-      : undefined;
-  });
+  const patchArtifact = await withPeriodicProgress(
+    progress,
+    async () => {
+      const patch = await worktreePatch({
+        worktreePath: input.worktreePath,
+        baseHead: input.baseHead,
+        worktreeParentDir
+      });
+      return patch.trim()
+        ? await writePatchArtifact({
+            run: input.run,
+            cwd: input.cwd,
+            patch,
+            createdAt
+          })
+        : undefined;
+    },
+    { onAfter: throwIfCancelled }
+  );
   return extractResult(patchArtifact);
 }
 

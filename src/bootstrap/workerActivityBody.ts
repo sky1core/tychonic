@@ -11,6 +11,7 @@ import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import type { WorkerActivityOutcome } from "../domain/outcome.js";
 import { runCommand, withPeriodicProgress } from "./commandRunner.js";
+import { throwIfCancelled } from "../activities/heartbeat.js";
 
 export type WorkerBodyType = "work";
 
@@ -130,17 +131,24 @@ export async function runWorkerActivityBody<T extends WorkerBodyType>(
   }
 
   const progress = (): void => heartbeat?.({ runId: run.id, state: state.name, attemptId: attempt.id });
-  const result = await withPeriodicProgress(progress, async () =>
-    await runCommand({
-      command,
-      cwd: executionCwd,
-      timeoutMs,
-      env,
-      liveOutputPath,
-      stdin: prompt,
-      onProgress: progress,
-      ...(signal ? { signal } : {})
-    })
+  // Two progress timers cover different spans: runCommand's onProgress
+  // heartbeats during command execution; withPeriodicProgress heartbeats
+  // around it (e.g. post-command artifact writes). onAfter surfaces
+  // cancellation on the await path after the command resolves.
+  const result = await withPeriodicProgress(
+    progress,
+    async () =>
+      await runCommand({
+        command,
+        cwd: executionCwd,
+        timeoutMs,
+        env,
+        liveOutputPath,
+        stdin: prompt,
+        onProgress: progress,
+        ...(signal ? { signal } : {})
+      }),
+    { onAfter: throwIfCancelled }
   );
   if (result.exitCode !== undefined) {
     attempt.exit_code = result.exitCode;

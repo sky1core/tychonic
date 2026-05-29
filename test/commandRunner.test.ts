@@ -80,10 +80,65 @@ describe("runCommand", () => {
       async () => {
         await new Promise((resolve) => setTimeout(resolve, 60));
       },
-      10
+      { intervalMs: 10 }
     );
 
     expect(progressCalls).toBeGreaterThan(1);
+  });
+
+  it("does not let a throwing periodic-progress callback escape", async () => {
+    let ticks = 0;
+
+    const result = await withPeriodicProgress(
+      () => {
+        ticks += 1;
+        throw new Error("boom from tick");
+      },
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return "ok";
+      },
+      { intervalMs: 10 }
+    );
+
+    expect(result).toBe("ok");
+    expect(ticks).toBeGreaterThan(1);
+  });
+
+  it("does not let a throwing onProgress escape runCommand", async () => {
+    const result = await runCommand({
+      command: "node -e \"process.stdout.write('x'); setTimeout(() => process.exit(0), 60)\"",
+      cwd: process.cwd(),
+      timeoutMs: 1_000,
+      progressIntervalMs: 10,
+      onProgress: () => {
+        throw new Error("boom");
+      }
+    });
+
+    expect(result.status).toBe("succeeded");
+  });
+
+  it("calls onAfter after run resolves and propagates its throw", async () => {
+    const order: string[] = [];
+
+    await expect(
+      withPeriodicProgress(
+        undefined,
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          order.push("run-done");
+        },
+        {
+          onAfter: () => {
+            order.push("after");
+            throw new Error("surface");
+          }
+        }
+      )
+    ).rejects.toThrow("surface");
+
+    expect(order).toEqual(["run-done", "after"]);
   });
 
   it("runs multi-line commands in fail-fast mode", async () => {

@@ -26,8 +26,8 @@ export interface CommandRunOptions {
    * Optional abort signal. When aborted, the child process receives SIGTERM
    * immediately and SIGKILL after 1 second. The result resolves with
    * `status: "failed"` and `timedOut: false`; callers that need to surface a
-   * Temporal cancellation should throw `CancelledFailure` themselves after
-   * observing the abort (typically through `heartbeatActivity`).
+   * Temporal cancellation do so on the await path with `throwIfCancelled`
+   * (typically wired through `withPeriodicProgress`'s `onAfter`).
    */
   signal?: AbortSignal;
 }
@@ -64,6 +64,19 @@ export async function runCommand(options: CommandRunOptions): Promise<CommandRun
   const liveStream = options.liveOutputPath
     ? createWriteStream(options.liveOutputPath, { flags: "a" })
     : undefined;
+
+  const reportProgress = (): void => {
+    if (!options.onProgress) {
+      return;
+    }
+    try {
+      options.onProgress();
+    } catch (error) {
+      process.stderr.write(
+        `tychonic: progress callback threw (ignored): ${progressErrorMessage(error)}\n`
+      );
+    }
+  };
 
   return await new Promise<CommandRunResult>((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -104,7 +117,7 @@ export async function runCommand(options: CommandRunOptions): Promise<CommandRun
     }
 
     const appendOutput = (chunk: Buffer): void => {
-      options.onProgress?.();
+      reportProgress();
       liveStream?.write(chunk);
       if (outputCapture === "head") {
         if (outputBytes >= maxOutputBytes) return;
@@ -123,8 +136,8 @@ export async function runCommand(options: CommandRunOptions): Promise<CommandRun
     child.stderr?.on("data", appendOutput);
 
     if (options.onProgress) {
-      options.onProgress();
-      progressInterval = setInterval(options.onProgress, options.progressIntervalMs ?? 10_000);
+      reportProgress();
+      progressInterval = setInterval(reportProgress, options.progressIntervalMs ?? 10_000);
       progressInterval.unref();
     }
 
@@ -218,21 +231,43 @@ function trimCapturedOutputTail(chunks: Buffer[], maxOutputBytes: number, output
 export async function withPeriodicProgress<T>(
   onProgress: (() => void) | undefined,
   run: () => Promise<T>,
-  intervalMs = 10_000
+  options?: { intervalMs?: number; onAfter?: () => void }
 ): Promise<T> {
-  if (!onProgress) {
-    return await run();
-  }
+  const intervalMs = options?.intervalMs ?? 10_000;
+  const onAfter = options?.onAfter;
 
-  onProgress();
-  const interval = setInterval(onProgress, intervalMs);
-  interval.unref();
+  const safeProgress = (): void => {
+    if (!onProgress) {
+      return;
+    }
+    try {
+      onProgress();
+    } catch (error) {
+      process.stderr.write(
+        `tychonic: periodic progress callback threw (ignored): ${progressErrorMessage(error)}\n`
+      );
+    }
+  };
+
+  let interval: NodeJS.Timeout | undefined;
+  if (onProgress) {
+    safeProgress();
+    interval = setInterval(safeProgress, intervalMs);
+    interval.unref();
+  }
 
   try {
     return await run();
   } finally {
-    clearInterval(interval);
+    if (interval) {
+      clearInterval(interval);
+    }
+    onAfter?.();
   }
+}
+
+function progressErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function failFastShellCommand(command: string): string {

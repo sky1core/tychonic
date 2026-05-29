@@ -29,6 +29,7 @@ import type { ReviewActivityOutcome } from "../review/outcome.js";
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import { runCommand, sanitizeChildEnv, type CommandRunResult, withPeriodicProgress } from "./commandRunner.js";
+import { throwIfCancelled } from "../activities/heartbeat.js";
 import { gitChildEnv, resolveGitExecutable } from "./executables.js";
 
 /**
@@ -163,17 +164,20 @@ export async function runReviewActivityBody(
       timedOut: false
     };
   } else {
-    result = await withPeriodicProgress(progress, async () =>
-      await runCommand({
-        command,
-        cwd: executionCwd,
-        timeoutMs,
-        env,
-        liveOutputPath,
-        outputCapture: "tail",
-        stdin: prompt,
-        onProgress: progress
-      })
+    result = await withPeriodicProgress(
+      progress,
+      async () =>
+        await runCommand({
+          command,
+          cwd: executionCwd,
+          timeoutMs,
+          env,
+          liveOutputPath,
+          outputCapture: "tail",
+          stdin: prompt,
+          onProgress: progress
+        }),
+      { onAfter: throwIfCancelled }
     );
     const reviewMutationViolation = await detectReviewMutation(reviewMutationBefore, executionCwd, env);
     if (reviewMutationViolation) {
@@ -497,16 +501,19 @@ async function runReviewNormalizer(input: {
     });
     artifacts.push(promptArtifact);
 
-    let result = await withPeriodicProgress(input.heartbeat, async () =>
-      await runCommand({
-        command,
-        cwd: normalizerCwd,
-        timeoutMs: input.timeoutMs,
-        env: input.env,
-        outputCapture: "tail",
-        stdin: normalizerPrompt,
-        onProgress: input.heartbeat
-      })
+    let result = await withPeriodicProgress(
+      input.heartbeat,
+      async () =>
+        await runCommand({
+          command,
+          cwd: normalizerCwd,
+          timeoutMs: input.timeoutMs,
+          env: input.env,
+          outputCapture: "tail",
+          stdin: normalizerPrompt,
+          onProgress: input.heartbeat
+        }),
+      { onAfter: throwIfCancelled }
     );
     const parsedAdapterResult = adapter.parseResult(result.output, "", result.exitCode ?? 0);
     const modelMismatch = reportedModelMismatchMessage({

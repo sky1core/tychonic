@@ -10,6 +10,7 @@ import type {
 import type { RunArtifactStore } from "../storage/runArtifactStore.js";
 import type { ActivityInput, ActivityResult } from "../temporal/types.js";
 import { runCommand, withPeriodicProgress } from "./commandRunner.js";
+import { throwIfCancelled } from "../activities/heartbeat.js";
 
 export type DeterministicCommandType = "verify";
 
@@ -86,15 +87,18 @@ export async function runDeterministicCommandBody<T extends DeterministicCommand
   attempt.live_output_path = store.storedPath(run.id, liveOutputPath);
 
   const progress = (): void => heartbeat?.({ runId: run.id, state: state.name, attemptId: attempt.id });
-  const result = await withPeriodicProgress(progress, async () =>
-    await runCommand({
-      command,
-      cwd: executionCwd,
-      timeoutMs,
-      env,
-      liveOutputPath,
-      onProgress: progress
-    })
+  const result = await withPeriodicProgress(
+    progress,
+    async () =>
+      await runCommand({
+        command,
+        cwd: executionCwd,
+        timeoutMs,
+        env,
+        liveOutputPath,
+        onProgress: progress
+      }),
+    { onAfter: throwIfCancelled }
   );
   if (result.exitCode !== undefined) {
     attempt.exit_code = result.exitCode;
