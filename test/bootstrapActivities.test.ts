@@ -306,19 +306,26 @@ describe("bootstrap activities", () => {
           baseHead: created.baseHead
         });
 
-        expect(noOpExtract.cleanupOutcome.artifacts).toHaveLength(0);
-        await writeFile(join(created.worktreePath, "seed.txt"), "worker changed seed\n", "utf8");
-        await writeFile(join(created.worktreePath, "worker-output.txt"), "worker output\n", "utf8");
+        expect(noOpExtract.cleanupOutcome.artifacts).toHaveLength(1);
+        expect(noOpExtract.cleanupOutcome.artifacts[0]?.kind).toBe("worktree_patch");
+        const noOpPatchPath = join(run.artifact_root, noOpExtract.cleanupOutcome.artifacts[0]?.path ?? "");
+        await expect(readFile(noOpPatchPath, "utf8")).resolves.toBe("");
+
+        const changedRun = baseRun("run_wt_extract_dirty_input_changed");
+        changedRun.artifact_root = join(process.env.HOME!, ".tychonic", "runs", "operational", changedRun.id);
+        const changedCreated = await createWorktreeActivity({ run: changedRun, cwd });
+        await writeFile(join(changedCreated.worktreePath, "seed.txt"), "worker changed seed\n", "utf8");
+        await writeFile(join(changedCreated.worktreePath, "worker-output.txt"), "worker output\n", "utf8");
         const extract = await extractWorktreePatchActivity({
-          run,
+          run: changedRun,
           cwd,
-          worktreePath: created.worktreePath,
-          worktreeParentDir: created.worktreeParentDir,
-          baseHead: created.baseHead
+          worktreePath: changedCreated.worktreePath,
+          worktreeParentDir: changedCreated.worktreeParentDir,
+          baseHead: changedCreated.baseHead
         });
 
         expect(extract.cleanupOutcome.artifacts).toHaveLength(1);
-        const patchPath = join(run.artifact_root, extract.cleanupOutcome.artifacts[0]?.path ?? "");
+        const patchPath = join(changedRun.artifact_root, extract.cleanupOutcome.artifacts[0]?.path ?? "");
         const patch = await readFile(patchPath, "utf8");
         expect(patch).toContain("+worker changed seed");
         expect(patch).toContain("worker-output.txt");

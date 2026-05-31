@@ -147,7 +147,7 @@ states:
     type: review
     on_fail_return_to: work
     agent: kiro
-    model: claude-opus-4.7
+    model: claude-sonnet-4.5
     normalizer: codex
   verify:
     type: verify

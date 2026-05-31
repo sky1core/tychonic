@@ -52,14 +52,12 @@ export async function extractWorktreePatchActivity(
         baseHead: input.baseHead,
         worktreeParentDir
       });
-      return patch.trim()
-        ? await writePatchArtifact({
-            run: input.run,
-            cwd: input.cwd,
-            patch,
-            createdAt
-          })
-        : undefined;
+      return await writePatchArtifact({
+        run: input.run,
+        cwd: input.cwd,
+        patch,
+        createdAt
+      });
     },
     { onAfter: throwIfCancelled }
   );

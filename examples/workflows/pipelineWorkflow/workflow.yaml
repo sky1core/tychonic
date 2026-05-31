@@ -7,7 +7,7 @@ states:
   work:
     type: work
     agent: kiro
-    model: claude-opus-4.7
+    model: claude-sonnet-4.5
     reasoning_effort: high
     trust_all_tools: true
     prompt: |

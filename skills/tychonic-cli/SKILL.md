@@ -331,7 +331,7 @@ codex_build:
 kiro_work:
   type: work
   agent: kiro
-  model: claude-opus-4.7
+  model: claude-sonnet-4.5
   trust_all_tools: true
 ```
 
@@ -339,9 +339,9 @@ Kiro states may set `model` and `reasoning_effort`; Tychonic passes them to
 OpenP as `--model` and `--effort`. Kiro model ids are OpenP Kiro backend ids.
 Availability may be account-, tier-, or region-scoped: a successful
 `openp kiro --model <id>` smoke proves what that account can run, not whether
-every documented Kiro model id exists globally. Do not rewrite a documented
-dot-form Kiro id such as `claude-opus-4.7` solely because it is not available in
-the current account.
+every documented Kiro model id exists globally. Repo reference examples may be
+pinned to a maintainer-verified Kiro ACP model id for this repository; do not
+treat a failed smoke in one account as proof that the id is globally invalid.
 Do not add normalizer model fields; Tychonic supplies the lightweight
 normalizer model flag internally (`claude` gets `haiku`; `codex` gets
 `gpt-5.3-codex-spark`).

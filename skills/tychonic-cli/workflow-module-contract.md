@@ -101,7 +101,7 @@ change. Claude aliases such as `opus` are not exact-match asserted because the
 CLI resolves them to concrete model names internally.
 
 The bundled reference examples currently declare `model: gpt-5.5` for `codex`
-and `model: claude-opus-4.7` for `kiro` where those exact strings fit the
+and `model: claude-sonnet-4.5` for `kiro` where those exact strings fit the
 author's environment. Some examples also declare `reasoning_effort: max` for
 `claude` and `reasoning_effort: xhigh` for `codex`. These values do not define
 a universal model or effort choice. Target account, model availability,
@@ -113,11 +113,12 @@ Kiro states may set `model` and `reasoning_effort`; Tychonic passes them to
 OpenP as `--model` and `--effort`. Kiro model ids are OpenP Kiro backend ids.
 Kiro model availability may be account-, tier-, or region-scoped: a successful
 `openp kiro --model <id>` smoke proves what that account can run, not whether
-every documented Kiro model id exists globally. Do not rewrite a documented
-dot-form Kiro id such as `claude-opus-4.7` solely because it is not available in
-the current account. Do not add normalizer model fields; Tychonic supplies the
-lightweight normalizer model flag internally (`claude` gets `haiku`; `codex`
-gets `gpt-5.3-codex-spark`).
+every documented Kiro model id exists globally. Repo reference examples may be
+pinned to a maintainer-verified Kiro ACP model id for this repository; do not
+treat a failed smoke in one account as proof that the id is globally invalid.
+Do not add normalizer model fields; Tychonic supplies the lightweight normalizer
+model flag internally (`claude` gets `haiku`; `codex` gets
+`gpt-5.3-codex-spark`).
 
 QA/review is allowed to run checks; it is not limited to visual inspection.
 The boundary is source modification. Review activities compare the git
